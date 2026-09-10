@@ -21,7 +21,7 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 futures-util = "0.3"
 headers = "0.4"
-hmac = "0.12"
+hmac = "0.13"
 http = "1"
 jsonwebtoken = "9"
 mime = "0.3"
