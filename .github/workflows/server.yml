@@ -165,6 +165,26 @@ jobs:
         working-directory: server
         run: cargo +1.91.1 check --locked --all-targets
 
+  stable-forward:
+    name: rust-stable-forward-compat
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install current stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustc +stable --version
+          cargo +stable --version
+
+      - name: Verify current stable compiler compatibility
+        working-directory: server
+        run: cargo +stable check --locked --all-targets --all-features
+
   container-smoke:
     name: docker-runtime-smoke
     runs-on: ubuntu-latest

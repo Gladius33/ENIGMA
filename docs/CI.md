@@ -25,7 +25,7 @@ The server workflow runs:
 - `cargo fmt --check`;
 - Clippy with warnings denied, all targets and all features;
 - all Rust tests with the lockfile enforced;
-- the declared Rust MSRV (1.82) compile check;
+- the declared Rust MSRV (1.91) compile check plus current-stable forward compatibility;
 - contiguous SQL migration numbering;
 - SQL migration immutability on pull requests;
 - PostgreSQL, Redis and MinIO integration tests;
@@ -44,14 +44,18 @@ The security workflows add:
 - actionlint;
 - mandatory immutable commit-SHA pinning for external GitHub Actions;
 - GitHub dependency review on pull requests, blocking moderate-or-higher vulnerable dependency changes;
-- RustSec/Cargo Audit;
+- RustSec audit of the actual compiled release binary using `cargo-auditable` + `cargo-audit`;
 - rejection of unreviewed git-sourced Cargo dependencies;
-- Trivy source/dependency/secret/IaC scanning;
+- Trivy source secret/IaC scanning plus HIGH/CRITICAL container-image vulnerability scanning;
 - CodeQL extended Java/Kotlin analysis;
 - OpenSSF Scorecard;
 - Dependabot for GitHub Actions, Cargo and Gradle.
 
 Scheduled security runs catch newly disclosed vulnerabilities even when the repository has not changed.
+
+GitHub Dependency Review becomes a blocking pull-request gate as soon as the repository Dependency Graph is enabled. Until then, the workflow emits an explicit warning rather than silently pretending the check ran.
+
+Rust advisory gating audits the dependency graph embedded in the release binary, so inactive optional crates that happen to remain represented in `Cargo.lock` do not create false-positive release failures.
 
 ## What CI cannot replace
 

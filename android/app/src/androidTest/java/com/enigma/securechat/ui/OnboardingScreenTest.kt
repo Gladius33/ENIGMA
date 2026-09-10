@@ -34,7 +34,7 @@ class OnboardingScreenTest {
         compose.onNodeWithText("Créer une identité").performClick()
         assertTrue(registerClicked)
         compose.onNodeWithText("Récupérer une identité").assertExists()
-        compose.onNodeWithText("Connexion legacy").assertExists()
+        compose.onNodeWithText("Se connecter").assertExists()
         compose.onNodeWithText("Code local").assertExists()
         compose.onNodeWithText("Serveur").assertExists()
     }
@@ -60,7 +60,7 @@ class OnboardingScreenTest {
         compose.onNodeWithText("Create identity").performClick()
         assertTrue(registerClicked)
         compose.onNodeWithText("Recover identity").assertExists()
-        compose.onNodeWithText("Legacy login").assertExists()
+        compose.onNodeWithText("Sign in").assertExists()
         compose.onNodeWithText("Local code").assertExists()
         compose.onNodeWithText("Server").assertExists()
     }
