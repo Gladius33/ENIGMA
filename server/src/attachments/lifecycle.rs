@@ -303,7 +303,7 @@ pub async fn ensure_channel_matches(
 
 async fn ensure_matches(
     tx: &mut Transaction<'_, Postgres>,
-    query: &str,
+    query: &'static str,
     parent_id: Uuid,
     requested: &PreparedAttachments,
 ) -> Result<(), AppError> {
