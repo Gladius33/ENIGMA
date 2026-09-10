@@ -245,8 +245,7 @@ async fn mark(
         .rows_affected(),
         _ => return Err(AppError::BadRequest("INVALID_ANNOUNCEMENT_MARK".into())),
     };
-    if rows_affected == 0
-    {
+    if rows_affected == 0 {
         return Err(AppError::NotFound);
     }
     Ok(Json(serde_json::json!({"status":"ok"})))
