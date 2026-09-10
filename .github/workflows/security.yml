@@ -1,0 +1,211 @@
+name: security-ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-policy:
+    name: workflow-shell-secret-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install repository-policy tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ripgrep shellcheck
+
+      - name: Project secret/log policy
+        run: ./scripts/audit-secret-logs.sh
+
+      - name: ShellCheck
+        run: |
+          shellcheck --version
+          shellcheck scripts/*.sh
+
+      - name: Setup Go for actionlint
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.25.x"
+          cache: false
+
+      - name: Validate GitHub Actions syntax and expressions
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          actionlint -color
+
+      - name: Require immutable SHA pins for third-party actions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          failures = []
+          for path in sorted(Path(".github/workflows").glob("*.yml")):
+              for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                  match = re.search(r"\buses:\s*([^\s#]+)", line)
+                  if not match:
+                      continue
+                  spec = match.group(1)
+                  if spec.startswith("./") or spec.startswith("docker://"):
+                      continue
+                  if "@" not in spec:
+                      failures.append(f"{path}:{lineno}: missing ref: {spec}")
+                      continue
+                  ref = spec.rsplit("@", 1)[1]
+                  if not re.fullmatch(r"[0-9a-f]{40}", ref):
+                      failures.append(f"{path}:{lineno}: mutable action ref: {spec}")
+          if failures:
+              print("\n".join(failures))
+              raise SystemExit("All external GitHub Actions must be pinned to a full commit SHA.")
+          print("All external GitHub Actions are pinned to immutable commit SHAs.")
+          PY
+
+      - name: Reject unexpected generated/private artifacts
+        run: |
+          test ! -e artifacts
+          test ! -e verification
+          test ! -e google-services.json
+          if find . -type f \( -name '*.jks' -o -name '*.keystore' -o -name '.env' \) -print -quit | grep -q .; then
+            echo "Private/generated credential material is present in the repository."
+            find . -type f \( -name '*.jks' -o -name '*.keystore' -o -name '.env' \) -print
+            exit 1
+          fi
+
+  gitleaks:
+    name: gitleaks-full-history
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan Git history for secrets
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependency-review:
+    name: dependency-review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect GitHub Dependency Graph
+        id: dependency-graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          code="$(curl --silent --output /tmp/sbom.json --write-out '%{http_code}' \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/dependency-graph/sbom")"
+          if [[ "${code}" == "200" ]]; then
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::GitHub Dependency Graph is disabled; enable Settings > Security > Code security > Dependency graph to activate blocking dependency review."
+          fi
+
+      - name: Block vulnerable dependency changes
+        if: steps.dependency-graph.outputs.enabled == 'true'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          fail-on-scopes: runtime,development
+          vulnerability-check: true
+          license-check: true
+          show-openssf-scorecard: true
+          warn-on-openssf-scorecard-level: 3
+
+  rust-advisories:
+    name: rust-runtime-advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install project Rust toolchain
+        run: |
+          rustup toolchain install 1.94.1 --profile minimal
+          rustup default 1.94.1
+
+      - name: Install current binary-audit tools
+        run: |
+          cargo install cargo-auditable --version 0.7.5 --locked
+          cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Build auditable release binary
+        working-directory: server
+        run: cargo auditable build --release --locked
+
+      - name: Audit actual release runtime dependency graph
+        working-directory: server
+        run: cargo audit --deny unsound --deny yanked bin target/release/enigma-e2ee-server
+
+      - name: Reject git-sourced Cargo dependencies
+        run: |
+          if grep -n 'source = "git+' server/Cargo.lock; then
+            echo "Git-sourced Cargo dependency detected; review and explicitly approve before use."
+            exit 1
+          fi
+
+      - name: Reject first-party unsafe Rust
+        run: |
+          if rg -n --glob '*.rs' '\bunsafe\b' server/src; then
+            echo "First-party unsafe Rust requires an explicit security review before it can enter main."
+            exit 1
+          fi
+          echo "No first-party unsafe Rust found."
+
+  trivy-filesystem:
+    name: trivy-source-iac-secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Scan source for secrets and IaC misconfigurations
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          version: v0.74.0
+          scanners: secret,misconfig
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

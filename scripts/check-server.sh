@@ -81,5 +81,5 @@ if [[ -z "${CARGO_BIN:-}" ]]; then
 fi
 
 "$CARGO_BIN" fmt --check
-"$CARGO_BIN" clippy --all-targets --all-features -- -D warnings
-"$CARGO_BIN" test
+"$CARGO_BIN" clippy --locked --all-targets --all-features -- -D warnings
+"$CARGO_BIN" test --locked --all-targets --all-features

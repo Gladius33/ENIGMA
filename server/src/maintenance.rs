@@ -128,19 +128,27 @@ pub async fn purge_attachments(state: &AppState) -> Result<u64, AppError> {
         .rows_affected()
             == 1
         {
-            let col = if locked.status == "pending" {
-                "storage_pending_bytes"
-            } else {
-                "storage_verified_bytes"
-            };
-            let query = format!(
-                "UPDATE identity_usage_counters SET {col}=GREATEST(0,{col}-$2),updated_at=now() WHERE identity_id=$1"
-            );
-            sqlx::query(&query)
+            if locked.status == "pending" {
+                sqlx::query(
+                    "UPDATE identity_usage_counters
+                     SET storage_pending_bytes=GREATEST(0,storage_pending_bytes-$2),updated_at=now()
+                     WHERE identity_id=$1",
+                )
                 .bind(locked.owner_id)
                 .bind(locked.size_bytes)
                 .execute(&mut *tx)
                 .await?;
+            } else {
+                sqlx::query(
+                    "UPDATE identity_usage_counters
+                     SET storage_verified_bytes=GREATEST(0,storage_verified_bytes-$2),updated_at=now()
+                     WHERE identity_id=$1",
+                )
+                .bind(locked.owner_id)
+                .bind(locked.size_bytes)
+                .execute(&mut *tx)
+                .await?;
+            }
             sqlx::query("DELETE FROM attachment_references WHERE blob_id=$1")
                 .bind(row.blob_id)
                 .execute(&mut *tx)
