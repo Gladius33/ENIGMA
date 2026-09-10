@@ -1,0 +1,110 @@
+name: server-ci
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "server/**"
+      - "scripts/check-server.sh"
+      - ".github/workflows/server.yml"
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - "scripts/check-server.sh"
+      - ".github/workflows/server.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: enigma
+          POSTGRES_USER: enigma
+          POSTGRES_PASSWORD: enigma_dev_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U enigma -d enigma"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://enigma:enigma_dev_password@localhost:5432/enigma
+      TEST_REDIS_URL: redis://localhost:6379
+      TEST_S3_ENDPOINT: http://localhost:9000
+      TEST_S3_ACCESS_KEY_ID: minioadmin
+      TEST_S3_SECRET_ACCESS_KEY: minioadmin123
+      TEST_S3_BUCKET: enigma-attachments
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin123
+    steps:
+      # Pull-request jobs must test the source branch, not GitHub's synthetic merge ref.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+
+      - name: Show tested commit
+        run: |
+          echo "event=${GITHUB_EVENT_NAME}"
+          echo "ref=${GITHUB_REF}"
+          echo "head_ref=${GITHUB_HEAD_REF}"
+          git log -1 --format='tested_sha=%H%nsubject=%s'
+
+      - name: Rust 1.91.1
+        uses: dtolnay/rust-toolchain@1.91.1
+        with:
+          components: rustfmt, clippy
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name enigma-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin123 \
+            minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+          for i in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs enigma-minio
+          exit 1
+
+      - name: Create test bucket
+        run: |
+          docker run --rm --network host \
+            --entrypoint /bin/sh \
+            minio/mc:RELEASE.2025-04-16T18-13-26Z \
+            -c 'mc alias set local http://127.0.0.1:9000 minioadmin minioadmin123 && mc mb --ignore-existing local/enigma-attachments'
+
+      - name: Server checks
+        run: ./scripts/check-server.sh

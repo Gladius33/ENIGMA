@@ -1,0 +1,13 @@
+services:
+  backend:
+    build:
+      context: ../server
+    restart: unless-stopped
+    env_file:
+      - ../server/.env
+    ports:
+      - "8080:8080"
+
+# Production dependencies are intentionally external by default:
+# PostgreSQL, Redis, S3/MinIO and coturn should be provisioned separately and
+# referenced through server/.env. See docs/deployment.md.

@@ -1,0 +1,16 @@
+[Unit]
+Description=Enigma E2EE Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/enigma/server
+EnvironmentFile=/etc/enigma/server.env
+ExecStart=/opt/enigma/server/enigma-e2ee-server
+Restart=always
+RestartSec=5
+User=enigma
+Group=enigma
+
+[Install]
+WantedBy=multi-user.target

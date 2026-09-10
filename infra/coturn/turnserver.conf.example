@@ -1,0 +1,8 @@
+fingerprint
+lt-cred-mech
+use-auth-secret
+static-auth-secret=replace-with-production-turn-secret
+realm=enigma.example
+no-cli
+no-tls
+no-dtls

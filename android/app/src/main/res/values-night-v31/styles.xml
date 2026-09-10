@@ -1,0 +1,11 @@
+<resources>
+    <style name="Theme.Enigma" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#101318</item>
+        <item name="android:navigationBarColor">#101318</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowSplashScreenBackground">#101318</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/enigma_logo</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#3157FF</item>
+    </style>
+</resources>

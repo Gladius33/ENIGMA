@@ -1,0 +1,7 @@
+[versions]
+libsignalAndroid = "0.76.1"
+webrtcAndroid = "125.6422.07"
+
+[libraries]
+libsignal-android = { module = "org.signal:libsignal-android", version.ref = "libsignalAndroid" }
+webrtc-android = { module = "io.github.webrtc-sdk:android", version.ref = "webrtcAndroid" }
