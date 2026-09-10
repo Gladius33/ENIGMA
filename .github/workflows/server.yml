@@ -75,10 +75,10 @@ jobs:
           echo "head_ref=${GITHUB_HEAD_REF}"
           git log -1 --format='tested_sha=%H%nsubject=%s'
 
-      - name: Install Rust 1.91.1
+      - name: Install Rust 1.94.1
         run: |
-          rustup toolchain install 1.91.1 --profile minimal --component rustfmt,clippy
-          rustup default 1.91.1
+          rustup toolchain install 1.94.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.94.1
           rustc --version
           cargo --version
 
@@ -146,7 +146,7 @@ jobs:
         run: ./scripts/check-server.sh
 
   msrv:
-    name: rust-msrv-1.91
+    name: rust-msrv-1.94.1
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -157,13 +157,13 @@ jobs:
 
       - name: Install declared MSRV
         run: |
-          rustup toolchain install 1.91.1 --profile minimal
-          rustc +1.91.1 --version
-          cargo +1.91.1 --version
+          rustup toolchain install 1.94.1 --profile minimal
+          rustc +1.94.1 --version
+          cargo +1.94.1 --version
 
       - name: Verify dependency graph builds on declared MSRV
         working-directory: server
-        run: cargo +1.91.1 check --locked --all-targets
+        run: cargo +1.94.1 check --locked --all-targets
 
   stable-forward:
     name: rust-stable-forward-compat

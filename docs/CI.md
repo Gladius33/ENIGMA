@@ -25,7 +25,7 @@ The server workflow runs:
 - `cargo fmt --check`;
 - Clippy with warnings denied, all targets and all features;
 - all Rust tests with the lockfile enforced;
-- the declared Rust MSRV (1.91) compile check plus current-stable forward compatibility;
+- the declared Rust MSRV (1.94.1) compile check plus current-stable forward compatibility;
 - contiguous SQL migration numbering;
 - SQL migration immutability on pull requests;
 - PostgreSQL, Redis and MinIO integration tests;

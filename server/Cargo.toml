@@ -2,7 +2,7 @@
 name = "enigma-e2ee-server"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.91"
+rust-version = "1.94.1"
 authors = ["Sébastien TOUILLEUX (Gladius33)"]
 license = "MIT"
 repository = "https://github.com/Gladius33/ENIGMA"
