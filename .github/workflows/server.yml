@@ -62,7 +62,7 @@ jobs:
       AWS_SECRET_ACCESS_KEY: minioadmin123
     steps:
       - name: Checkout source branch
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
           fetch-depth: 0
@@ -146,24 +146,24 @@ jobs:
         run: ./scripts/check-server.sh
 
   msrv:
-    name: rust-msrv-1.82
+    name: rust-msrv-1.91
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install declared MSRV
         run: |
-          rustup toolchain install 1.82.0 --profile minimal
-          rustc +1.82.0 --version
-          cargo +1.82.0 --version
+          rustup toolchain install 1.91.1 --profile minimal
+          rustc +1.91.1 --version
+          cargo +1.91.1 --version
 
       - name: Verify dependency graph builds on declared MSRV
         working-directory: server
-        run: cargo +1.82.0 check --locked --all-targets
+        run: cargo +1.91.1 check --locked --all-targets
 
   container-smoke:
     name: docker-runtime-smoke
@@ -171,7 +171,7 @@ jobs:
     timeout-minutes: 35
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -199,6 +199,7 @@ jobs:
         with:
           scan-type: image
           image-ref: enigma-server:ci
+          version: v0.74.0
           format: table
           severity: HIGH,CRITICAL
           ignore-unfixed: true
