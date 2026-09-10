@@ -24,8 +24,9 @@ concurrency:
 
 jobs:
   test:
+    name: rust-test-integration
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     services:
       postgres:
         image: postgres:16-alpine
@@ -60,11 +61,12 @@ jobs:
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin123
     steps:
-      # Pull-request jobs must test the source branch, not GitHub's synthetic merge ref.
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout source branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Show tested commit
         run: |
@@ -73,15 +75,49 @@ jobs:
           echo "head_ref=${GITHUB_HEAD_REF}"
           git log -1 --format='tested_sha=%H%nsubject=%s'
 
-      - name: Rust 1.91.1
-        uses: dtolnay/rust-toolchain@1.91.1
-        with:
-          components: rustfmt, clippy
+      - name: Install Rust 1.91.1
+        run: |
+          rustup toolchain install 1.91.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.91.1
+          rustc --version
+          cargo --version
 
       - name: Cargo cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: server
+
+      - name: Validate migration numbering and immutability
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          files = sorted(Path("server/migrations").glob("*.sql"))
+          nums = []
+          for path in files:
+              m = re.match(r"(\d{4})_", path.name)
+              if not m:
+                  raise SystemExit(f"Invalid migration filename: {path}")
+              nums.append(int(m.group(1)))
+          expected = list(range(1, max(nums) + 1))
+          if nums != expected:
+              raise SystemExit(f"Migration sequence is not contiguous: {nums}")
+          print(f"Validated {len(nums)} contiguous migrations: 0001..{max(nums):04d}")
+          PY
+
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            git fetch --no-tags origin "${GITHUB_BASE_REF}"
+            changed="$(git diff --name-status "origin/${GITHUB_BASE_REF}...HEAD" -- server/migrations || true)"
+            echo "${changed}"
+            bad="$(printf '%s\n' "${changed}" | awk 'NF && $1 != "A" {print}')"
+            if [[ -n "${bad}" ]]; then
+              echo "Existing SQL migrations are immutable. Add a new migration instead:"
+              echo "${bad}"
+              exit 1
+            fi
+          fi
 
       - name: Start MinIO
         run: |
@@ -108,3 +144,96 @@ jobs:
 
       - name: Server checks
         run: ./scripts/check-server.sh
+
+  msrv:
+    name: rust-msrv-1.82
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install declared MSRV
+        run: |
+          rustup toolchain install 1.82.0 --profile minimal
+          rustc +1.82.0 --version
+          cargo +1.82.0 --version
+
+      - name: Verify dependency graph builds on declared MSRV
+        working-directory: server
+        run: cargo +1.82.0 check --locked --all-targets
+
+  container-smoke:
+    name: docker-runtime-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Validate Compose files
+        run: |
+          cp server/.env.example server/.env
+          docker compose -f server/docker-compose.yml config --quiet
+          docker compose -f infra/docker-compose.dev.yml config --quiet
+          docker compose -f infra/docker-compose.prod.yml config --quiet
+
+      - name: Build backend image
+        run: docker build --pull -t enigma-server:ci server
+
+      - name: Require non-root runtime user
+        run: |
+          user="$(docker image inspect enigma-server:ci --format '{{.Config.User}}')"
+          echo "runtime user=${user}"
+          if [[ -z "${user}" || "${user}" == "0" || "${user}" == "root" ]]; then
+            echo "Runtime image must use a non-root USER."
+            exit 1
+          fi
+
+      - name: Scan backend image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: enigma-server:ci
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Start full Docker stack
+        run: docker compose -f server/docker-compose.yml up -d --build
+
+      - name: Health and version smoke
+        run: |
+          for i in {1..90}; do
+            if curl --fail --silent http://127.0.0.1:8080/health >/tmp/enigma-health.json; then
+              cat /tmp/enigma-health.json
+              break
+            fi
+            if [[ "${i}" -eq 90 ]]; then
+              docker compose -f server/docker-compose.yml logs backend
+              exit 1
+            fi
+            sleep 2
+          done
+          curl --fail --silent http://127.0.0.1:8080/version | tee /tmp/enigma-version.json
+          python3 - <<'PY'
+          import json
+          for path in ("/tmp/enigma-health.json", "/tmp/enigma-version.json"):
+              with open(path, encoding="utf-8") as fh:
+                  data = json.load(fh)
+              print(path, data)
+          assert json.load(open("/tmp/enigma-health.json", encoding="utf-8"))["status"] == "ok"
+          PY
+
+      - name: Dump Docker logs on failure
+        if: failure()
+        run: docker compose -f server/docker-compose.yml logs --no-color
+
+      - name: Stop Docker stack
+        if: always()
+        run: docker compose -f server/docker-compose.yml down -v --remove-orphans

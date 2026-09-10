@@ -1,0 +1,167 @@
+name: security-ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-policy:
+    name: workflow-shell-secret-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Project secret/log policy
+        run: ./scripts/audit-secret-logs.sh
+
+      - name: ShellCheck
+        run: |
+          shellcheck --version
+          shellcheck scripts/*.sh
+
+      - name: Setup Go for actionlint
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.24.x"
+          cache: false
+
+      - name: Validate GitHub Actions syntax and expressions
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          actionlint -color
+
+      - name: Require immutable SHA pins for third-party actions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          failures = []
+          for path in sorted(Path(".github/workflows").glob("*.yml")):
+              for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                  match = re.search(r"\buses:\s*([^\s#]+)", line)
+                  if not match:
+                      continue
+                  spec = match.group(1)
+                  if spec.startswith("./") or spec.startswith("docker://"):
+                      continue
+                  if "@" not in spec:
+                      failures.append(f"{path}:{lineno}: missing ref: {spec}")
+                      continue
+                  ref = spec.rsplit("@", 1)[1]
+                  if not re.fullmatch(r"[0-9a-f]{40}", ref):
+                      failures.append(f"{path}:{lineno}: mutable action ref: {spec}")
+          if failures:
+              print("\n".join(failures))
+              raise SystemExit("All external GitHub Actions must be pinned to a full commit SHA.")
+          print("All external GitHub Actions are pinned to immutable commit SHAs.")
+          PY
+
+      - name: Reject unexpected generated/private artifacts
+        run: |
+          test ! -e artifacts
+          test ! -e verification
+          test ! -e google-services.json
+          if find . -type f \( -name '*.jks' -o -name '*.keystore' -o -name '.env' \) -print -quit | grep -q .; then
+            echo "Private/generated credential material is present in the repository."
+            find . -type f \( -name '*.jks' -o -name '*.keystore' -o -name '.env' \) -print
+            exit 1
+          fi
+
+  gitleaks:
+    name: gitleaks-full-history
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan Git history for secrets
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependency-review:
+    name: dependency-review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Block vulnerable dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          fail-on-scopes: runtime,development
+          vulnerability-check: true
+          license-check: true
+          show-openssf-scorecard: true
+          warn-on-openssf-scorecard-level: 3
+
+  rust-advisories:
+    name: rustsec-cargo-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Cargo audit
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: server
+
+      - name: Reject git-sourced Cargo dependencies
+        run: |
+          if grep -n 'source = "git+' server/Cargo.lock; then
+            echo "Git-sourced Cargo dependency detected; review and explicitly approve before use."
+            exit 1
+          fi
+
+  trivy-filesystem:
+    name: trivy-source-iac-secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Scan source, dependencies, secrets and IaC
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
