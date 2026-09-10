@@ -223,30 +223,26 @@ async fn mark(
 ) -> Result<Json<serde_json::Value>, AppError> {
     enabled(s)?;
     let rows_affected = match column {
-        "opened_at" => {
-            sqlx::query(
-                "UPDATE official_announcement_deliveries
-                 SET opened_at=now()
-                 WHERE announcement_id=$1 AND identity_id=$2",
-            )
-            .bind(id)
-            .bind(u)
-            .execute(&s.pg)
-            .await?
-            .rows_affected()
-        }
-        "dismissed_at" => {
-            sqlx::query(
-                "UPDATE official_announcement_deliveries
-                 SET dismissed_at=now()
-                 WHERE announcement_id=$1 AND identity_id=$2",
-            )
-            .bind(id)
-            .bind(u)
-            .execute(&s.pg)
-            .await?
-            .rows_affected()
-        }
+        "opened_at" => sqlx::query(
+            "UPDATE official_announcement_deliveries
+             SET opened_at=now()
+             WHERE announcement_id=$1 AND identity_id=$2",
+        )
+        .bind(id)
+        .bind(u)
+        .execute(&s.pg)
+        .await?
+        .rows_affected(),
+        "dismissed_at" => sqlx::query(
+            "UPDATE official_announcement_deliveries
+             SET dismissed_at=now()
+             WHERE announcement_id=$1 AND identity_id=$2",
+        )
+        .bind(id)
+        .bind(u)
+        .execute(&s.pg)
+        .await?
+        .rows_affected(),
         _ => return Err(AppError::BadRequest("INVALID_ANNOUNCEMENT_MARK".into())),
     };
     if rows_affected == 0
