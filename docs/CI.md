@@ -1,6 +1,6 @@
 # CI and security gates
 
-The public repository treats CI as a release barrier rather than a compile-only check.
+The public repository treats CI as a release barrier rather than a compile-only check. Android, server, security and CodeQL gates run on every pull request targeting `main` and every push to `main`, regardless of changed paths.
 
 ## Android
 
@@ -14,7 +14,7 @@ The Android workflow runs:
 - APK signature verification;
 - Room schema snapshot consistency;
 - instrumented tests on API 26 (minSdk), API 30 and API 35 (targetSdk);
-- dependency graph submission from `main`.
+- Gradle dependency graph generation on `main`, with submission when GitHub Dependency Graph is enabled.
 
 The emulator jobs currently execute all tests under `android/app/src/androidTest`, including Room migration and Compose UI tests.
 
@@ -53,7 +53,7 @@ The security workflows add:
 
 Scheduled security runs catch newly disclosed vulnerabilities even when the repository has not changed.
 
-GitHub Dependency Review becomes a blocking pull-request gate as soon as the repository Dependency Graph is enabled. Until then, the workflow emits an explicit warning rather than silently pretending the check ran.
+GitHub Dependency Review becomes a blocking pull-request gate as soon as the repository Dependency Graph is enabled. Until then, the workflows emit an explicit warning, still generate the Gradle dependency snapshot locally, and do not turn a repository-setting limitation into a false application failure.
 
 Rust advisory gating audits the dependency graph embedded in the release binary, so inactive optional crates that happen to remain represented in `Cargo.lock` do not create false-positive release failures.
 

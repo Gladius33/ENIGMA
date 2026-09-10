@@ -3,16 +3,8 @@ name: android-ci
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "android/**"
-      - "scripts/check-android.sh"
-      - ".github/workflows/android.yml"
   push:
     branches: [main]
-    paths:
-      - "android/**"
-      - "scripts/check-android.sh"
-      - ".github/workflows/android.yml"
   workflow_dispatch:
 
 permissions:
@@ -194,10 +186,27 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Generate and submit Gradle dependency graph
+      - name: Detect GitHub Dependency Graph
+        id: dependency-graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          code="$(curl --silent --output /tmp/enigma-sbom.json --write-out '%{http_code}' \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/dependency-graph/sbom")"
+          if [[ "${code}" == "200" ]]; then
+            echo "mode=generate-and-submit" >> "${GITHUB_OUTPUT}"
+          else
+            echo "mode=generate" >> "${GITHUB_OUTPUT}"
+            echo "::warning::GitHub Dependency Graph is disabled; generating the Gradle snapshot locally. Enable Settings > Security > Code security > Dependency graph to activate submission and blocking dependency review."
+          fi
+
+      - name: Generate Gradle dependency graph
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
-          dependency-graph: generate-and-submit
+          dependency-graph: ${{ steps.dependency-graph.outputs.mode }}
           dependency-graph-continue-on-failure: false
           validate-wrappers: true
 

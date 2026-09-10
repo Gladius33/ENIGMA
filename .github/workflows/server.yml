@@ -3,16 +3,8 @@ name: server-ci
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "server/**"
-      - "scripts/check-server.sh"
-      - ".github/workflows/server.yml"
   push:
     branches: [main]
-    paths:
-      - "server/**"
-      - "scripts/check-server.sh"
-      - ".github/workflows/server.yml"
   workflow_dispatch:
 
 permissions:

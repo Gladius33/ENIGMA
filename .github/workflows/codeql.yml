@@ -3,14 +3,8 @@ name: codeql
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "android/**"
-      - ".github/workflows/codeql.yml"
   push:
     branches: [main]
-    paths:
-      - "android/**"
-      - ".github/workflows/codeql.yml"
   schedule:
     - cron: "41 2 * * 2"
   workflow_dispatch:
