@@ -7,7 +7,6 @@ import org.signal.libsignal.protocol.IdentityKeyPair
 import org.signal.libsignal.protocol.SessionBuilder
 import org.signal.libsignal.protocol.SessionCipher
 import org.signal.libsignal.protocol.SignalProtocolAddress
-import org.signal.libsignal.protocol.UsePqRatchet
 import org.signal.libsignal.protocol.ecc.ECKeyPair
 import org.signal.libsignal.protocol.kem.KEMKeyPair
 import org.signal.libsignal.protocol.kem.KEMKeyType
@@ -40,7 +39,7 @@ class LibsignalProtocolSmokeTest {
 
         val bobBundle = createAndStorePreKeyBundle(bobStore, bobIdentity)
 
-        SessionBuilder(aliceStore, bobAddress).process(bobBundle, UsePqRatchet.YES)
+        SessionBuilder(aliceStore, bobAddress).process(bobBundle)
 
         val aliceCipher = SessionCipher(aliceStore, bobAddress)
         val firstPlaintext = "bonjour depuis libsignal".toByteArray(Charsets.UTF_8)
@@ -51,7 +50,6 @@ class LibsignalProtocolSmokeTest {
         val bobCipher = SessionCipher(bobStore, aliceAddress)
         val decryptedFirst = bobCipher.decrypt(
             PreKeySignalMessage(firstCiphertext.serialize()),
-            UsePqRatchet.YES,
         )
 
         assertArrayEquals(firstPlaintext, decryptedFirst)

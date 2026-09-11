@@ -7,7 +7,9 @@ import org.signal.libsignal.protocol.IdentityKeyPair
 import org.signal.libsignal.protocol.InvalidKeyIdException
 import org.signal.libsignal.protocol.InvalidMessageException
 import org.signal.libsignal.protocol.NoSessionException
+import org.signal.libsignal.protocol.ReusedBaseKeyException
 import org.signal.libsignal.protocol.SignalProtocolAddress
+import org.signal.libsignal.protocol.ecc.ECPublicKey
 import org.signal.libsignal.protocol.groups.state.SenderKeyRecord
 import org.signal.libsignal.protocol.state.IdentityKeyStore
 import org.signal.libsignal.protocol.state.KyberPreKeyRecord
@@ -148,7 +150,17 @@ class PersistentSignalProtocolStore private constructor(
     override fun containsKyberPreKey(kyberPreKeyId: Int): Boolean =
         storage.read(kyberPreKeyKey(kyberPreKeyId)) != null
 
-    override fun markKyberPreKeyUsed(kyberPreKeyId: Int) {
+    @Synchronized
+    override fun markKyberPreKeyUsed(
+        kyberPreKeyId: Int,
+        signedPreKeyId: Int,
+        baseKey: ECPublicKey,
+    ) {
+        val seenKey = kyberBaseKeySeenKey(kyberPreKeyId, signedPreKeyId, baseKey)
+        if (storage.read(seenKey) != null) {
+            throw ReusedBaseKeyException()
+        }
+        storage.write(seenKey, byteArrayOf(1))
         storage.write(kyberUsedKey(kyberPreKeyId), byteArrayOf(1))
     }
 
@@ -212,6 +224,11 @@ class PersistentSignalProtocolStore private constructor(
     private fun signedPreKeyKey(id: Int) = "$SIGNED_PREKEY_PREFIX$id"
     private fun kyberPreKeyKey(id: Int) = "$KYBER_PREKEY_PREFIX$id"
     private fun kyberUsedKey(id: Int) = "kyber_used:$id"
+    private fun kyberBaseKeySeenKey(
+        kyberPreKeyId: Int,
+        signedPreKeyId: Int,
+        baseKey: ECPublicKey,
+    ) = "kyber_base_seen:$kyberPreKeyId:$signedPreKeyId:${encode(baseKey.serialize())}"
     private fun sessionKey(address: SignalProtocolAddress) = "$SESSION_PREFIX${addressKey(address)}"
     private fun senderKey(sender: SignalProtocolAddress, distributionId: UUID) =
         "sender_key:${addressKey(sender)}:$distributionId"
