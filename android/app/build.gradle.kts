@@ -53,7 +53,7 @@ val debugAndEmulatorAbis = releaseDeviceAbis + "x86_64"
 
 android {
     namespace = "com.enigma.securechat"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.enigma.securechat"
