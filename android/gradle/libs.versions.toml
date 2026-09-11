@@ -1,5 +1,5 @@
 [versions]
-libsignalAndroid = "0.76.1"
+libsignalAndroid = "0.86.5"
 webrtcAndroid = "150.7871.01"
 
 [libraries]
