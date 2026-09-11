@@ -7,7 +7,6 @@ import org.junit.Test
 import org.signal.libsignal.protocol.SessionBuilder
 import org.signal.libsignal.protocol.SessionCipher
 import org.signal.libsignal.protocol.SignalProtocolAddress
-import org.signal.libsignal.protocol.UsePqRatchet
 import org.signal.libsignal.protocol.message.PreKeySignalMessage
 
 class PersistentSignalProtocolStoreTest {
@@ -32,7 +31,7 @@ class PersistentSignalProtocolStoreTest {
         val preKeyBundle = SignalKeyCodec.toLibsignalPreKeyBundle(bobRemote)
 
         val aliceToBob = SignalProtocolAddress("bob", 1)
-        SessionBuilder(aliceStore, aliceToBob).process(preKeyBundle, UsePqRatchet.YES)
+        SessionBuilder(aliceStore, aliceToBob).process(preKeyBundle)
         val aliceCipher = SessionCipher(aliceStore, aliceToBob)
         val firstPlaintext = "persisted signal store".toByteArray(Charsets.UTF_8)
         val firstCiphertext = aliceCipher.encrypt(firstPlaintext)
@@ -43,7 +42,6 @@ class PersistentSignalProtocolStoreTest {
             firstPlaintext,
             bobCipher.decrypt(
                 PreKeySignalMessage(firstCiphertext.serialize()),
-                UsePqRatchet.YES,
             ),
         )
 
