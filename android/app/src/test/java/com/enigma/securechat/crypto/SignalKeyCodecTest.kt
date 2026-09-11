@@ -7,7 +7,6 @@ import org.signal.libsignal.protocol.IdentityKeyPair
 import org.signal.libsignal.protocol.SessionBuilder
 import org.signal.libsignal.protocol.SessionCipher
 import org.signal.libsignal.protocol.SignalProtocolAddress
-import org.signal.libsignal.protocol.UsePqRatchet
 import org.signal.libsignal.protocol.ecc.ECKeyPair
 import org.signal.libsignal.protocol.kem.KEMKeyPair
 import org.signal.libsignal.protocol.kem.KEMKeyType
@@ -47,7 +46,7 @@ class SignalKeyCodecTest {
         assertEquals(bobSignalMaterial.kyberPreKey.id.toLong(), upload.kyberPreKey?.keyId)
 
         val aliceToBobAddress = SignalProtocolAddress("bob", 1)
-        SessionBuilder(aliceStore, aliceToBobAddress).process(preKeyBundle, UsePqRatchet.YES)
+        SessionBuilder(aliceStore, aliceToBobAddress).process(preKeyBundle)
         val aliceCipher = SessionCipher(aliceStore, aliceToBobAddress)
         val plaintext = "message via enigma key codec".toByteArray(Charsets.UTF_8)
         val ciphertext = aliceCipher.encrypt(plaintext)
@@ -56,7 +55,6 @@ class SignalKeyCodecTest {
         val bobCipher = SessionCipher(bobStore, bobFromAliceAddress)
         val decrypted = bobCipher.decrypt(
             PreKeySignalMessage(ciphertext.serialize()),
-            UsePqRatchet.YES,
         )
 
         assertArrayEquals(plaintext, decrypted)
