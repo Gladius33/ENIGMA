@@ -7,7 +7,6 @@ import org.signal.libsignal.protocol.IdentityKey
 import org.signal.libsignal.protocol.SessionBuilder
 import org.signal.libsignal.protocol.SessionCipher
 import org.signal.libsignal.protocol.SignalProtocolAddress
-import org.signal.libsignal.protocol.UsePqRatchet
 import org.signal.libsignal.protocol.message.CiphertextMessage
 import org.signal.libsignal.protocol.message.PreKeySignalMessage
 import org.signal.libsignal.protocol.message.SignalMessage
@@ -58,7 +57,7 @@ class SignalCryptoEngine(
     override suspend fun ensureSession(recipient: RemoteDeviceBundle) {
         val address = recipient.toRef().signalAddress()
         if (!store.containsSession(address)) {
-            SessionBuilder(store, address).process(SignalKeyCodec.toLibsignalPreKeyBundle(recipient), UsePqRatchet.YES)
+            SessionBuilder(store, address).process(SignalKeyCodec.toLibsignalPreKeyBundle(recipient))
         }
     }
 
@@ -100,7 +99,7 @@ class SignalCryptoEngine(
         val sessionCipher = SessionCipher(store, address)
         val signalBytes = decode(envelope.ciphertext)
         val plaintext = when (envelope.messageType) {
-            MESSAGE_TYPE_PREKEY -> sessionCipher.decrypt(PreKeySignalMessage(signalBytes), UsePqRatchet.YES)
+            MESSAGE_TYPE_PREKEY -> sessionCipher.decrypt(PreKeySignalMessage(signalBytes))
             MESSAGE_TYPE_SIGNAL -> sessionCipher.decrypt(SignalMessage(signalBytes))
             else -> error("Unsupported libsignal ciphertext type")
         }
