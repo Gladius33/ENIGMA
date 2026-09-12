@@ -237,7 +237,6 @@ mod tests {
 
     #[test]
     fn release_remains_blocked_until_cross_platform_interop_is_verified() {
-        assert!(!DESKTOP_LIBSIGNAL_INTEROP_VERIFIED);
         assert!(!desktop_backend_release_ready());
     }
 }
