@@ -195,6 +195,111 @@ impl DeviceAuthorizationCertificate {
     }
 }
 
+pub const DEVICE_AUTHORIZATION_DOMAIN: &str = "ENIGMA_DEVICE_LINK_V1";
+pub const MULTI_DEVICE_CAPABILITY_BIT: u64 = 1 << 2;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalDeviceAuthorization {
+    pub account_id: String,
+    pub new_device_id: String,
+    pub authorizing_device_id: String,
+    pub pairing_session_id: String,
+    pub platform: String,
+    pub protocol_version: u16,
+    pub min_supported_version: u16,
+    pub capabilities: u64,
+    pub issued_at_unix_ms: u64,
+    pub target_identity_key: String,
+    pub authorizer_identity_key: String,
+}
+
+impl CanonicalDeviceAuthorization {
+    pub fn parse(input: &str) -> Result<Self, ProtocolError> {
+        if input.len() > 32 * 1024 {
+            return Err(ProtocolError::InvalidDeviceAuthorizationTranscript);
+        }
+        let lines: Vec<&str> = input.split('\n').collect();
+        if lines.len() != 13 || lines[0] != DEVICE_AUTHORIZATION_DOMAIN || !lines[12].is_empty() {
+            return Err(ProtocolError::InvalidDeviceAuthorizationTranscript);
+        }
+
+        let value = |index: usize, key: &str| -> Result<&str, ProtocolError> {
+            lines[index]
+                .strip_prefix(key)
+                .filter(|candidate| !candidate.is_empty())
+                .ok_or(ProtocolError::InvalidDeviceAuthorizationTranscript)
+        };
+
+        let account_id = value(1, "account_id=")?;
+        let new_device_id = value(2, "new_device_id=")?;
+        let authorizing_device_id = value(3, "authorizing_device_id=")?;
+        let pairing_session_id = value(4, "pairing_session_id=")?;
+        let platform = value(5, "platform=")?;
+        let protocol_version = value(6, "protocol_version=")?
+            .parse::<u16>()
+            .map_err(|_| ProtocolError::InvalidDeviceAuthorizationTranscript)?;
+        let min_supported_version = value(7, "min_supported_version=")?
+            .parse::<u16>()
+            .map_err(|_| ProtocolError::InvalidDeviceAuthorizationTranscript)?;
+        let capabilities = value(8, "capabilities=")?
+            .parse::<u64>()
+            .map_err(|_| ProtocolError::InvalidDeviceAuthorizationTranscript)?;
+        let issued_at_unix_ms = value(9, "issued_at_unix_ms=")?
+            .parse::<u64>()
+            .map_err(|_| ProtocolError::InvalidDeviceAuthorizationTranscript)?;
+        let target_identity_key = value(10, "target_identity_key=")?;
+        let authorizer_identity_key = value(11, "authorizer_identity_key=")?;
+
+        if !is_canonical_uuid(account_id)
+            || !is_canonical_uuid(new_device_id)
+            || !is_canonical_uuid(authorizing_device_id)
+            || !is_canonical_uuid(pairing_session_id)
+            || new_device_id == authorizing_device_id
+            || !matches!(platform, "windows" | "linux")
+            || protocol_version != PROTOCOL_VERSION
+            || min_supported_version != MIN_SUPPORTED_VERSION
+            || capabilities & MULTI_DEVICE_CAPABILITY_BIT == 0
+            || issued_at_unix_ms == 0
+            || !is_bounded_base64_public_material(target_identity_key)
+            || !is_bounded_base64_public_material(authorizer_identity_key)
+        {
+            return Err(ProtocolError::InvalidDeviceAuthorizationTranscript);
+        }
+
+        Ok(Self {
+            account_id: account_id.to_owned(),
+            new_device_id: new_device_id.to_owned(),
+            authorizing_device_id: authorizing_device_id.to_owned(),
+            pairing_session_id: pairing_session_id.to_owned(),
+            platform: platform.to_owned(),
+            protocol_version,
+            min_supported_version,
+            capabilities,
+            issued_at_unix_ms,
+            target_identity_key: target_identity_key.to_owned(),
+            authorizer_identity_key: authorizer_identity_key.to_owned(),
+        })
+    }
+}
+
+fn is_canonical_uuid(value: &str) -> bool {
+    if value.len() != 36 {
+        return false;
+    }
+    value.bytes().enumerate().all(|(index, byte)| match index {
+        8 | 13 | 18 | 23 => byte == b'-',
+        _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
+    })
+}
+
+fn is_bounded_base64_public_material(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 8192
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=')
+        })
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecipientEnvelope {
     pub header: WireHeader,
@@ -266,6 +371,7 @@ pub enum ProtocolError {
     SameSenderAndRecipient,
     EmptyCiphertext,
     HistoryTransferMustBeSingleUse,
+    InvalidDeviceAuthorizationTranscript,
 }
 
 #[cfg(test)]
@@ -310,6 +416,39 @@ mod tests {
             pairing_session_id: PairingSessionId::from_bytes([3; 16]),
         };
         assert_eq!(payload.validate(), Err(ProtocolError::SelfAuthorization));
+    }
+
+    #[test]
+    fn canonical_device_authorization_parser_is_strict_and_fail_closed() {
+        let transcript = concat!(
+            "ENIGMA_DEVICE_LINK_V1\n",
+            "account_id=33333333-3333-4333-8333-333333333333\n",
+            "new_device_id=11111111-1111-4111-8111-111111111111\n",
+            "authorizing_device_id=44444444-4444-4444-8444-444444444444\n",
+            "pairing_session_id=22222222-2222-4222-8222-222222222222\n",
+            "platform=windows\n",
+            "protocol_version=1\n",
+            "min_supported_version=1\n",
+            "capabilities=127\n",
+            "issued_at_unix_ms=1700000000000\n",
+            "target_identity_key=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB\n",
+            "authorizer_identity_key=AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC\n",
+        );
+        let parsed = CanonicalDeviceAuthorization::parse(transcript).expect("valid transcript");
+        assert_eq!(parsed.platform, "windows");
+        assert_eq!(parsed.capabilities, 127);
+
+        let extra = format!("{transcript}unexpected=value\n");
+        assert_eq!(
+            CanonicalDeviceAuthorization::parse(&extra),
+            Err(ProtocolError::InvalidDeviceAuthorizationTranscript)
+        );
+
+        let downgraded = transcript.replace("protocol_version=1", "protocol_version=0");
+        assert_eq!(
+            CanonicalDeviceAuthorization::parse(&downgraded),
+            Err(ProtocolError::InvalidDeviceAuthorizationTranscript)
+        );
     }
 
     #[test]
