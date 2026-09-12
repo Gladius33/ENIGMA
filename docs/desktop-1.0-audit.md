@@ -29,13 +29,13 @@ La règle est donc de réutiliser ces contrats lorsqu'ils sont stables. Il est i
 
 ## Blockers de release
 
-### LIC-001 — libsignal / licence
+### LIC-001 — libsignal / licence — RESOLVED
 
-Le dépôt racine est actuellement sous MIT alors que la documentation interne identifie la dépendance libsignal Android comme AGPL-3.0-only.
+ENIGMA 1.0 est licencié intégralement sous **AGPL-3.0-only**. Les manifests Rust et la documentation racine doivent rester cohérents avec cette licence.
 
-**BLOCK RELEASE** jusqu'à analyse et décision de conformité/licence de la distribution 1.0.
+La dépendance libsignal conserve sa propre attribution/licence et ne doit jamais être remplacée par une implémentation cryptographique maison pour contourner une obligation de licence.
 
-Ce point ne doit jamais être contourné par une implémentation cryptographique maison.
+**RELEASE GATE:** le contrôle CI de politique de licence doit rester vert et les notices tierces doivent être conservées.
 
 ### SIG-001 — pin exact libsignal desktop
 
