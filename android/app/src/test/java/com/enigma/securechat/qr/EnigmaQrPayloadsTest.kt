@@ -67,6 +67,32 @@ class EnigmaQrPayloadsTest {
     }
 
     @Test
+    fun parsesLivePairDeviceBootstrapAndRejectsExpiredOne() {
+        val pairingKey = Base64.getEncoder().withoutPadding()
+            .encodeToString(ByteArray(32) { 5 })
+        val live = EnigmaQrPayloads.pairDevice(
+            PairDeviceQrPayload(
+                capabilities = 1L shl 2,
+                pairing_session_id = "22222222-2222-4222-8222-222222222222",
+                expires_at_unix_ms = System.currentTimeMillis() + 60_000,
+                pairing_public_key = pairingKey,
+            ),
+        )
+
+        assertTrue(EnigmaQrPayloads.parse(live.uri) is ParsedEnigmaQrPayload.PairDevice)
+
+        val expired = EnigmaQrPayloads.pairDevice(
+            PairDeviceQrPayload(
+                capabilities = 1L shl 2,
+                pairing_session_id = "22222222-2222-4222-8222-222222222222",
+                expires_at_unix_ms = System.currentTimeMillis() - 1,
+                pairing_public_key = pairingKey,
+            ),
+        )
+        assertEquals(null, EnigmaQrPayloads.parse(expired.uri))
+    }
+
+    @Test
     fun rejectsQrPayloadsContainingSecrets() {
         val forbiddenKeys = listOf(
             "token",
