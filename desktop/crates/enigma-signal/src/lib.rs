@@ -83,7 +83,9 @@ impl SignalAdapter for LibsignalIdentityProofVerifier {
     ) -> Result<bool, SignalAdapterError> {
         let identity = IdentityKey::decode(remote_identity_public)
             .map_err(|_| SignalAdapterError::CryptoFailure)?;
-        Ok(identity.public_key().verify_signature(transcript, signature))
+        Ok(identity
+            .public_key()
+            .verify_signature(transcript, signature))
     }
 }
 
