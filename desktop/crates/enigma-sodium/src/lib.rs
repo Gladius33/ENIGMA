@@ -114,12 +114,16 @@ impl SecureBytes {
     }
 
     pub fn copy_and_wipe(input: &mut [u8]) -> Result<Self, SodiumError> {
-        let mut output = Self::allocate(input.len())?;
-        let result = output.with_write(|bytes| bytes.copy_from_slice(input));
-        // SAFETY: input is a valid mutable slice for input.len() bytes.
+        ensure_sodium()?;
+        let result = (|| {
+            let mut output = Self::allocate(input.len())?;
+            output.with_write(|bytes| bytes.copy_from_slice(input))?;
+            Ok(output)
+        })();
+        // SAFETY: input is a valid mutable slice for input.len() bytes. Wiping
+        // happens regardless of whether allocation/protection succeeded.
         unsafe { sodium::sodium_memzero(input.as_mut_ptr().cast(), input.len()) };
-        result?;
-        Ok(output)
+        result
     }
 
     #[must_use]
@@ -188,6 +192,15 @@ impl XChaCha20Poly1305Vault {
     pub fn generate() -> Result<Self, SodiumError> {
         Ok(Self {
             key: Mutex::new(SecureBytes::random(KEY_BYTES)?),
+        })
+    }
+
+    pub fn from_secure_key(key: SecureBytes) -> Result<Self, SodiumError> {
+        if key.len() != KEY_BYTES {
+            return Err(SodiumError::InvalidKeyLength);
+        }
+        Ok(Self {
+            key: Mutex::new(key),
         })
     }
 
