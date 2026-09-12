@@ -46,7 +46,7 @@ services:
       retries: 20
 
   minio-init:
-    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    image: quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
     depends_on:
       minio:
         condition: service_healthy
