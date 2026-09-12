@@ -137,7 +137,7 @@ mod tests {
         assert!(!sealed.windows(plaintext.len()).any(|window| window == plaintext));
 
         let mut opened = vault.open(&sealed, aad).expect("open");
-        assert_eq!(format!("{opened:?}").contains("7CE2"), false);
+        assert!(!format!("{opened:?}").contains("7CE2"));
         opened
             .with_read(|bytes| assert_eq!(bytes, plaintext))
             .expect("guarded read");
