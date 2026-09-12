@@ -2,55 +2,63 @@
 
 use std::fmt;
 
-pub struct SecretBytes(Vec<u8>);
+use enigma_sodium::{SecureBytes, SodiumError, XChaCha20Poly1305Vault};
+
+pub struct SecretBytes(SecureBytes);
 
 impl SecretBytes {
     #[must_use]
-    pub fn new(bytes: Vec<u8>) -> Self {
-        Self(bytes)
+    pub fn len(&self) -> usize {
+        self.0.len()
     }
 
     #[must_use]
-    pub fn expose(&self) -> &[u8] {
-        &self.0
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn with_read<R>(
+        &mut self,
+        operation: impl FnOnce(&[u8]) -> R,
+    ) -> Result<R, SodiumError> {
+        self.0.with_read(operation)
+    }
+}
+
+impl From<SecureBytes> for SecretBytes {
+    fn from(value: SecureBytes) -> Self {
+        Self(value)
     }
 }
 
 impl fmt::Debug for SecretBytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("SecretBytes(REDACTED)")
+        f.debug_struct("SecretBytes")
+            .field("len", &self.len())
+            .field("contents", &"REDACTED")
+            .finish()
     }
 }
 
-impl Drop for SecretBytes {
-    fn drop(&mut self) {
-        self.0.fill(0);
-    }
-}
-
-pub struct StorageMasterKey([u8; 32]);
+pub struct StorageMasterKey(SecureBytes);
 
 impl StorageMasterKey {
-    #[must_use]
-    pub const fn new(bytes: [u8; 32]) -> Self {
-        Self(bytes)
+    pub fn generate() -> Result<Self, SodiumError> {
+        Ok(Self(SecureBytes::random(32)?))
     }
 
-    #[must_use]
-    pub const fn expose(&self) -> &[u8; 32] {
-        &self.0
+    pub fn import_and_wipe(key: &mut [u8; 32]) -> Result<Self, SodiumError> {
+        Ok(Self(SecureBytes::copy_and_wipe(key)?))
+    }
+
+    fn into_secure_bytes(self) -> SecureBytes {
+        self.0
     }
 }
 
 impl fmt::Debug for StorageMasterKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("StorageMasterKey(REDACTED)")
-    }
-}
-
-impl Drop for StorageMasterKey {
-    fn drop(&mut self) {
-        self.0.fill(0);
     }
 }
 
@@ -61,21 +69,87 @@ pub trait RecordVault {
     fn open(&self, ciphertext: &[u8], associated_data: &[u8]) -> Result<SecretBytes, Self::Error>;
 }
 
+pub struct SodiumRecordVault {
+    inner: XChaCha20Poly1305Vault,
+}
+
+impl SodiumRecordVault {
+    pub fn generate() -> Result<Self, SodiumError> {
+        Ok(Self {
+            inner: XChaCha20Poly1305Vault::generate()?,
+        })
+    }
+
+    pub fn from_master_key(key: StorageMasterKey) -> Result<Self, SodiumError> {
+        Ok(Self {
+            inner: XChaCha20Poly1305Vault::from_secure_key(key.into_secure_bytes())?,
+        })
+    }
+
+    pub fn import_key_and_wipe(key: &mut [u8; 32]) -> Result<Self, SodiumError> {
+        Self::from_master_key(StorageMasterKey::import_and_wipe(key)?)
+    }
+}
+
+impl RecordVault for SodiumRecordVault {
+    type Error = SodiumError;
+
+    fn seal(&self, plaintext: &[u8], associated_data: &[u8]) -> Result<Vec<u8>, Self::Error> {
+        self.inner.seal(plaintext, associated_data)
+    }
+
+    fn open(
+        &self,
+        ciphertext: &[u8],
+        associated_data: &[u8],
+    ) -> Result<SecretBytes, Self::Error> {
+        self.inner
+            .open(ciphertext, associated_data)
+            .map(SecretBytes::from)
+    }
+}
+
+impl fmt::Debug for SodiumRecordVault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SodiumRecordVault(REDACTED)")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn debug_never_exposes_secret_value() {
-        let secret = SecretBytes::new(b"ENIGMA_PLAINTEXT_CANARY_7CE2".to_vec());
-        let rendered = format!("{secret:?}");
-        assert_eq!(rendered, "SecretBytes(REDACTED)");
-        assert!(!rendered.contains("7CE2"));
+    fn imported_master_key_is_wiped_and_debug_is_redacted() {
+        let mut raw = [0x42_u8; 32];
+        let key = StorageMasterKey::import_and_wipe(&mut raw).expect("master key");
+        assert!(raw.iter().all(|byte| *byte == 0));
+        assert_eq!(format!("{key:?}"), "StorageMasterKey(REDACTED)");
     }
 
     #[test]
-    fn master_key_debug_is_redacted() {
-        let key = StorageMasterKey::new([0x42; 32]);
-        assert_eq!(format!("{key:?}"), "StorageMasterKey(REDACTED)");
+    fn record_vault_round_trip_returns_guarded_plaintext() {
+        let vault = SodiumRecordVault::generate().expect("vault");
+        let plaintext = b"ENIGMA_PLAINTEXT_CANARY_7CE2";
+        let aad = b"record:v1";
+        let sealed = vault.seal(plaintext, aad).expect("seal");
+
+        assert!(!sealed.windows(plaintext.len()).any(|window| window == plaintext));
+
+        let mut opened = vault.open(&sealed, aad).expect("open");
+        assert_eq!(format!("{opened:?}").contains("7CE2"), false);
+        opened
+            .with_read(|bytes| assert_eq!(bytes, plaintext))
+            .expect("guarded read");
+    }
+
+    #[test]
+    fn wrong_associated_data_fails_authentication() {
+        let vault = SodiumRecordVault::generate().expect("vault");
+        let sealed = vault.seal(b"secret", b"record:a").expect("seal");
+        assert_eq!(
+            vault.open(&sealed, b"record:b").expect_err("must reject"),
+            SodiumError::AuthenticationFailed
+        );
     }
 }
