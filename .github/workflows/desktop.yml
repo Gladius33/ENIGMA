@@ -1,0 +1,61 @@
+name: desktop-ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-cross-platform:
+    name: rust-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.94.1 --profile minimal --component rustfmt,clippy
+      - name: Format
+        run: cargo +1.94.1 fmt --all -- --check
+      - name: Check all targets
+        run: cargo +1.94.1 check --workspace --all-targets
+      - name: Clippy all targets
+        run: cargo +1.94.1 clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test debug
+        run: cargo +1.94.1 test --workspace
+      - name: Test release
+        run: cargo +1.94.1 test --workspace --release
+      - name: Documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo +1.94.1 doc --workspace --no-deps
+
+  unsafe-policy:
+    name: desktop-unsafe-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Enforce unsafe boundary and SAFETY comments
+        run: python3 scripts/audit-desktop-unsafe.py

@@ -1,0 +1,30 @@
+[workspace]
+members = [
+    "crates/enigma-protocol",
+    "crates/enigma-core",
+    "crates/enigma-signal",
+    "crates/enigma-transport",
+    "crates/enigma-storage",
+    "crates/enigma-relay-protocol",
+    "crates/enigma-platform",
+    "crates/enigma-ffi",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.94.1"
+authors = ["Sébastien TOUILLEUX (Gladius33)"]
+license = "MIT"
+repository = "https://github.com/Gladius33/ENIGMA"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

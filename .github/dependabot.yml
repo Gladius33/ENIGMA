@@ -10,11 +10,8 @@ updates:
     open-pull-requests-limit: 10
     groups:
       github-actions-minor-patch:
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
+        patterns: ["*"]
+        update-types: [minor, patch]
 
   - package-ecosystem: cargo
     directory: /server
@@ -26,11 +23,21 @@ updates:
     open-pull-requests-limit: 10
     groups:
       cargo-minor-patch:
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo
+    directory: /desktop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:30"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 10
+    groups:
+      desktop-cargo-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
 
   - package-ecosystem: gradle
     directory: /android
@@ -42,11 +49,8 @@ updates:
     open-pull-requests-limit: 10
     groups:
       gradle-minor-patch:
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
+        patterns: ["*"]
+        update-types: [minor, patch]
 
   - package-ecosystem: docker
     directory: /server
