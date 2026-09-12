@@ -2,10 +2,13 @@
 
 #include "../../include/enigma_core.h"
 
+#include <cstdint>
 #include <stdexcept>
 #include <utility>
 
 namespace enigma {
+
+[[nodiscard]] std::uint32_t linked_core_abi_version() noexcept;
 
 class Core final {
 public:
