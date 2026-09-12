@@ -156,6 +156,13 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
+    const GOLDEN_IDENTITY_PRIVATE_V1: [u8; 32] = [0x42; 32];
+    const GOLDEN_IDENTITY_PUBLIC_V1: [u8; 33] = [
+        0x05, 0x13, 0x2c, 0x44, 0x2b, 0xe0, 0x10, 0xfb, 0xd5, 0x7e, 0x72, 0x60, 0x33, 0x28,
+        0xaa, 0x76, 0xe7, 0x1f, 0xcc, 0xc1, 0x50, 0x3a, 0xae, 0x21, 0x93, 0x27, 0xd1, 0x4d,
+        0x9c, 0x99, 0x93, 0xf4, 0x72,
+    ];
+
     struct ProofVerifier {
         accepts_signature: bool,
     }
@@ -268,6 +275,22 @@ mod tests {
                 expectation(),
             ),
             Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
+        );
+    }
+
+    #[test]
+    fn libsignal_identity_serialization_matches_golden_vector_v1() {
+        let private_key =
+            PrivateKey::deserialize(&GOLDEN_IDENTITY_PRIVATE_V1).expect("fixed private key");
+        let public_key = private_key.public_key().expect("derive public key");
+        let identity = IdentityKey::new(public_key);
+
+        assert_eq!(identity.serialize(), GOLDEN_IDENTITY_PUBLIC_V1);
+        assert_eq!(
+            IdentityKey::decode(&GOLDEN_IDENTITY_PUBLIC_V1)
+                .expect("golden identity must decode")
+                .serialize(),
+            GOLDEN_IDENTITY_PUBLIC_V1
         );
     }
 
