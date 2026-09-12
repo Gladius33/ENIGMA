@@ -4,8 +4,7 @@ use enigma_protocol::CanonicalDeviceAuthorization;
 
 pub const ANDROID_LIBSIGNAL_VERSION: &str = "0.86.5";
 pub const DESKTOP_LIBSIGNAL_TAG: &str = "v0.86.5";
-pub const DESKTOP_LIBSIGNAL_SOURCE_PIN: &str =
-    "b39e93f1a5e6531044dfcdf5876585cbcf08f884";
+pub const DESKTOP_LIBSIGNAL_SOURCE_PIN: &str = "b39e93f1a5e6531044dfcdf5876585cbcf08f884";
 pub const DESKTOP_LIBSIGNAL_INTEROP_VERIFIED: bool = false;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
