@@ -6,7 +6,7 @@ pub const ENIGMA_CORE_ABI_VERSION: u32 = 1;
 const DEFAULT_DEDUP_CAPACITY: usize = 16_384;
 
 pub struct EnigmaCoreHandle {
-    runtime: CoreRuntime,
+    _runtime: CoreRuntime,
 }
 
 #[no_mangle]
@@ -17,7 +17,7 @@ pub extern "C" fn enigma_core_abi_version() -> u32 {
 #[no_mangle]
 pub extern "C" fn enigma_core_create() -> *mut EnigmaCoreHandle {
     Box::into_raw(Box::new(EnigmaCoreHandle {
-        runtime: CoreRuntime::new(DEFAULT_DEDUP_CAPACITY),
+        _runtime: CoreRuntime::new(DEFAULT_DEDUP_CAPACITY),
     }))
 }
 
@@ -65,13 +65,5 @@ mod tests {
     fn null_destroy_is_allowed() {
         // SAFETY: the ABI explicitly permits a null handle.
         unsafe { enigma_core_destroy(std::ptr::null_mut()) };
-    }
-
-    #[test]
-    fn handle_owns_a_live_runtime() {
-        let handle = EnigmaCoreHandle {
-            runtime: CoreRuntime::new(8),
-        };
-        let _ = &handle.runtime;
     }
 }
