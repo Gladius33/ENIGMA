@@ -2,7 +2,9 @@
 
 use std::collections::{HashSet, VecDeque};
 
-use enigma_protocol::{DeviceId, DeviceState, MessageId};
+use enigma_protocol::{
+    CapabilitySet, DeviceId, DeviceState, HistoryTransferManifest, MessageId, ProtocolError,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeviceRelation {
@@ -78,6 +80,83 @@ impl MessageDeduplicator {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HistoryTransferError {
+    InvalidManifest(ProtocolError),
+    MissingHistoryTransferCapability,
+    SourceMismatch,
+    DestinationMismatch,
+    RevokedDevice,
+    Expired,
+    AlreadyConsumed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistoryTransferGuard {
+    manifest: HistoryTransferManifest,
+    consumed: bool,
+}
+
+impl HistoryTransferGuard {
+    pub fn new(
+        manifest: HistoryTransferManifest,
+        now_unix_ms: u64,
+    ) -> Result<Self, HistoryTransferError> {
+        manifest
+            .validate(now_unix_ms)
+            .map_err(HistoryTransferError::InvalidManifest)?;
+        if !manifest
+            .header
+            .capabilities
+            .contains(CapabilitySet::HISTORY_TRANSFER)
+        {
+            return Err(HistoryTransferError::MissingHistoryTransferCapability);
+        }
+        Ok(Self {
+            manifest,
+            consumed: false,
+        })
+    }
+
+    #[must_use]
+    pub const fn manifest(&self) -> &HistoryTransferManifest {
+        &self.manifest
+    }
+
+    #[must_use]
+    pub const fn is_consumed(&self) -> bool {
+        self.consumed
+    }
+
+    pub fn consume(
+        &mut self,
+        source_device_id: DeviceId,
+        source_state: DeviceState,
+        destination_device_id: DeviceId,
+        destination_state: DeviceState,
+        now_unix_ms: u64,
+    ) -> Result<MessageId, HistoryTransferError> {
+        if self.consumed {
+            return Err(HistoryTransferError::AlreadyConsumed);
+        }
+        if now_unix_ms >= self.manifest.expires_at_unix_ms {
+            return Err(HistoryTransferError::Expired);
+        }
+        if source_device_id != self.manifest.source_device_id {
+            return Err(HistoryTransferError::SourceMismatch);
+        }
+        if destination_device_id != self.manifest.destination_device_id {
+            return Err(HistoryTransferError::DestinationMismatch);
+        }
+        if source_state == DeviceState::Revoked || destination_state == DeviceState::Revoked {
+            return Err(HistoryTransferError::RevokedDevice);
+        }
+
+        self.consumed = true;
+        Ok(self.manifest.transfer_id)
+    }
+}
+
 #[derive(Debug)]
 pub struct CoreRuntime {
     deduplicator: MessageDeduplicator,
@@ -100,9 +179,22 @@ impl CoreRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use enigma_protocol::WireHeader;
 
     fn device(byte: u8) -> DeviceId {
         DeviceId::from_bytes([byte; 16])
+    }
+
+    fn history_manifest() -> HistoryTransferManifest {
+        HistoryTransferManifest {
+            header: WireHeader::v1(CapabilitySet::HISTORY_TRANSFER),
+            transfer_id: MessageId::from_bytes([8; 16]),
+            source_device_id: device(1),
+            destination_device_id: device(2),
+            expires_at_unix_ms: 2_000,
+            single_use: true,
+            ciphertext_len: 128,
+        }
     }
 
     #[test]
@@ -157,5 +249,86 @@ mod tests {
         assert!(dedup.observe(message_id));
         assert!(!dedup.observe(message_id));
         assert_eq!(dedup.len(), 1);
+    }
+
+    #[test]
+    fn history_transfer_is_single_use_and_bound_to_active_devices() {
+        let mut guard = HistoryTransferGuard::new(history_manifest(), 1_000).expect("valid manifest");
+        assert_eq!(
+            guard.consume(
+                device(1),
+                DeviceState::Active,
+                device(2),
+                DeviceState::Active,
+                1_500,
+            ),
+            Ok(MessageId::from_bytes([8; 16]))
+        );
+        assert!(guard.is_consumed());
+        assert_eq!(
+            guard.consume(
+                device(1),
+                DeviceState::Active,
+                device(2),
+                DeviceState::Active,
+                1_600,
+            ),
+            Err(HistoryTransferError::AlreadyConsumed)
+        );
+    }
+
+    #[test]
+    fn history_transfer_rejects_wrong_revoked_or_expired_endpoints() {
+        let mut wrong_destination =
+            HistoryTransferGuard::new(history_manifest(), 1_000).expect("valid manifest");
+        assert_eq!(
+            wrong_destination.consume(
+                device(1),
+                DeviceState::Active,
+                device(3),
+                DeviceState::Active,
+                1_500,
+            ),
+            Err(HistoryTransferError::DestinationMismatch)
+        );
+        assert!(!wrong_destination.is_consumed());
+
+        let mut revoked =
+            HistoryTransferGuard::new(history_manifest(), 1_000).expect("valid manifest");
+        assert_eq!(
+            revoked.consume(
+                device(1),
+                DeviceState::Revoked,
+                device(2),
+                DeviceState::Active,
+                1_500,
+            ),
+            Err(HistoryTransferError::RevokedDevice)
+        );
+        assert!(!revoked.is_consumed());
+
+        let mut expired =
+            HistoryTransferGuard::new(history_manifest(), 1_000).expect("valid manifest");
+        assert_eq!(
+            expired.consume(
+                device(1),
+                DeviceState::Active,
+                device(2),
+                DeviceState::Active,
+                2_000,
+            ),
+            Err(HistoryTransferError::Expired)
+        );
+        assert!(!expired.is_consumed());
+    }
+
+    #[test]
+    fn history_transfer_requires_explicit_wire_capability() {
+        let mut manifest = history_manifest();
+        manifest.header = WireHeader::v1(CapabilitySet::MULTI_DEVICE);
+        assert_eq!(
+            HistoryTransferGuard::new(manifest, 1_000),
+            Err(HistoryTransferError::MissingHistoryTransferCapability)
+        );
     }
 }
