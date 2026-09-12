@@ -77,6 +77,13 @@ struct KeyBundleResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct DeviceAuthorizationProof {
+    authorizing_device_id: Uuid,
+    canonical_payload: String,
+    authorizer_signature: String,
+}
+
+#[derive(Debug, Serialize)]
 struct DeviceKeyDiscoveryBundle {
     device_id: Uuid,
     identity_key: String,
@@ -86,6 +93,8 @@ struct DeviceKeyDiscoveryBundle {
     kyber_prekey: Option<KyberPrekeyBundle>,
     one_time_prekey_count: i64,
     prekey_low: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    authorization: Option<DeviceAuthorizationProof>,
 }
 
 #[derive(Debug, Serialize)]
@@ -105,6 +114,8 @@ struct ClaimedDeviceKeyBundle {
     one_time_prekey: Option<OneTimePrekeyBundle>,
     one_time_prekey_count_after_claim: i64,
     prekey_low: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    authorization: Option<DeviceAuthorizationProof>,
 }
 
 #[derive(Debug, Serialize)]
@@ -148,6 +159,9 @@ struct JoinedDeviceKeys {
     kyber_key_id: Option<i64>,
     kyber_public_key: Option<String>,
     kyber_signature: Option<String>,
+    authorization_authorizing_device_id: Option<Uuid>,
+    authorization_payload: Option<String>,
+    authorization_signature: Option<String>,
 }
 
 #[derive(Debug, FromRow)]
@@ -165,6 +179,7 @@ async fn upload_keys(
     auth.ensure_device_id(payload.device_id)?;
     devices::ensure_device_owner(&state, auth.user_id, payload.device_id).await?;
     validate_upload(&payload)?;
+    ensure_authorized_identity_match(&state, payload.device_id, &payload.identity_key).await?;
 
     let mut tx = state.pg.begin().await?;
     sqlx::query(
@@ -258,6 +273,7 @@ async fn discover_key_bundle(
     let rows = fetch_stable_device_keys(&state, user_id).await?;
     let mut devices = Vec::with_capacity(rows.len());
     for row in rows {
+        let authorization = authorization_proof(&row)?;
         let one_time_prekey_count = count_one_time_prekeys(&state, row.device_id).await?;
         devices.push(DeviceKeyDiscoveryBundle {
             device_id: row.device_id,
@@ -272,6 +288,7 @@ async fn discover_key_bundle(
             kyber_prekey: kyber_bundle(row.kyber_key_id, row.kyber_public_key, row.kyber_signature),
             one_time_prekey_count,
             prekey_low: one_time_prekey_count < PREKEY_LOW_WATERMARK,
+            authorization,
         });
     }
 
@@ -298,10 +315,14 @@ async fn claim_prekey(
             sp.signature AS signed_prekey_signature,
             sp.kyber_key_id,
             sp.kyber_public_key,
-            sp.kyber_signature
+            sp.kyber_signature,
+            da.authorizing_device_id AS authorization_authorizing_device_id,
+            da.canonical_payload AS authorization_payload,
+            da.authorizer_signature AS authorization_signature
          FROM devices d
          JOIN identity_keys ik ON ik.device_id = d.id
          JOIN signed_prekeys sp ON sp.device_id = d.id
+         LEFT JOIN device_authorizations da ON da.device_id = d.id
          WHERE d.user_id = $1 AND d.id = $2 AND d.revoked_at IS NULL",
     )
     .bind(user_id)
@@ -310,6 +331,7 @@ async fn claim_prekey(
     .await?
     .ok_or(AppError::NotFound)?;
 
+    let authorization = authorization_proof(&row)?;
     let one_time_prekey = pop_one_time_prekey(&mut tx, device_id).await?;
     let one_time_prekey_count = count_one_time_prekeys_tx(&mut tx, device_id).await?;
     tx.commit().await?;
@@ -333,6 +355,7 @@ async fn claim_prekey(
             }),
             one_time_prekey_count_after_claim: one_time_prekey_count,
             prekey_low: one_time_prekey_count < PREKEY_LOW_WATERMARK,
+            authorization,
         },
     }))
 }
@@ -361,16 +384,65 @@ async fn fetch_stable_device_keys(
             sp.signature AS signed_prekey_signature,
             sp.kyber_key_id,
             sp.kyber_public_key,
-            sp.kyber_signature
+            sp.kyber_signature,
+            da.authorizing_device_id AS authorization_authorizing_device_id,
+            da.canonical_payload AS authorization_payload,
+            da.authorizer_signature AS authorization_signature
          FROM devices d
          JOIN identity_keys ik ON ik.device_id = d.id
          JOIN signed_prekeys sp ON sp.device_id = d.id
+         LEFT JOIN device_authorizations da ON da.device_id = d.id
          WHERE d.user_id = $1 AND d.revoked_at IS NULL
          ORDER BY d.created_at ASC",
     )
     .bind(user_id)
     .fetch_all(&state.pg)
     .await?)
+}
+
+async fn ensure_authorized_identity_match(
+    state: &AppState,
+    device_id: Uuid,
+    identity_key: &str,
+) -> Result<(), AppError> {
+    let certified_identity: Option<String> = sqlx::query_scalar(
+        "SELECT target_identity_key
+         FROM device_authorizations
+         WHERE device_id = $1",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.pg)
+    .await?;
+
+    if let Some(certified_identity) = certified_identity {
+        if certified_identity != identity_key {
+            return Err(AppError::Conflict(
+                "LINKED_DEVICE_IDENTITY_MISMATCH".into(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn authorization_proof(
+    row: &JoinedDeviceKeys,
+) -> Result<Option<DeviceAuthorizationProof>, AppError> {
+    match (
+        row.authorization_authorizing_device_id,
+        row.authorization_payload.as_ref(),
+        row.authorization_signature.as_ref(),
+    ) {
+        (None, None, None) => Ok(None),
+        (Some(authorizing_device_id), Some(canonical_payload), Some(authorizer_signature)) => {
+            Ok(Some(DeviceAuthorizationProof {
+                authorizing_device_id,
+                canonical_payload: canonical_payload.clone(),
+                authorizer_signature: authorizer_signature.clone(),
+            }))
+        }
+        _ => Err(AppError::Internal),
+    }
 }
 
 fn kyber_bundle(
