@@ -12,6 +12,12 @@ libsignal is an upstream Signal project and retains its upstream copyright and l
 
 Upstream project: https://github.com/signalapp/libsignal
 
+## libsodium / Rust bindings
+
+The desktop secure-memory and local-record encryption boundary uses `libsodium-sys-stable 1.24.0`, which is distributed under `MIT OR Apache-2.0`, and builds/links libsodium. libsodium and its bindings retain their upstream copyright and license notices.
+
+Upstream bindings: https://github.com/jedisct1/libsodium-sys-stable
+
 ## Other dependencies
 
 Rust, Android, .NET/Windows, Qt/Linux and build-time dependencies retain their respective upstream licenses. Lockfiles and dependency manifests define the exact dependency graph used by a build.
