@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
 use enigma_protocol::CanonicalDeviceAuthorization;
-use libsignal_protocol::IdentityKey;
 
 pub const ANDROID_LIBSIGNAL_VERSION: &str = "0.86.5";
 pub const DESKTOP_LIBSIGNAL_TAG: &str = "v0.86.5";
@@ -93,12 +92,6 @@ pub fn verify_device_authorization_proof<A: SignalAdapter>(
         true => Ok(()),
         false => Err(SignalAdapterError::InvalidDeviceAuthorizationProof),
     }
-}
-
-pub fn validate_libsignal_identity_key(serialized: &[u8]) -> Result<Vec<u8>, SignalAdapterError> {
-    let identity = IdentityKey::decode(serialized)
-        .map_err(|_| SignalAdapterError::InvalidBundle)?;
-    Ok(identity.serialize().into_vec())
 }
 
 #[must_use]
@@ -229,14 +222,6 @@ mod tests {
                 expectation(),
             ),
             Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
-        );
-    }
-
-    #[test]
-    fn real_libsignal_backend_rejects_malformed_identity_keys() {
-        assert_eq!(
-            validate_libsignal_identity_key(&[1, 2, 3]),
-            Err(SignalAdapterError::InvalidBundle)
         );
     }
 
