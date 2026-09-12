@@ -78,13 +78,7 @@ async fn certified_desktop_linking_is_bound_replay_safe_and_revocable() {
     let android_token = android["access_token"].as_str().expect("android token");
 
     let android_identity = key_material("android-authorizer-identity-key-0001");
-    upload_keys(
-        app.clone(),
-        android_token,
-        android_id,
-        &android_identity,
-    )
-    .await;
+    upload_keys(app.clone(), android_token, android_id, &android_identity).await;
 
     let desktop_id = Uuid::new_v4();
     let pairing_session_id = Uuid::new_v4();
@@ -156,10 +150,7 @@ async fn certified_desktop_linking_is_bound_replay_safe_and_revocable() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{mismatch}");
-    assert_eq!(
-        mismatch["error_code"],
-        "LINKED_DEVICE_IDENTITY_MISMATCH"
-    );
+    assert_eq!(mismatch["error_code"], "LINKED_DEVICE_IDENTITY_MISMATCH");
 
     upload_keys(
         app.clone(),
@@ -200,14 +191,8 @@ async fn certified_desktop_linking_is_bound_replay_safe_and_revocable() {
     .await;
     assert_eq!(status, StatusCode::OK, "{revoked}");
 
-    let (status, stale) = request_json(
-        app,
-        Method::GET,
-        "/v1/devices",
-        Some(&desktop_token),
-        None,
-    )
-    .await;
+    let (status, stale) =
+        request_json(app, Method::GET, "/v1/devices", Some(&desktop_token), None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{stale}");
 }
 
