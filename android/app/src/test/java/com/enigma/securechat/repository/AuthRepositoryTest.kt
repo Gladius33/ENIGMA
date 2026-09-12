@@ -46,6 +46,7 @@ class AuthRepositoryTest {
             AuthResponseDto("session", "Bearer", 3600, UserDto("user-1", body.publicId))
 
         override suspend fun registerDevice(body: DeviceRegisterRequestDto): DeviceRegisterResponseDto = unsupported()
+        override suspend fun authorizeLinkedDesktop(body: AuthorizeLinkedDesktopRequestDto): LinkedDesktopResponseDto = unsupported()
         override suspend fun updateFcmToken(body: FcmTokenRequestDto): StatusResponseDto = unsupported()
         override suspend fun devices(): DevicesResponseDto = unsupported()
         override suspend fun deleteDevice(deviceId: String): StatusResponseDto = unsupported()
