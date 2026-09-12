@@ -96,7 +96,8 @@ pub fn verify_device_authorization_proof<A: SignalAdapter>(
 }
 
 pub fn validate_libsignal_identity_key(serialized: &[u8]) -> Result<Vec<u8>, SignalAdapterError> {
-    let identity = IdentityKey::decode(serialized).map_err(|_| SignalAdapterError::InvalidBundle)?;
+    let identity = IdentityKey::decode(serialized)
+        .map_err(|_| SignalAdapterError::InvalidBundle)?;
     Ok(identity.serialize().into_vec())
 }
 
