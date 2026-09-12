@@ -153,8 +153,8 @@ fn is_full_lower_hex_sha(value: &str) -> bool {
 mod tests {
     use super::*;
     use libsignal_protocol::PrivateKey;
-    use rand::SeedableRng;
     use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     struct ProofVerifier {
         accepts_signature: bool,
