@@ -253,7 +253,8 @@ mod tests {
 
     #[test]
     fn history_transfer_is_single_use_and_bound_to_active_devices() {
-        let mut guard = HistoryTransferGuard::new(history_manifest(), 1_000).expect("valid manifest");
+        let mut guard =
+            HistoryTransferGuard::new(history_manifest(), 1_000).expect("valid manifest");
         assert_eq!(
             guard.consume(
                 device(1),
