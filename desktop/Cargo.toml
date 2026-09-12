@@ -5,6 +5,7 @@ members = [
     "crates/enigma-signal",
     "crates/enigma-transport",
     "crates/enigma-storage",
+    "crates/enigma-sodium",
     "crates/enigma-relay-protocol",
     "crates/enigma-platform",
     "crates/enigma-ffi",
