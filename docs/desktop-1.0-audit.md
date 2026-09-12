@@ -37,11 +37,15 @@ La dépendance libsignal conserve sa propre attribution/licence et ne doit jamai
 
 **RELEASE GATE:** le contrôle CI de politique de licence doit rester vert et les notices tierces doivent être conservées.
 
-### SIG-001 — pin exact libsignal desktop
+### SIG-001 — libsignal desktop / interop — PARTIALLY RESOLVED
 
-`enigma-signal` doit isoler un backend libsignal épinglé à une version/révision exacte auditée. `main`, `master` et `latest` sont interdits.
+La version Android reste `0.86.5`. Le tag correspondant `v0.86.5` est désormais relié à la révision source immuable :
 
-**BLOCK RELEASE** tant que ce pin et ses golden vectors ne sont pas validés.
+`b39e93f1a5e6531044dfcdf5876585cbcf08f884`
+
+`enigma-signal` conserve ce SHA complet comme pin de référence. `main`, `master`, `latest` et un tag seul sont interdits comme source de build RC.
+
+**BLOCK RELEASE** reste actif jusqu'à ce que le backend libsignal desktop réel utilise cette révision et que les golden vectors Android ↔ Windows ↔ Linux soient validés. Un pin source seul ne rend pas le backend release-ready.
 
 ### REAL-LAB-001
 
