@@ -22,7 +22,9 @@ pub struct DeliveryPlanner {
 impl DeliveryPlanner {
     #[must_use]
     pub const fn new() -> Self {
-        Self { state: DeliveryState::Attempt(Route::DirectP2p) }
+        Self {
+            state: DeliveryState::Attempt(Route::DirectP2p),
+        }
     }
 
     #[must_use]
@@ -30,6 +32,11 @@ impl DeliveryPlanner {
         self.state
     }
 
+    /// Advances after a failed attempt.
+    ///
+    /// If the peer is known to be offline, TURN is skipped because there is no
+    /// live peer to transit to and the encrypted store-and-forward relay is the
+    /// only availability path.
     pub fn failed_attempt(&mut self, peer_online: bool) {
         self.state = match self.state {
             DeliveryState::Attempt(Route::DirectP2p) if peer_online => {
@@ -67,13 +74,19 @@ mod tests {
         planner.failed_attempt(true);
         assert_eq!(planner.state(), DeliveryState::Attempt(Route::TurnTransit));
         planner.failed_attempt(true);
-        assert_eq!(planner.state(), DeliveryState::Attempt(Route::TemporaryRelay));
+        assert_eq!(
+            planner.state(),
+            DeliveryState::Attempt(Route::TemporaryRelay)
+        );
     }
 
     #[test]
     fn offline_peer_goes_direct_then_store_and_forward() {
         let mut planner = DeliveryPlanner::new();
         planner.failed_attempt(false);
-        assert_eq!(planner.state(), DeliveryState::Attempt(Route::TemporaryRelay));
+        assert_eq!(
+            planner.state(),
+            DeliveryState::Attempt(Route::TemporaryRelay)
+        );
     }
 }

@@ -58,7 +58,10 @@ impl OpaqueRelayEnvelope {
 
     #[must_use]
     pub const fn must_delete(&self) -> bool {
-        matches!(self.state, RelayDeliveryState::Acknowledged | RelayDeliveryState::Expired)
+        matches!(
+            self.state,
+            RelayDeliveryState::Acknowledged | RelayDeliveryState::Expired
+        )
     }
 }
 
@@ -80,7 +83,8 @@ mod tests {
             1_000,
             2_000,
             vec![0xAA],
-        ).expect("valid relay envelope");
+        )
+        .expect("valid relay envelope");
         assert!(!envelope.must_delete());
         envelope.acknowledge();
         assert!(envelope.must_delete());
@@ -94,7 +98,8 @@ mod tests {
             1_000,
             2_000,
             vec![0xAA],
-        ).expect("valid relay envelope");
+        )
+        .expect("valid relay envelope");
         envelope.refresh_expiry_state(2_000);
         assert_eq!(envelope.state(), RelayDeliveryState::Expired);
         assert!(envelope.must_delete());

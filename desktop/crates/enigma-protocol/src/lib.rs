@@ -9,12 +9,16 @@ pub const MAX_DEVICE_IDENTITY_BYTES: usize = 4096;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AccountId([u8; 16]);
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DeviceId([u8; 16]);
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MessageId([u8; 16]);
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PairingSessionId([u8; 16]);
+
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MailboxId([u8; 32]);
 
@@ -22,9 +26,14 @@ macro_rules! impl_id16 {
     ($name:ident) => {
         impl $name {
             #[must_use]
-            pub const fn from_bytes(bytes: [u8; 16]) -> Self { Self(bytes) }
+            pub const fn from_bytes(bytes: [u8; 16]) -> Self {
+                Self(bytes)
+            }
+
             #[must_use]
-            pub const fn as_bytes(&self) -> &[u8; 16] { &self.0 }
+            pub const fn as_bytes(&self) -> &[u8; 16] {
+                &self.0
+            }
         }
     };
 }
@@ -36,9 +45,14 @@ impl_id16!(PairingSessionId);
 
 impl MailboxId {
     #[must_use]
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self { Self(bytes) }
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     #[must_use]
-    pub const fn as_bytes(&self) -> &[u8; 32] { &self.0 }
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
 }
 
 impl fmt::Debug for MailboxId {
@@ -60,13 +74,24 @@ impl CapabilitySet {
     pub const HISTORY_TRANSFER: Self = Self(1 << 6);
 
     #[must_use]
-    pub const fn empty() -> Self { Self(0) }
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
     #[must_use]
-    pub const fn bits(self) -> u64 { self.0 }
+    pub const fn bits(self) -> u64 {
+        self.0
+    }
+
     #[must_use]
-    pub const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
     #[must_use]
-    pub const fn contains(self, other: Self) -> bool { (self.0 & other.0) == other.0 }
+    pub const fn contains(self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -100,7 +125,10 @@ impl WireHeader {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DeviceState { Active, Revoked }
+pub enum DeviceState {
+    Active,
+    Revoked,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PairingQrPayload {
@@ -244,7 +272,9 @@ pub enum ProtocolError {
 mod tests {
     use super::*;
 
-    fn device(byte: u8) -> DeviceId { DeviceId::from_bytes([byte; 16]) }
+    fn device(byte: u8) -> DeviceId {
+        DeviceId::from_bytes([byte; 16])
+    }
 
     #[test]
     fn version_negotiation_fails_closed() {

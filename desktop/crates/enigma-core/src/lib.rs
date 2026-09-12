@@ -57,9 +57,11 @@ impl MessageDeduplicator {
             return false;
         }
         self.order.push_back(message_id);
-        if self.order.len() > self.capacity
-            && let Some(evicted) = self.order.pop_front()
-        {
+        if self.order.len() > self.capacity {
+            let evicted = self
+                .order
+                .pop_front()
+                .expect("deduplication queue must be non-empty after insertion");
             self.seen.remove(&evicted);
         }
         true
@@ -110,10 +112,26 @@ mod tests {
         let b1 = device(3);
         let b2 = device(4);
         let targets = [
-            DeviceTarget { device_id: b1, state: DeviceState::Active, relation: DeviceRelation::Contact },
-            DeviceTarget { device_id: b2, state: DeviceState::Active, relation: DeviceRelation::Contact },
-            DeviceTarget { device_id: a2, state: DeviceState::Active, relation: DeviceRelation::SameAccount },
-            DeviceTarget { device_id: a1, state: DeviceState::Active, relation: DeviceRelation::SameAccount },
+            DeviceTarget {
+                device_id: b1,
+                state: DeviceState::Active,
+                relation: DeviceRelation::Contact,
+            },
+            DeviceTarget {
+                device_id: b2,
+                state: DeviceState::Active,
+                relation: DeviceRelation::Contact,
+            },
+            DeviceTarget {
+                device_id: a2,
+                state: DeviceState::Active,
+                relation: DeviceRelation::SameAccount,
+            },
+            DeviceTarget {
+                device_id: a1,
+                state: DeviceState::Active,
+                relation: DeviceRelation::SameAccount,
+            },
         ];
         let planned = plan_fanout(a1, &targets);
         assert_eq!(planned.len(), 3);
