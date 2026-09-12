@@ -36,6 +36,9 @@ jobs:
       - name: Project secret/log policy
         run: ./scripts/audit-secret-logs.sh
 
+      - name: Enforce AGPL-3.0-only repository policy
+        run: python3 ./scripts/audit-license-policy.py
+
       - name: ShellCheck
         run: |
           shellcheck --version
