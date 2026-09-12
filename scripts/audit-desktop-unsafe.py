@@ -4,7 +4,7 @@ import re
 import sys
 
 ROOT = Path("desktop/crates")
-ALLOWED = {"enigma-ffi", "enigma-platform"}
+ALLOWED = {"enigma-ffi", "enigma-platform", "enigma-sodium"}
 failures: list[str] = []
 
 for path in sorted(ROOT.glob("*/src/**/*.rs")):
@@ -35,4 +35,4 @@ for crate_dir in sorted(ROOT.iterdir()):
 if failures:
     print("\n".join(failures))
     sys.exit(1)
-print("Desktop unsafe policy OK: unsafe is confined to reviewed FFI/platform boundaries.")
+print("Desktop unsafe policy OK: unsafe is confined to reviewed FFI/platform/libsodium boundaries.")
