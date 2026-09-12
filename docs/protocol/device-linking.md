@@ -30,6 +30,42 @@ Le payload est signé au moyen d'une primitive d'identité établie via libsigna
 
 `DeviceAuthorizationCertificate = payload canonique + signature de l'authorizer`.
 
+### Transcript canonique v1
+
+La signature porte exactement sur les octets UTF-8 suivants, avec des noms de champs fixes, des UUID canoniques minuscules, l'ordre ci-dessous et un `\n` final. Aucun champ supplémentaire n'est toléré :
+
+```text
+ENIGMA_DEVICE_LINK_V1
+account_id=<uuid>
+new_device_id=<uuid>
+authorizing_device_id=<uuid>
+pairing_session_id=<uuid>
+platform=<windows|linux>
+protocol_version=1
+min_supported_version=1
+capabilities=<u64 decimal>
+issued_at_unix_ms=<u64 decimal>
+target_identity_key=<base64 public Signal identity>
+authorizer_identity_key=<base64 public Signal identity>
+```
+
+Le bit `MULTI_DEVICE` (`1 << 2`) est obligatoire dans `capabilities`. Toute différence de casse, ordre, séparateur, identifiant, identité publique ou signature fait échouer la vérification.
+
+Android construit ce transcript avec son `account_id`, son propre `authorizing_device_id` et sa véritable identité publique Signal, puis appelle la primitive de signature d'identité de libsignal. Le serveur persiste le transcript et la signature sans les réécrire. Le desktop les revalide contre les paramètres de la session d'appairage et l'identité connue de l'authorizer.
+
+### QR de bootstrap v1
+
+Le QR `enigma.pair_device` contient uniquement :
+
+- `version=1` ;
+- `protocol_version=1` et `min_supported_version=1` ;
+- `capabilities`, incluant `MULTI_DEVICE` ;
+- `pairing_session_id` aléatoire ;
+- `expires_at_unix_ms` court-vivant ;
+- `pairing_public_key` publique et bornée.
+
+Le QR ne contient ni token device/account, ni identité privée Signal, ni secret de coffre. L'identité Signal publique candidate du desktop et les autres paramètres d'admission sont transmis dans le canal d'appairage authentifié établi à partir de ce bootstrap.
+
 ## 4. Admission
 
 Le serveur n'accepte l'admission que dans une session courte liée à un compte/device authentifié et non révoqué. Le certificat est conservé comme preuve publique du registre de devices.
