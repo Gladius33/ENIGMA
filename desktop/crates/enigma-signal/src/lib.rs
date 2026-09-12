@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use enigma_protocol::CanonicalDeviceAuthorization;
+use libsignal_protocol::IdentityKey;
 
 pub const ANDROID_LIBSIGNAL_VERSION: &str = "0.86.5";
 pub const DESKTOP_LIBSIGNAL_TAG: &str = "v0.86.5";
@@ -44,6 +45,46 @@ pub trait SignalAdapter {
         transcript: &[u8],
         signature: &[u8],
     ) -> Result<bool, SignalAdapterError>;
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct LibsignalIdentityProofVerifier;
+
+impl SignalAdapter for LibsignalIdentityProofVerifier {
+    fn public_bundle(&self) -> Result<SignalPublicBundle, SignalAdapterError> {
+        Err(SignalAdapterError::SessionUnavailable)
+    }
+
+    fn encrypt_for_device(
+        &mut self,
+        _remote_device_id: &[u8],
+        _plaintext: &[u8],
+    ) -> Result<Vec<u8>, SignalAdapterError> {
+        Err(SignalAdapterError::SessionUnavailable)
+    }
+
+    fn decrypt_from_device(
+        &mut self,
+        _remote_device_id: &[u8],
+        _ciphertext: &[u8],
+    ) -> Result<Vec<u8>, SignalAdapterError> {
+        Err(SignalAdapterError::SessionUnavailable)
+    }
+
+    fn sign_identity_proof(&self, _transcript: &[u8]) -> Result<Vec<u8>, SignalAdapterError> {
+        Err(SignalAdapterError::SessionUnavailable)
+    }
+
+    fn verify_identity_proof(
+        &self,
+        remote_identity_public: &[u8],
+        transcript: &[u8],
+        signature: &[u8],
+    ) -> Result<bool, SignalAdapterError> {
+        let identity = IdentityKey::decode(remote_identity_public)
+            .map_err(|_| SignalAdapterError::CryptoFailure)?;
+        Ok(identity.public_key().verify_signature(transcript, signature))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -222,6 +263,15 @@ mod tests {
                 expectation(),
             ),
             Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
+        );
+    }
+
+    #[test]
+    fn libsignal_verifier_rejects_malformed_identity_keys() {
+        let verifier = LibsignalIdentityProofVerifier;
+        assert_eq!(
+            verifier.verify_identity_proof(&[1, 2, 3], b"transcript", &[7; 64]),
+            Err(SignalAdapterError::CryptoFailure)
         );
     }
 
