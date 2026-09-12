@@ -3,7 +3,10 @@
 use enigma_protocol::CanonicalDeviceAuthorization;
 
 pub const ANDROID_LIBSIGNAL_VERSION: &str = "0.86.5";
-pub const DESKTOP_LIBSIGNAL_SOURCE_PIN: Option<&str> = None;
+pub const DESKTOP_LIBSIGNAL_TAG: &str = "v0.86.5";
+pub const DESKTOP_LIBSIGNAL_SOURCE_PIN: &str =
+    "b39e93f1a5e6531044dfcdf5876585cbcf08f884";
+pub const DESKTOP_LIBSIGNAL_INTEROP_VERIFIED: bool = false;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SignalPublicBundle {
@@ -93,8 +96,15 @@ pub fn verify_device_authorization_proof<A: SignalAdapter>(
 }
 
 #[must_use]
-pub const fn desktop_backend_release_ready() -> bool {
-    DESKTOP_LIBSIGNAL_SOURCE_PIN.is_some()
+pub fn desktop_backend_release_ready() -> bool {
+    is_full_lower_hex_sha(DESKTOP_LIBSIGNAL_SOURCE_PIN) && DESKTOP_LIBSIGNAL_INTEROP_VERIFIED
+}
+
+fn is_full_lower_hex_sha(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 #[cfg(test)]
@@ -217,7 +227,18 @@ mod tests {
     }
 
     #[test]
-    fn release_is_blocked_until_desktop_libsignal_is_exactly_pinned() {
+    fn desktop_libsignal_source_is_pinned_to_full_immutable_sha() {
+        assert_eq!(DESKTOP_LIBSIGNAL_TAG, "v0.86.5");
+        assert!(is_full_lower_hex_sha(DESKTOP_LIBSIGNAL_SOURCE_PIN));
+        assert_eq!(
+            DESKTOP_LIBSIGNAL_SOURCE_PIN,
+            "b39e93f1a5e6531044dfcdf5876585cbcf08f884"
+        );
+    }
+
+    #[test]
+    fn release_remains_blocked_until_cross_platform_interop_is_verified() {
+        assert!(!DESKTOP_LIBSIGNAL_INTEROP_VERIFIED);
         assert!(!desktop_backend_release_ready());
     }
 }
