@@ -152,6 +152,9 @@ fn is_full_lower_hex_sha(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libsignal_protocol::PrivateKey;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     struct ProofVerifier {
         accepts_signature: bool,
@@ -265,6 +268,32 @@ mod tests {
                 expectation(),
             ),
             Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
+        );
+    }
+
+    #[test]
+    fn libsignal_verifier_accepts_valid_signature_and_rejects_tampering() {
+        let private_key = PrivateKey::deserialize(&[0x42; 32]).expect("fixed private key");
+        let public_key = private_key.public_key().expect("derive public key");
+        let identity = IdentityKey::new(public_key);
+        let transcript = b"ENIGMA_DEVICE_LINK_V1\ninterop-proof";
+        let mut rng = StdRng::from_seed([0x24; 32]);
+        let signature = private_key
+            .calculate_signature(transcript, &mut rng)
+            .expect("libsignal signature");
+        let verifier = LibsignalIdentityProofVerifier;
+
+        assert_eq!(
+            verifier.verify_identity_proof(&identity.serialize(), transcript, &signature),
+            Ok(true)
+        );
+        assert_eq!(
+            verifier.verify_identity_proof(
+                &identity.serialize(),
+                b"ENIGMA_DEVICE_LINK_V1\ninterop-proof-tampered",
+                &signature,
+            ),
+            Ok(false)
         );
     }
 
