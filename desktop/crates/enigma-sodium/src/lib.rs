@@ -352,7 +352,9 @@ mod tests {
         let plaintext = b"never store this plaintext";
         let aad = b"conversation:42";
         let sealed = vault.seal(plaintext, aad).expect("seal");
-        assert!(!sealed.windows(plaintext.len()).any(|window| window == plaintext));
+        assert!(!sealed
+            .windows(plaintext.len())
+            .any(|window| window == plaintext));
 
         let mut opened = vault.open(&sealed, aad).expect("open");
         opened
