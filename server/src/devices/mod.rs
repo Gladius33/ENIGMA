@@ -598,12 +598,11 @@ async fn enforce_device_plan_limit(
         .execute(&mut **tx)
         .await?;
     let plan = business::active_plan_tx(tx, user_id).await?;
-    let active_devices: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM devices WHERE user_id=$1 AND revoked_at IS NULL",
-    )
-    .bind(user_id)
-    .fetch_one(&mut **tx)
-    .await?;
+    let active_devices: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM devices WHERE user_id=$1 AND revoked_at IS NULL")
+            .bind(user_id)
+            .fetch_one(&mut **tx)
+            .await?;
     if active_devices >= i64::from(plan.max_devices.max(0)) {
         return Err(AppError::BadRequest("DEVICE_PLAN_LIMIT_REACHED".into()));
     }
@@ -644,8 +643,7 @@ mod tests {
 
     fn request() -> AuthorizeLinkedDesktopRequest {
         AuthorizeLinkedDesktopRequest {
-            device_id: Uuid::parse_str("11111111-1111-4111-8111-111111111111")
-                .expect("device id"),
+            device_id: Uuid::parse_str("11111111-1111-4111-8111-111111111111").expect("device id"),
             display_name: "Desktop".into(),
             platform: "windows".into(),
             pairing_session_id: Uuid::parse_str("22222222-2222-4222-8222-222222222222")
@@ -689,11 +687,7 @@ mod tests {
 
     #[test]
     fn partial_authorization_record_fails_closed() {
-        let result = authorization_from_parts(
-            Some(Uuid::new_v4()),
-            Some("payload".into()),
-            None,
-        );
+        let result = authorization_from_parts(Some(Uuid::new_v4()), Some("payload".into()), None);
         assert!(matches!(result, Err(AppError::Internal)));
     }
 }
