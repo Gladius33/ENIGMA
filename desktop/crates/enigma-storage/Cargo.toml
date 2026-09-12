@@ -7,5 +7,8 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[dependencies]
+enigma-sodium = { path = "../enigma-sodium" }
+
 [lints]
 workspace = true
