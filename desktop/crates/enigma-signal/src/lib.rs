@@ -283,18 +283,15 @@ mod tests {
             .expect("libsignal signature");
         let verifier = LibsignalIdentityProofVerifier;
 
-        assert_eq!(
-            verifier.verify_identity_proof(&identity.serialize(), transcript, &signature),
-            Ok(true)
+        let valid = verifier.verify_identity_proof(&identity.serialize(), transcript, &signature);
+        assert_eq!(valid, Ok(true));
+
+        let tampered = verifier.verify_identity_proof(
+            &identity.serialize(),
+            b"ENIGMA_DEVICE_LINK_V1\ninterop-proof-tampered",
+            &signature,
         );
-        assert_eq!(
-            verifier.verify_identity_proof(
-                &identity.serialize(),
-                b"ENIGMA_DEVICE_LINK_V1\ninterop-proof-tampered",
-                &signature,
-            ),
-            Ok(false)
-        );
+        assert_eq!(tampered, Ok(false));
     }
 
     #[test]
