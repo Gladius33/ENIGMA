@@ -17,10 +17,7 @@ impl SecretBytes {
         self.0.is_empty()
     }
 
-    pub fn with_read<R>(
-        &mut self,
-        operation: impl FnOnce(&[u8]) -> R,
-    ) -> Result<R, SodiumError> {
+    pub fn with_read<R>(&mut self, operation: impl FnOnce(&[u8]) -> R) -> Result<R, SodiumError> {
         self.0.with_read(operation)
     }
 }
