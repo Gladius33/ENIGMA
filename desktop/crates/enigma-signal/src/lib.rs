@@ -280,8 +280,8 @@ mod tests {
 
     #[test]
     fn libsignal_identity_serialization_matches_golden_vector_v1() {
-        let private_key =
-            PrivateKey::deserialize(&GOLDEN_IDENTITY_PRIVATE_V1).expect("fixed private key");
+        let private_key = PrivateKey::deserialize(&GOLDEN_IDENTITY_PRIVATE_V1)
+            .expect("fixed private key");
         let public_key = private_key.public_key().expect("derive public key");
         let identity = IdentityKey::new(public_key);
 
