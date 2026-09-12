@@ -416,9 +416,7 @@ async fn ensure_authorized_identity_match(
 
     if let Some(certified_identity) = certified_identity {
         if certified_identity != identity_key {
-            return Err(AppError::Conflict(
-                "LINKED_DEVICE_IDENTITY_MISMATCH".into(),
-            ));
+            return Err(AppError::Conflict("LINKED_DEVICE_IDENTITY_MISMATCH".into()));
         }
     }
 
