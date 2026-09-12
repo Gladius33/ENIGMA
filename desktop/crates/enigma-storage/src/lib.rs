@@ -95,11 +95,7 @@ impl RecordVault for SodiumRecordVault {
         self.inner.seal(plaintext, associated_data)
     }
 
-    fn open(
-        &self,
-        ciphertext: &[u8],
-        associated_data: &[u8],
-    ) -> Result<SecretBytes, Self::Error> {
+    fn open(&self, ciphertext: &[u8], associated_data: &[u8]) -> Result<SecretBytes, Self::Error> {
         self.inner
             .open(ciphertext, associated_data)
             .map(SecretBytes::from)
@@ -131,7 +127,9 @@ mod tests {
         let aad = b"record:v1";
         let sealed = vault.seal(plaintext, aad).expect("seal");
 
-        assert!(!sealed.windows(plaintext.len()).any(|window| window == plaintext));
+        assert!(!sealed
+            .windows(plaintext.len())
+            .any(|window| window == plaintext));
 
         let mut opened = vault.open(&sealed, aad).expect("open");
         assert!(!format!("{opened:?}").contains("7CE2"));
