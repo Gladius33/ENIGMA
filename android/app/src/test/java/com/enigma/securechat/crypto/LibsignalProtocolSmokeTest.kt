@@ -2,6 +2,7 @@ package com.enigma.securechat.crypto
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.signal.libsignal.protocol.IdentityKey
 import org.signal.libsignal.protocol.IdentityKeyPair
@@ -87,21 +88,38 @@ class LibsignalProtocolSmokeTest {
         val aliceCipher = SessionCipher(aliceStore, bobAddress)
         val firstPlaintext = "bonjour depuis libsignal".toByteArray(Charsets.UTF_8)
         val firstCiphertext = aliceCipher.encrypt(firstPlaintext)
+        val firstSerialized = firstCiphertext.serialize()
 
         assertEquals(CiphertextMessage.PREKEY_TYPE, firstCiphertext.type)
+        assertFalse(firstSerialized.containsSubsequence(firstPlaintext))
 
         val bobCipher = SessionCipher(bobStore, aliceAddress)
         val decryptedFirst = bobCipher.decrypt(
-            PreKeySignalMessage(firstCiphertext.serialize()),
+            PreKeySignalMessage(firstSerialized),
         )
 
         assertArrayEquals(firstPlaintext, decryptedFirst)
 
         val replyPlaintext = "reponse libsignal".toByteArray(Charsets.UTF_8)
         val replyCiphertext = bobCipher.encrypt(replyPlaintext)
-        val decryptedReply = aliceCipher.decrypt(SignalMessage(replyCiphertext.serialize()))
+        val replySerialized = replyCiphertext.serialize()
+
+        assertEquals(CiphertextMessage.WHISPER_TYPE, replyCiphertext.type)
+        assertFalse(replySerialized.containsSubsequence(replyPlaintext))
+
+        val decryptedReply = aliceCipher.decrypt(SignalMessage(replySerialized))
 
         assertArrayEquals(replyPlaintext, decryptedReply)
+    }
+
+    private fun ByteArray.containsSubsequence(needle: ByteArray): Boolean {
+        if (needle.isEmpty() || needle.size > size) return false
+        return indices
+            .asSequence()
+            .take(size - needle.size + 1)
+            .any { start ->
+                needle.indices.all { offset -> this[start + offset] == needle[offset] }
+            }
     }
 
     private fun createAndStorePreKeyBundle(
