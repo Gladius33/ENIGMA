@@ -62,11 +62,13 @@ impl OpaqueRelayEnvelope {
 
     pub fn acknowledge(&mut self) {
         self.state = RelayDeliveryState::Acknowledged;
+        self.purge_ciphertext();
     }
 
     pub fn refresh_expiry_state(&mut self, now_unix_ms: u64) {
         if self.state == RelayDeliveryState::Pending && now_unix_ms >= self.expires_at_unix_ms {
             self.state = RelayDeliveryState::Expired;
+            self.purge_ciphertext();
         }
     }
 
@@ -76,6 +78,11 @@ impl OpaqueRelayEnvelope {
             self.state,
             RelayDeliveryState::Acknowledged | RelayDeliveryState::Expired
         )
+    }
+
+    fn purge_ciphertext(&mut self) {
+        self.ciphertext.fill(0);
+        self.ciphertext.clear();
     }
 }
 
@@ -90,33 +97,60 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ack_requires_delete() {
+    fn ack_requires_delete_and_purges_ciphertext() {
         let mut envelope = OpaqueRelayEnvelope::new(
             MailboxId::from_bytes([1; 32]),
             MessageId::from_bytes([2; 16]),
             1_000,
             2_000,
-            vec![0xAA],
+            vec![0xAA, 0xBB, 0xCC],
         )
         .expect("valid relay envelope");
         assert!(!envelope.must_delete());
+        assert!(!envelope.ciphertext.is_empty());
+
         envelope.acknowledge();
+
         assert!(envelope.must_delete());
+        assert_eq!(envelope.state(), RelayDeliveryState::Acknowledged);
+        assert!(envelope.ciphertext.is_empty());
     }
 
     #[test]
-    fn expiry_requires_delete() {
+    fn expiry_requires_delete_and_purges_ciphertext() {
         let mut envelope = OpaqueRelayEnvelope::new(
             MailboxId::from_bytes([1; 32]),
             MessageId::from_bytes([2; 16]),
             1_000,
             2_000,
-            vec![0xAA],
+            vec![0xAA, 0xBB, 0xCC],
         )
         .expect("valid relay envelope");
+        assert!(!envelope.ciphertext.is_empty());
+
         envelope.refresh_expiry_state(2_000);
+
         assert_eq!(envelope.state(), RelayDeliveryState::Expired);
         assert!(envelope.must_delete());
+        assert!(envelope.ciphertext.is_empty());
+    }
+
+    #[test]
+    fn ciphertext_is_retained_before_expiry() {
+        let mut envelope = OpaqueRelayEnvelope::new(
+            MailboxId::from_bytes([1; 32]),
+            MessageId::from_bytes([2; 16]),
+            1_000,
+            2_000,
+            vec![0xAA, 0xBB, 0xCC],
+        )
+        .expect("valid relay envelope");
+
+        envelope.refresh_expiry_state(1_999);
+
+        assert_eq!(envelope.state(), RelayDeliveryState::Pending);
+        assert_eq!(envelope.ciphertext, vec![0xAA, 0xBB, 0xCC]);
+        assert!(!envelope.must_delete());
     }
 
     #[test]
