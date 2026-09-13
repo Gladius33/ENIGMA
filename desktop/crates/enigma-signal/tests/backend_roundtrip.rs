@@ -3,9 +3,8 @@ use std::time::{Duration, SystemTime};
 use enigma_signal::session::{LibsignalSessionBackend, SessionMessageType};
 use futures_util::FutureExt;
 use libsignal_protocol::{
-    kem, DeviceId, GenericSignedPreKey, IdentityKeyPair, KeyPair, KyberPreKeyRecord,
-    KyberPreKeyStore, PreKeyBundle, PreKeyRecord, PreKeyStore, ProtocolAddress, SignedPreKeyRecord,
-    SignedPreKeyStore, Timestamp,
+    kem, DeviceId, GenericSignedPreKey, IdentityKeyPair, KeyPair, KyberPreKeyRecord, PreKeyBundle,
+    PreKeyRecord, ProtocolAddress, SignedPreKeyRecord, Timestamp,
 };
 use rand::{rngs::StdRng, SeedableRng};
 
@@ -61,42 +60,31 @@ fn public_backend_establishes_prekey_session_and_ratchets_reply() {
     let mut bob =
         LibsignalSessionBackend::new(bob_identity, 0x6202).expect("initialize bob backend");
 
-    bob.store_mut()
-        .save_pre_key(
-            pre_key_id.into(),
-            &PreKeyRecord::new(pre_key_id.into(), &pre_key_pair),
-        )
-        .now_or_never()
-        .expect("in-memory pre-key save is synchronous")
-        .expect("save bob pre-key");
+    let pre_key_record = PreKeyRecord::new(pre_key_id.into(), &pre_key_pair);
+    let signed_pre_key_record = SignedPreKeyRecord::new(
+        signed_pre_key_id.into(),
+        Timestamp::from_epoch_millis(1_700_000_000_000),
+        &signed_pre_key_pair,
+        &signed_pre_key_signature,
+    );
+    let kyber_pre_key_record = KyberPreKeyRecord::new(
+        kyber_pre_key_id.into(),
+        Timestamp::from_epoch_millis(1_700_000_000_000),
+        &kyber_pre_key_pair,
+        &kyber_signature,
+    );
 
-    bob.store_mut()
-        .save_signed_pre_key(
-            signed_pre_key_id.into(),
-            &SignedPreKeyRecord::new(
-                signed_pre_key_id.into(),
-                Timestamp::from_epoch_millis(1_700_000_000_000),
-                &signed_pre_key_pair,
-                &signed_pre_key_signature,
-            ),
-        )
-        .now_or_never()
-        .expect("in-memory signed pre-key save is synchronous")
-        .expect("save bob signed pre-key");
-
-    bob.store_mut()
-        .save_kyber_pre_key(
-            kyber_pre_key_id.into(),
-            &KyberPreKeyRecord::new(
-                kyber_pre_key_id.into(),
-                Timestamp::from_epoch_millis(1_700_000_000_000),
-                &kyber_pre_key_pair,
-                &kyber_signature,
-            ),
-        )
-        .now_or_never()
-        .expect("in-memory kyber pre-key save is synchronous")
-        .expect("save bob kyber pre-key");
+    bob.install_local_prekeys(
+        pre_key_id,
+        &pre_key_record,
+        signed_pre_key_id,
+        &signed_pre_key_record,
+        kyber_pre_key_id,
+        &kyber_pre_key_record,
+    )
+    .now_or_never()
+    .expect("in-memory pre-key installation is synchronous")
+    .expect("install bob pre-keys");
 
     alice
         .process_remote_prekey_bundle(&address("bob"), &bundle, now, &mut alice_rng)
