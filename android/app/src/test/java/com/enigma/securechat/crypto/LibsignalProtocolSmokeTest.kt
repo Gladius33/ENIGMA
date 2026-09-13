@@ -3,6 +3,7 @@ package com.enigma.securechat.crypto
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.fail
 import org.junit.Test
 import org.signal.libsignal.protocol.IdentityKey
 import org.signal.libsignal.protocol.IdentityKeyPair
@@ -66,6 +67,33 @@ class LibsignalProtocolSmokeTest {
     }
 
     @Test
+    fun rejectsTamperedSignedPreKeyBundle() {
+        val bobAddress = SignalProtocolAddress("bob", 1)
+        val aliceIdentity = IdentityKeyPair.generate()
+        val bobIdentity = IdentityKeyPair.generate()
+        val aliceStore = InMemorySignalProtocolStore(
+            aliceIdentity,
+            KeyHelper.generateRegistrationId(false),
+        )
+        val bobStore = InMemorySignalProtocolStore(
+            bobIdentity,
+            KeyHelper.generateRegistrationId(false),
+        )
+        val tamperedBundle = createAndStorePreKeyBundle(
+            bobStore,
+            bobIdentity,
+            tamperSignedPreKeySignature = true,
+        )
+
+        try {
+            SessionBuilder(aliceStore, bobAddress).process(tamperedBundle)
+            fail("tampered signed pre-key must fail closed")
+        } catch (_: Exception) {
+            // Expected: libsignal verifies the signed pre-key before establishing a session.
+        }
+    }
+
+    @Test
     fun establishesSignalSessionAndDecryptsMessages() {
         val aliceAddress = SignalProtocolAddress("alice", 1)
         val bobAddress = SignalProtocolAddress("bob", 1)
@@ -125,6 +153,7 @@ class LibsignalProtocolSmokeTest {
     private fun createAndStorePreKeyBundle(
         store: InMemorySignalProtocolStore,
         identity: IdentityKeyPair,
+        tamperSignedPreKeySignature: Boolean = false,
     ): PreKeyBundle {
         val preKeyId = 1001
         val preKeyPair = ECKeyPair.generate()
@@ -144,6 +173,11 @@ class LibsignalProtocolSmokeTest {
                 signedPreKeySignature,
             ),
         )
+        val bundleSignedPreKeySignature = signedPreKeySignature.copyOf()
+        if (tamperSignedPreKeySignature) {
+            bundleSignedPreKeySignature[0] =
+                (bundleSignedPreKeySignature[0].toInt() xor 0x80).toByte()
+        }
 
         val kyberPreKeyId = 3001
         val kyberKeyPair = KEMKeyPair.generate(KEMKeyType.KYBER_1024)
@@ -167,7 +201,7 @@ class LibsignalProtocolSmokeTest {
             preKeyPair.publicKey,
             signedPreKeyId,
             signedPreKeyPair.publicKey,
-            signedPreKeySignature,
+            bundleSignedPreKeySignature,
             identity.publicKey,
             kyberPreKeyId,
             kyberKeyPair.publicKey,
