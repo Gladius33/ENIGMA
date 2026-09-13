@@ -88,6 +88,41 @@ fn pinned_libsignal_establishes_and_decrypts_prekey_session() {
         "tampered signed pre-key must fail closed"
     );
 
+    let mut tampered_kyber_signature = kyber_signature.to_vec();
+    tampered_kyber_signature[0] ^= 0x80;
+    let tampered_kyber_bundle = PreKeyBundle::new(
+        0x2345,
+        DeviceId::new(1).expect("valid device id"),
+        Some((pre_key_id.into(), pre_key_pair.public_key)),
+        signed_pre_key_id.into(),
+        signed_pre_key_pair.public_key,
+        signed_pre_key_signature.to_vec(),
+        kyber_pre_key_id.into(),
+        kyber_pre_key_pair.public_key.clone(),
+        tampered_kyber_signature,
+        *bob_identity.identity_key(),
+    )
+    .expect("construct tampered bob kyber pre-key bundle");
+
+    let mut rejected_kyber_rng = StdRng::from_seed([0x44; 32]);
+    let rejected_kyber_identity = IdentityKeyPair::generate(&mut rejected_kyber_rng);
+    let mut rejected_kyber_alice = InMemSignalProtocolStore::new(rejected_kyber_identity, 0x4567)
+        .expect("initialize kyber-rejected alice store");
+    let rejected_kyber = process_prekey_bundle(
+        &address("bob"),
+        &mut rejected_kyber_alice.session_store,
+        &mut rejected_kyber_alice.identity_store,
+        &tampered_kyber_bundle,
+        SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000),
+        &mut rejected_kyber_rng,
+    )
+    .now_or_never()
+    .expect("in-memory tampered kyber session setup is synchronous");
+    assert!(
+        rejected_kyber.is_err(),
+        "tampered kyber pre-key must fail closed"
+    );
+
     let bundle = PreKeyBundle::new(
         0x2345,
         DeviceId::new(1).expect("valid device id"),
