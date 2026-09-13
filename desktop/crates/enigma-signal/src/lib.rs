@@ -96,6 +96,10 @@ pub struct DeviceAuthorizationExpectation<'a> {
     pub authorizing_device_id: &'a str,
     pub pairing_session_id: &'a str,
     pub platform: &'a str,
+    pub protocol_version: u16,
+    pub min_supported_version: u16,
+    pub capabilities: u64,
+    pub issued_at_unix_ms: u64,
     pub target_identity_key: &'a str,
     pub authorizer_identity_key: &'a str,
 }
@@ -121,6 +125,10 @@ pub fn verify_device_authorization_proof<A: SignalAdapter>(
         || parsed.authorizing_device_id != expected.authorizing_device_id
         || parsed.pairing_session_id != expected.pairing_session_id
         || parsed.platform != expected.platform
+        || parsed.protocol_version != expected.protocol_version
+        || parsed.min_supported_version != expected.min_supported_version
+        || parsed.capabilities != expected.capabilities
+        || parsed.issued_at_unix_ms != expected.issued_at_unix_ms
         || parsed.target_identity_key != expected.target_identity_key
         || parsed.authorizer_identity_key != expected.authorizer_identity_key
     {
@@ -229,6 +237,10 @@ mod tests {
             authorizing_device_id: "44444444-4444-4444-8444-444444444444",
             pairing_session_id: "22222222-2222-4222-8222-222222222222",
             platform: "linux",
+            protocol_version: 1,
+            min_supported_version: 1,
+            capabilities: 127,
+            issued_at_unix_ms: 1_700_000_000_000,
             target_identity_key: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB",
             authorizer_identity_key: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC",
         }
@@ -259,6 +271,32 @@ mod tests {
                 certified_transcript(),
                 &[7, 7],
                 wrong_device,
+            ),
+            Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
+        );
+
+        let mut wrong_capabilities = expectation();
+        wrong_capabilities.capabilities = 4;
+        assert_eq!(
+            verify_device_authorization_proof(
+                &verifier,
+                &[9, 9, 9],
+                certified_transcript(),
+                &[7, 7],
+                wrong_capabilities,
+            ),
+            Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
+        );
+
+        let mut wrong_issued_at = expectation();
+        wrong_issued_at.issued_at_unix_ms += 1;
+        assert_eq!(
+            verify_device_authorization_proof(
+                &verifier,
+                &[9, 9, 9],
+                certified_transcript(),
+                &[7, 7],
+                wrong_issued_at,
             ),
             Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
         );
