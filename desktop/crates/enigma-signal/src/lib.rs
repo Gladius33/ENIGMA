@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use enigma_protocol::CanonicalDeviceAuthorization;
 use libsignal_protocol::IdentityKey;
 
@@ -131,6 +132,7 @@ pub fn verify_device_authorization_proof<A: SignalAdapter>(
         || parsed.issued_at_unix_ms != expected.issued_at_unix_ms
         || parsed.target_identity_key != expected.target_identity_key
         || parsed.authorizer_identity_key != expected.authorizer_identity_key
+        || STANDARD.encode(known_authorizer_identity_public) != parsed.authorizer_identity_key
     {
         return Err(SignalAdapterError::InvalidDeviceAuthorizationProof);
     }
@@ -206,7 +208,7 @@ mod tests {
             signature: &[u8],
         ) -> Result<bool, SignalAdapterError> {
             Ok(self.accepts_signature
-                && remote_identity_public == [9, 9, 9]
+                && remote_identity_public == [2; 33]
                 && transcript.starts_with(b"ENIGMA_DEVICE_LINK_V1\n")
                 && signature == [7, 7])
         }
@@ -253,7 +255,7 @@ mod tests {
         assert_eq!(
             verify_device_authorization_proof(
                 &verifier,
-                &[9, 9, 9],
+                &[2; 33],
                 certified_transcript(),
                 &[7, 7],
                 expectation(),
@@ -266,7 +268,7 @@ mod tests {
         assert_eq!(
             verify_device_authorization_proof(
                 &verifier,
-                &[9, 9, 9],
+                &[2; 33],
                 certified_transcript(),
                 &[7, 7],
                 wrong_device,
@@ -279,7 +281,7 @@ mod tests {
         assert_eq!(
             verify_device_authorization_proof(
                 &verifier,
-                &[9, 9, 9],
+                &[2; 33],
                 certified_transcript(),
                 &[7, 7],
                 wrong_capabilities,
@@ -292,10 +294,21 @@ mod tests {
         assert_eq!(
             verify_device_authorization_proof(
                 &verifier,
-                &[9, 9, 9],
+                &[2; 33],
                 certified_transcript(),
                 &[7, 7],
                 wrong_issued_at,
+            ),
+            Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
+        );
+
+        assert_eq!(
+            verify_device_authorization_proof(
+                &verifier,
+                &[3; 33],
+                certified_transcript(),
+                &[7, 7],
+                expectation(),
             ),
             Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
         );
@@ -306,7 +319,7 @@ mod tests {
         assert_eq!(
             verify_device_authorization_proof(
                 &rejecting,
-                &[9, 9, 9],
+                &[2; 33],
                 certified_transcript(),
                 &[7, 7],
                 expectation(),
