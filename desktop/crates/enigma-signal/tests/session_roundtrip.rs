@@ -3,9 +3,10 @@ use std::time::SystemTime;
 use futures_util::FutureExt;
 use libsignal_protocol::{
     kem, message_decrypt_prekey, message_decrypt_signal, message_encrypt, process_prekey_bundle,
-    CiphertextMessageType, DeviceId, IdentityKeyPair, InMemSignalProtocolStore, KeyPair,
-    KyberPreKeyRecord, PreKeyBundle, PreKeyRecord, PreKeySignalMessage, ProtocolAddress,
-    SignalMessage, SignedPreKeyRecord,
+    CiphertextMessageType, DeviceId, GenericSignedPreKey, IdentityKeyPair, IdentityKeyStore,
+    InMemSignalProtocolStore, KeyPair, KyberPreKeyRecord, KyberPreKeyStore, PreKeyBundle,
+    PreKeyRecord, PreKeySignalMessage, PreKeyStore, ProtocolAddress, SignalMessage,
+    SignedPreKeyRecord, SignedPreKeyStore,
 };
 use rand::{rngs::StdRng, SeedableRng};
 
