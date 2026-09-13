@@ -132,7 +132,7 @@ fn pinned_libsignal_establishes_and_decrypts_prekey_session() {
         .windows(plaintext.len())
         .any(|window| window == plaintext));
 
-    let prekey_message = PreKeySignalMessage::try_from(serialized.as_ref())
+    let prekey_message = PreKeySignalMessage::try_from(serialized)
         .expect("first session message is a valid pre-key message");
     let decrypted = message_decrypt_prekey(
         &prekey_message,
@@ -169,7 +169,7 @@ fn pinned_libsignal_establishes_and_decrypts_prekey_session() {
         .windows(reply_plaintext.len())
         .any(|window| window == reply_plaintext));
 
-    let signal_message = SignalMessage::try_from(reply_serialized.as_ref())
+    let signal_message = SignalMessage::try_from(reply_serialized)
         .expect("reply is a valid established-session signal message");
     let reply_decrypted = message_decrypt_signal(
         &signal_message,
