@@ -7,8 +7,8 @@ import org.signal.libsignal.protocol.IdentityKeyPair
 import org.signal.libsignal.protocol.SessionBuilder
 import org.signal.libsignal.protocol.SessionCipher
 import org.signal.libsignal.protocol.SignalProtocolAddress
+import org.signal.libsignal.protocol.ecc.Curve
 import org.signal.libsignal.protocol.ecc.ECKeyPair
-import org.signal.libsignal.protocol.ecc.ECPrivateKey
 import org.signal.libsignal.protocol.kem.KEMKeyPair
 import org.signal.libsignal.protocol.kem.KEMKeyType
 import org.signal.libsignal.protocol.message.CiphertextMessage
@@ -24,7 +24,7 @@ import org.signal.libsignal.protocol.util.KeyHelper
 class LibsignalProtocolSmokeTest {
     @Test
     fun identitySerializationMatchesDesktopGoldenVectorV1() {
-        val privateKey = ECPrivateKey(ByteArray(32) { 0x42 })
+        val privateKey = Curve.decodePrivatePoint(ByteArray(32) { 0x42 })
         val expectedPublicKey = byteArrayOf(
             0x05,
             0x13,
