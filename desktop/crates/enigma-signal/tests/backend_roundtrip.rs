@@ -123,7 +123,7 @@ fn public_backend_establishes_prekey_session_and_ratchets_reply() {
         .any(|window| window == plaintext));
 
     let decrypted = bob
-        .decrypt_prekey(&address("alice"), &first.serialized, &mut bob_rng)
+        .decrypt(&address("alice"), &first, &mut bob_rng)
         .now_or_never()
         .expect("in-memory backend pre-key decrypt is synchronous")
         .expect("bob decrypts first message");
@@ -148,7 +148,7 @@ fn public_backend_establishes_prekey_session_and_ratchets_reply() {
         .any(|window| window == reply_plaintext));
 
     let reply_decrypted = alice
-        .decrypt_signal(&address("bob"), &reply.serialized, &mut alice_rng)
+        .decrypt(&address("bob"), &reply, &mut alice_rng)
         .now_or_never()
         .expect("in-memory backend signal decrypt is synchronous")
         .expect("alice decrypts ratcheted reply");
