@@ -105,8 +105,8 @@ impl LibsignalSessionBackend {
     where
         R: Rng + CryptoRng,
     {
-        let message =
-            SignalMessage::try_from(serialized).map_err(|_| SignalAdapterError::InvalidBundle)?;
+        let message = SignalMessage::try_from(serialized)
+            .map_err(|_| SignalAdapterError::InvalidBundle)?;
         message_decrypt_signal(
             &message,
             remote,
