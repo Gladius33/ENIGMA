@@ -153,8 +153,7 @@ fn is_full_lower_hex_sha(value: &str) -> bool {
 mod tests {
     use super::*;
     use libsignal_protocol::PrivateKey;
-    use rand::rngs::StdRng;
-    use rand::SeedableRng;
+    use rand::{rngs::StdRng, SeedableRng};
 
     const GOLDEN_IDENTITY_PRIVATE_V1: [u8; 32] = [0x42; 32];
     const GOLDEN_IDENTITY_PUBLIC_V1: [u8; 33] = [
