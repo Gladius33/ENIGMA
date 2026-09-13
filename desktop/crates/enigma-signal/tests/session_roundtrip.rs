@@ -2,9 +2,10 @@ use std::time::SystemTime;
 
 use futures_util::FutureExt;
 use libsignal_protocol::{
-    kem, message_decrypt_prekey, message_encrypt, process_prekey_bundle, CiphertextMessageType,
-    DeviceId, IdentityKeyPair, InMemSignalProtocolStore, KeyPair, KyberPreKeyRecord, PreKeyBundle,
-    PreKeyRecord, PreKeySignalMessage, ProtocolAddress, SignedPreKeyRecord,
+    kem, message_decrypt_prekey, message_decrypt_signal, message_encrypt, process_prekey_bundle,
+    CiphertextMessageType, DeviceId, IdentityKeyPair, InMemSignalProtocolStore, KeyPair,
+    KyberPreKeyRecord, PreKeyBundle, PreKeyRecord, PreKeySignalMessage, ProtocolAddress,
+    SignalMessage, SignedPreKeyRecord,
 };
 use rand::{rngs::StdRng, SeedableRng};
 
@@ -145,4 +146,38 @@ fn pinned_libsignal_establishes_and_decrypts_prekey_session() {
     .expect("bob decrypts first message");
 
     assert_eq!(decrypted, plaintext);
+
+    let reply_plaintext = b"ENIGMA ratcheted reply after pre-key establishment";
+    let reply = message_encrypt(
+        reply_plaintext,
+        &address("alice"),
+        &mut bob.session_store,
+        &mut bob.identity_store,
+        SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_002),
+        &mut bob_rng,
+    )
+    .now_or_never()
+    .expect("in-memory reply encryption is synchronous")
+    .expect("bob encrypts established-session reply");
+
+    assert_eq!(reply.message_type(), CiphertextMessageType::Whisper);
+    let reply_serialized = reply.serialize();
+    assert!(!reply_serialized
+        .windows(reply_plaintext.len())
+        .any(|window| window == reply_plaintext));
+
+    let signal_message = SignalMessage::try_from(reply_serialized.as_ref())
+        .expect("reply is a valid established-session signal message");
+    let reply_decrypted = message_decrypt_signal(
+        &signal_message,
+        &address("bob"),
+        &mut alice.session_store,
+        &mut alice.identity_store,
+        &mut alice_rng,
+    )
+    .now_or_never()
+    .expect("in-memory reply decrypt is synchronous")
+    .expect("alice decrypts established-session reply");
+
+    assert_eq!(reply_decrypted, reply_plaintext);
 }
