@@ -6,7 +6,7 @@ use libsignal_protocol::{
     CiphertextMessageType, DeviceId, GenericSignedPreKey, IdentityKeyPair, IdentityKeyStore,
     InMemSignalProtocolStore, KeyPair, KyberPreKeyRecord, KyberPreKeyStore, PreKeyBundle,
     PreKeyRecord, PreKeySignalMessage, PreKeyStore, ProtocolAddress, SignalMessage,
-    SignedPreKeyRecord, SignedPreKeyStore,
+    SignedPreKeyRecord, SignedPreKeyStore, Timestamp,
 };
 use rand::{rngs::StdRng, SeedableRng};
 
@@ -79,7 +79,7 @@ fn pinned_libsignal_establishes_and_decrypts_prekey_session() {
         signed_pre_key_id.into(),
         &SignedPreKeyRecord::new(
             signed_pre_key_id.into(),
-            1_700_000_000_000,
+            Timestamp::from_epoch_millis(1_700_000_000_000),
             &signed_pre_key_pair,
             &signed_pre_key_signature,
         ),
@@ -92,7 +92,7 @@ fn pinned_libsignal_establishes_and_decrypts_prekey_session() {
         kyber_pre_key_id.into(),
         &KyberPreKeyRecord::new(
             kyber_pre_key_id.into(),
-            1_700_000_000_000,
+            Timestamp::from_epoch_millis(1_700_000_000_000),
             &kyber_pre_key_pair,
             &kyber_signature,
         ),
