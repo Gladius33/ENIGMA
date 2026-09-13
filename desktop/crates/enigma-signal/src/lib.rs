@@ -322,12 +322,13 @@ mod tests {
         let public_key = private_key.public_key().expect("derive public key");
         let identity = IdentityKey::new(public_key);
 
-        assert_eq!(identity.serialize(), GOLDEN_IDENTITY_PUBLIC_V1);
+        assert_eq!(identity.serialize().as_ref(), &GOLDEN_IDENTITY_PUBLIC_V1);
         assert_eq!(
             IdentityKey::decode(&GOLDEN_IDENTITY_PUBLIC_V1)
                 .expect("golden identity must decode")
-                .serialize(),
-            GOLDEN_IDENTITY_PUBLIC_V1
+                .serialize()
+                .as_ref(),
+            &GOLDEN_IDENTITY_PUBLIC_V1
         );
     }
 
