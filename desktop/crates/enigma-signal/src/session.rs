@@ -3,7 +3,8 @@ use std::time::SystemTime;
 use libsignal_protocol::{
     message_decrypt_prekey, message_decrypt_signal, message_encrypt, process_prekey_bundle,
     CiphertextMessage, CiphertextMessageType, IdentityKeyPair, InMemSignalProtocolStore,
-    PreKeyBundle, PreKeySignalMessage, ProtocolAddress, SignalMessage,
+    KyberPreKeyRecord, KyberPreKeyStore, PreKeyBundle, PreKeyRecord, PreKeySignalMessage,
+    PreKeyStore, ProtocolAddress, SignalMessage, SignedPreKeyRecord, SignedPreKeyStore,
 };
 use rand::{CryptoRng, Rng};
 
@@ -26,6 +27,34 @@ impl LibsignalSessionBackend {
         let store = InMemSignalProtocolStore::new(identity, registration_id)
             .map_err(|_| SignalAdapterError::CryptoFailure)?;
         Ok(Self { store })
+    }
+
+    /// Install the local classical, signed and post-quantum pre-key records required to receive
+    /// a first Signal message. Frontends should not manipulate libsignal stores directly.
+    pub async fn install_local_prekeys(
+        &mut self,
+        pre_key_id: u32,
+        pre_key: &PreKeyRecord,
+        signed_pre_key_id: u32,
+        signed_pre_key: &SignedPreKeyRecord,
+        kyber_pre_key_id: u32,
+        kyber_pre_key: &KyberPreKeyRecord,
+    ) -> Result<(), SignalAdapterError> {
+        self.store
+            .pre_key_store
+            .save_pre_key(pre_key_id.into(), pre_key)
+            .await
+            .map_err(|_| SignalAdapterError::CryptoFailure)?;
+        self.store
+            .signed_pre_key_store
+            .save_signed_pre_key(signed_pre_key_id.into(), signed_pre_key)
+            .await
+            .map_err(|_| SignalAdapterError::CryptoFailure)?;
+        self.store
+            .kyber_pre_key_store
+            .save_kyber_pre_key(kyber_pre_key_id.into(), kyber_pre_key)
+            .await
+            .map_err(|_| SignalAdapterError::CryptoFailure)
     }
 
     pub async fn process_remote_prekey_bundle<R>(
