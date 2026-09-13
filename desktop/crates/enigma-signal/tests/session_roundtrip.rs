@@ -83,7 +83,10 @@ fn pinned_libsignal_establishes_and_decrypts_prekey_session() {
     )
     .now_or_never()
     .expect("in-memory tampered session setup is synchronous");
-    assert!(rejected.is_err(), "tampered signed pre-key must fail closed");
+    assert!(
+        rejected.is_err(),
+        "tampered signed pre-key must fail closed"
+    );
 
     let bundle = PreKeyBundle::new(
         0x2345,
