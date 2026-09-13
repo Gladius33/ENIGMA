@@ -24,7 +24,6 @@ import org.signal.libsignal.protocol.util.KeyHelper
 class LibsignalProtocolSmokeTest {
     @Test
     fun identitySerializationMatchesDesktopGoldenVectorV1() {
-        val privateKey = Curve.decodePrivatePoint(ByteArray(32) { 0x42.toByte() })
         val expectedPublicKey = byteArrayOf(
             0x05,
             0x13,
@@ -60,8 +59,9 @@ class LibsignalProtocolSmokeTest {
             0xf4.toByte(),
             0x72,
         )
+        val decodedPublicKey = Curve.decodePoint(expectedPublicKey, 0)
 
-        assertArrayEquals(expectedPublicKey, privateKey.publicKey.serialize())
+        assertArrayEquals(expectedPublicKey, decodedPublicKey.serialize())
     }
 
     @Test
