@@ -94,6 +94,33 @@ class LibsignalProtocolSmokeTest {
     }
 
     @Test
+    fun rejectsTamperedKyberPreKeyBundle() {
+        val bobAddress = SignalProtocolAddress("bob", 1)
+        val aliceIdentity = IdentityKeyPair.generate()
+        val bobIdentity = IdentityKeyPair.generate()
+        val aliceStore = InMemorySignalProtocolStore(
+            aliceIdentity,
+            KeyHelper.generateRegistrationId(false),
+        )
+        val bobStore = InMemorySignalProtocolStore(
+            bobIdentity,
+            KeyHelper.generateRegistrationId(false),
+        )
+        val tamperedBundle = createAndStorePreKeyBundle(
+            bobStore,
+            bobIdentity,
+            tamperKyberPreKeySignature = true,
+        )
+
+        try {
+            SessionBuilder(aliceStore, bobAddress).process(tamperedBundle)
+            fail("tampered kyber pre-key must fail closed")
+        } catch (_: Exception) {
+            // Expected: libsignal verifies the PQ pre-key before establishing a session.
+        }
+    }
+
+    @Test
     fun establishesSignalSessionAndDecryptsMessages() {
         val aliceAddress = SignalProtocolAddress("alice", 1)
         val bobAddress = SignalProtocolAddress("bob", 1)
@@ -154,6 +181,7 @@ class LibsignalProtocolSmokeTest {
         store: InMemorySignalProtocolStore,
         identity: IdentityKeyPair,
         tamperSignedPreKeySignature: Boolean = false,
+        tamperKyberPreKeySignature: Boolean = false,
     ): PreKeyBundle {
         val preKeyId = 1001
         val preKeyPair = ECKeyPair.generate()
@@ -193,6 +221,11 @@ class LibsignalProtocolSmokeTest {
                 kyberSignature,
             ),
         )
+        val bundleKyberSignature = kyberSignature.copyOf()
+        if (tamperKyberPreKeySignature) {
+            bundleKyberSignature[0] =
+                (bundleKyberSignature[0].toInt() xor 0x80).toByte()
+        }
 
         return PreKeyBundle(
             store.localRegistrationId,
@@ -205,7 +238,7 @@ class LibsignalProtocolSmokeTest {
             identity.publicKey,
             kyberPreKeyId,
             kyberKeyPair.publicKey,
-            kyberSignature,
+            bundleKyberSignature,
         )
     }
 }
