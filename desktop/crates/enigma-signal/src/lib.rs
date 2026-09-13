@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod session;
+
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use enigma_protocol::CanonicalDeviceAuthorization;
 use libsignal_protocol::IdentityKey;
