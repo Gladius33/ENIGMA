@@ -4,8 +4,8 @@ use enigma_signal::session::{LibsignalSessionBackend, SessionMessageType};
 use futures_util::FutureExt;
 use libsignal_protocol::{
     kem, DeviceId, GenericSignedPreKey, IdentityKeyPair, KeyPair, KyberPreKeyRecord,
-    KyberPreKeyStore, PreKeyBundle, PreKeyRecord, PreKeyStore, ProtocolAddress,
-    SignedPreKeyRecord, SignedPreKeyStore, Timestamp,
+    KyberPreKeyStore, PreKeyBundle, PreKeyRecord, PreKeyStore, ProtocolAddress, SignedPreKeyRecord,
+    SignedPreKeyStore, Timestamp,
 };
 use rand::{rngs::StdRng, SeedableRng};
 
