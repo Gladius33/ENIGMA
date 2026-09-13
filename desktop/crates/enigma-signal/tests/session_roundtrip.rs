@@ -21,10 +21,10 @@ fn pinned_libsignal_establishes_and_decrypts_prekey_session() {
     let alice_identity = IdentityKeyPair::generate(&mut alice_rng);
     let bob_identity = IdentityKeyPair::generate(&mut bob_rng);
 
-    let mut alice = InMemSignalProtocolStore::new(alice_identity, 0x1234)
-        .expect("initialize alice store");
-    let mut bob = InMemSignalProtocolStore::new(bob_identity, 0x2345)
-        .expect("initialize bob store");
+    let mut alice =
+        InMemSignalProtocolStore::new(alice_identity, 0x1234).expect("initialize alice store");
+    let mut bob =
+        InMemSignalProtocolStore::new(bob_identity, 0x2345).expect("initialize bob store");
 
     let pre_key_id = 1u32;
     let signed_pre_key_id = 2u32;
@@ -127,7 +127,9 @@ fn pinned_libsignal_establishes_and_decrypts_prekey_session() {
 
     assert_eq!(encrypted.message_type(), CiphertextMessageType::PreKey);
     let serialized = encrypted.serialize();
-    assert!(!serialized.windows(plaintext.len()).any(|window| window == plaintext));
+    assert!(!serialized
+        .windows(plaintext.len())
+        .any(|window| window == plaintext));
 
     let prekey_message = PreKeySignalMessage::try_from(serialized.as_ref())
         .expect("first session message is a valid pre-key message");
@@ -162,11 +164,9 @@ fn pinned_libsignal_establishes_and_decrypts_prekey_session() {
 
     assert_eq!(reply.message_type(), CiphertextMessageType::Whisper);
     let reply_serialized = reply.serialize();
-    assert!(
-        !reply_serialized
-            .windows(reply_plaintext.len())
-            .any(|window| window == reply_plaintext)
-    );
+    assert!(!reply_serialized
+        .windows(reply_plaintext.len())
+        .any(|window| window == reply_plaintext));
 
     let signal_message = SignalMessage::try_from(reply_serialized.as_ref())
         .expect("reply is a valid established-session signal message");
