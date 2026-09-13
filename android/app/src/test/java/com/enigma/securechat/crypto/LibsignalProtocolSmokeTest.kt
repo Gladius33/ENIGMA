@@ -3,11 +3,11 @@ package com.enigma.securechat.crypto
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.signal.libsignal.protocol.IdentityKey
 import org.signal.libsignal.protocol.IdentityKeyPair
 import org.signal.libsignal.protocol.SessionBuilder
 import org.signal.libsignal.protocol.SessionCipher
 import org.signal.libsignal.protocol.SignalProtocolAddress
-import org.signal.libsignal.protocol.ecc.Curve
 import org.signal.libsignal.protocol.ecc.ECKeyPair
 import org.signal.libsignal.protocol.kem.KEMKeyPair
 import org.signal.libsignal.protocol.kem.KEMKeyType
@@ -59,9 +59,9 @@ class LibsignalProtocolSmokeTest {
             0xf4.toByte(),
             0x72,
         )
-        val decodedPublicKey = Curve.decodePoint(expectedPublicKey, 0)
+        val decodedIdentity = IdentityKey(expectedPublicKey)
 
-        assertArrayEquals(expectedPublicKey, decodedPublicKey.serialize())
+        assertArrayEquals(expectedPublicKey, decodedIdentity.serialize())
     }
 
     @Test
