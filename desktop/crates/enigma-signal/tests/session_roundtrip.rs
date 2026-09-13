@@ -162,9 +162,11 @@ fn pinned_libsignal_establishes_and_decrypts_prekey_session() {
 
     assert_eq!(reply.message_type(), CiphertextMessageType::Whisper);
     let reply_serialized = reply.serialize();
-    assert!(!reply_serialized
-        .windows(reply_plaintext.len())
-        .any(|window| window == reply_plaintext));
+    assert!(
+        !reply_serialized
+            .windows(reply_plaintext.len())
+            .any(|window| window == reply_plaintext)
+    );
 
     let signal_message = SignalMessage::try_from(reply_serialized.as_ref())
         .expect("reply is a valid established-session signal message");
