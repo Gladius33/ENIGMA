@@ -87,6 +87,7 @@ pub enum HistoryTransferError {
     SourceMismatch,
     DestinationMismatch,
     RevokedDevice,
+    CiphertextLengthMismatch,
     Expired,
     AlreadyConsumed,
 }
@@ -134,6 +135,7 @@ impl HistoryTransferGuard {
         source_state: DeviceState,
         destination_device_id: DeviceId,
         destination_state: DeviceState,
+        observed_ciphertext_len: u64,
         now_unix_ms: u64,
     ) -> Result<MessageId, HistoryTransferError> {
         if self.consumed {
@@ -150,6 +152,9 @@ impl HistoryTransferGuard {
         }
         if source_state == DeviceState::Revoked || destination_state == DeviceState::Revoked {
             return Err(HistoryTransferError::RevokedDevice);
+        }
+        if observed_ciphertext_len != self.manifest.ciphertext_len {
+            return Err(HistoryTransferError::CiphertextLengthMismatch);
         }
 
         self.consumed = true;
@@ -261,6 +266,7 @@ mod tests {
                 DeviceState::Active,
                 device(2),
                 DeviceState::Active,
+                128,
                 1_500,
             ),
             Ok(MessageId::from_bytes([8; 16]))
@@ -272,6 +278,7 @@ mod tests {
                 DeviceState::Active,
                 device(2),
                 DeviceState::Active,
+                128,
                 1_600,
             ),
             Err(HistoryTransferError::AlreadyConsumed)
@@ -288,6 +295,7 @@ mod tests {
                 DeviceState::Active,
                 device(3),
                 DeviceState::Active,
+                128,
                 1_500,
             ),
             Err(HistoryTransferError::DestinationMismatch)
@@ -302,6 +310,7 @@ mod tests {
                 DeviceState::Revoked,
                 device(2),
                 DeviceState::Active,
+                128,
                 1_500,
             ),
             Err(HistoryTransferError::RevokedDevice)
@@ -316,11 +325,44 @@ mod tests {
                 DeviceState::Active,
                 device(2),
                 DeviceState::Active,
+                128,
                 2_000,
             ),
             Err(HistoryTransferError::Expired)
         );
         assert!(!expired.is_consumed());
+    }
+
+    #[test]
+    fn history_transfer_rejects_ciphertext_length_mismatch_without_consuming_ticket() {
+        let mut guard =
+            HistoryTransferGuard::new(history_manifest(), 1_000).expect("valid manifest");
+
+        assert_eq!(
+            guard.consume(
+                device(1),
+                DeviceState::Active,
+                device(2),
+                DeviceState::Active,
+                127,
+                1_500,
+            ),
+            Err(HistoryTransferError::CiphertextLengthMismatch)
+        );
+        assert!(!guard.is_consumed());
+
+        assert_eq!(
+            guard.consume(
+                device(1),
+                DeviceState::Active,
+                device(2),
+                DeviceState::Active,
+                128,
+                1_500,
+            ),
+            Ok(MessageId::from_bytes([8; 16]))
+        );
+        assert!(guard.is_consumed());
     }
 
     #[test]
