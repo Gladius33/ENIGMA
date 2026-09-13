@@ -1,0 +1,19 @@
+title = "ENIGMA gitleaks policy"
+
+[extend]
+useDefault = true
+
+# Gitleaks 8.24.x uses the singular global allowlist table. This exception is
+# deliberately constrained by both path and full test-line shape. It does not
+# suppress the generic-api-key rule elsewhere.
+[allowlist]
+description = "Deterministic device-link identity fixture; not credential material"
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''^server/src/devices/mod\.rs$''',
+]
+regexes = [
+  '''target_identity_key:\s*"dGFyZ2V0LWlkZW50aXR5LWtleS0wMDAx"\.into\(\)''',
+  '''target_identity_key=dGFyZ2V0LWlkZW50aXR5LWtleS0wMDAx\\n''',
+]

@@ -1,0 +1,18 @@
+[package]
+name = "enigma-signal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+enigma-protocol = { path = "../enigma-protocol" }
+libsignal-protocol = { git = "https://github.com/signalapp/libsignal", rev = "b39e93f1a5e6531044dfcdf5876585cbcf08f884" }
+
+[dev-dependencies]
+rand = "=0.9.2"
+
+[lints]
+workspace = true

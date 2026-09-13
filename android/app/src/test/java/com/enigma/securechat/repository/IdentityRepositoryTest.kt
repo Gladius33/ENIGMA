@@ -78,6 +78,7 @@ class IdentityRepositoryTest {
         override suspend fun register(body: AuthRequestDto): AuthResponseDto = unsupported()
         override suspend fun login(body: AuthRequestDto): AuthResponseDto = unsupported()
         override suspend fun registerDevice(body: DeviceRegisterRequestDto): DeviceRegisterResponseDto = unsupported()
+        override suspend fun authorizeLinkedDesktop(body: AuthorizeLinkedDesktopRequestDto): LinkedDesktopResponseDto = unsupported()
         override suspend fun updateFcmToken(body: FcmTokenRequestDto): StatusResponseDto = unsupported()
         override suspend fun devices(): DevicesResponseDto = unsupported()
         override suspend fun deleteDevice(deviceId: String): StatusResponseDto = unsupported()

@@ -20,6 +20,8 @@ import com.enigma.securechat.network.dto.CreateChannelRequestDto
 import com.enigma.securechat.network.dto.CreateGroupRequestDto
 import com.enigma.securechat.network.dto.DeviceRegisterRequestDto
 import com.enigma.securechat.network.dto.DeviceRegisterResponseDto
+import com.enigma.securechat.network.dto.AuthorizeLinkedDesktopRequestDto
+import com.enigma.securechat.network.dto.LinkedDesktopResponseDto
 import com.enigma.securechat.network.dto.DevicesResponseDto
 import com.enigma.securechat.network.dto.FcmTokenRequestDto
 import com.enigma.securechat.network.dto.GroupDetailResponseDto
@@ -103,6 +105,11 @@ interface ChatApiService {
 
     @POST("v1/devices/register")
     suspend fun registerDevice(@Body body: DeviceRegisterRequestDto): DeviceRegisterResponseDto
+
+    @POST("v1/devices/link/authorize")
+    suspend fun authorizeLinkedDesktop(
+        @Body body: AuthorizeLinkedDesktopRequestDto,
+    ): LinkedDesktopResponseDto
 
     @POST("v1/devices/fcm-token")
     suspend fun updateFcmToken(@Body body: FcmTokenRequestDto): StatusResponseDto

@@ -7,6 +7,7 @@ import org.signal.libsignal.protocol.IdentityKeyPair
 import org.signal.libsignal.protocol.SessionBuilder
 import org.signal.libsignal.protocol.SessionCipher
 import org.signal.libsignal.protocol.SignalProtocolAddress
+import org.signal.libsignal.protocol.ecc.Curve
 import org.signal.libsignal.protocol.ecc.ECKeyPair
 import org.signal.libsignal.protocol.kem.KEMKeyPair
 import org.signal.libsignal.protocol.kem.KEMKeyType
@@ -21,6 +22,48 @@ import org.signal.libsignal.protocol.state.impl.InMemorySignalProtocolStore
 import org.signal.libsignal.protocol.util.KeyHelper
 
 class LibsignalProtocolSmokeTest {
+    @Test
+    fun identitySerializationMatchesDesktopGoldenVectorV1() {
+        val privateKey = Curve.decodePrivatePoint(ByteArray(32) { 0x42 })
+        val expectedPublicKey = byteArrayOf(
+            0x05,
+            0x13,
+            0x2c,
+            0x44,
+            0x2b,
+            0xe0.toByte(),
+            0x10,
+            0xfb.toByte(),
+            0xd5.toByte(),
+            0x7e,
+            0x72,
+            0x60,
+            0x33,
+            0x28,
+            0xaa.toByte(),
+            0x76,
+            0xe7.toByte(),
+            0x1f,
+            0xcc.toByte(),
+            0xc1.toByte(),
+            0x50,
+            0x3a,
+            0xae.toByte(),
+            0x21,
+            0x93.toByte(),
+            0x27,
+            0xd1.toByte(),
+            0x4d,
+            0x9c.toByte(),
+            0x99.toByte(),
+            0x93.toByte(),
+            0xf4.toByte(),
+            0x72,
+        )
+
+        assertArrayEquals(expectedPublicKey, privateKey.publicKey.serialize())
+    }
+
     @Test
     fun establishesSignalSessionAndDecryptsMessages() {
         val aliceAddress = SignalProtocolAddress("alice", 1)

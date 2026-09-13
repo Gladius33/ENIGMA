@@ -82,4 +82,4 @@ Enigma 2 est une messagerie open source orientée confidentialité et chiffremen
 
 ## License
 
-Enigma 2 is released under the [MIT License](LICENSE).
+Enigma 2 is released under the [GNU Affero General Public License v3.0 only (AGPL-3.0-only)](LICENSE). Commercial use is permitted subject to the license terms. Third-party components retain their respective licenses; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

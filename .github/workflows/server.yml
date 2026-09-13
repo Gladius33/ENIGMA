@@ -117,7 +117,7 @@ jobs:
             -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin123 \
-            minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+            quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e server /data
           for _ in {1..60}; do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/live >/dev/null; then
               exit 0
@@ -129,10 +129,10 @@ jobs:
 
       - name: Create test bucket
         run: |
-          docker run --rm --network host \
-            --entrypoint /bin/sh \
-            minio/mc:RELEASE.2025-04-16T18-13-26Z \
-            -c 'mc alias set local http://127.0.0.1:9000 minioadmin minioadmin123 && mc mb --ignore-existing local/enigma-attachments'
+          docker exec enigma-minio \
+            mc alias set local http://127.0.0.1:9000 minioadmin minioadmin123
+          docker exec enigma-minio \
+            mc mb --ignore-existing local/enigma-attachments
 
       - name: Server checks
         run: ./scripts/check-server.sh
