@@ -227,7 +227,7 @@ mod tests {
             "capabilities=127\n",
             "issued_at_unix_ms=1700000000000\n",
             "target_identity_key=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB\n",
-            "authorizer_identity_key=AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC\n",
+            "authorizer_identity_key=AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC\n",
         )
     }
 
@@ -243,7 +243,7 @@ mod tests {
             capabilities: 127,
             issued_at_unix_ms: 1_700_000_000_000,
             target_identity_key: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB",
-            authorizer_identity_key: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC",
+            authorizer_identity_key: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC",
         }
     }
 
