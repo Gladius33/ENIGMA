@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+base64 = "=0.22.1"
 enigma-protocol = { path = "../enigma-protocol" }
 libsignal-protocol = { git = "https://github.com/signalapp/libsignal", rev = "b39e93f1a5e6531044dfcdf5876585cbcf08f884" }
 
