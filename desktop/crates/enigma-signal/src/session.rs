@@ -74,6 +74,29 @@ impl LibsignalSessionBackend {
         SessionCiphertext::from_libsignal(encrypted)
     }
 
+    /// Decrypt a ciphertext produced by [`Self::encrypt`] without delegating protocol-message
+    /// dispatch to a frontend. Windows/Linux callers must not infer or reinterpret libsignal wire
+    /// formats; the typed message kind is kept inside this Rust boundary and dispatched directly
+    /// to the corresponding pinned libsignal primitive.
+    pub async fn decrypt<R>(
+        &mut self,
+        remote: &ProtocolAddress,
+        ciphertext: &SessionCiphertext,
+        rng: &mut R,
+    ) -> Result<Vec<u8>, SignalAdapterError>
+    where
+        R: Rng + CryptoRng,
+    {
+        match ciphertext.message_type {
+            SessionMessageType::PreKey => {
+                self.decrypt_prekey(remote, &ciphertext.serialized, rng).await
+            }
+            SessionMessageType::Signal => {
+                self.decrypt_signal(remote, &ciphertext.serialized, rng).await
+            }
+        }
+    }
+
     pub async fn decrypt_prekey<R>(
         &mut self,
         remote: &ProtocolAddress,
