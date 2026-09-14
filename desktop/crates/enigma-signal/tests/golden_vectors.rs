@@ -33,3 +33,24 @@ fn android_identity_derivation_golden_vector_v1_matches_rust() {
         expected_public_key.as_slice()
     );
 }
+
+/// Cross-runtime deterministic Curve25519 public pre-key vector shared with Android
+/// `LibsignalProtocolSmokeTest.preKeyDerivationMatchesDesktopGoldenVectorV1`.
+///
+/// This deliberately certifies only public pre-key derivation/serialization from fixed private
+/// input. It does not claim session/ciphertext interoperability; SIG-001 remains blocked until the
+/// complete pre-key bundle, session establishment and ciphertext vectors are certified.
+#[test]
+fn android_prekey_derivation_golden_vector_v1_matches_rust() {
+    let private_key_input = [0x24; 32];
+    let expected_public_key = [
+        0x05, 0x04, 0xbc, 0xd2, 0xe0, 0xd0, 0x0f, 0x2c, 0xce, 0x5f, 0xe8, 0xf1, 0xc6, 0xc2, 0xfb,
+        0xec, 0x5c, 0x07, 0xfa, 0x56, 0xe3, 0xaa, 0x5c, 0x88, 0xa5, 0x68, 0x99, 0x75, 0xd8, 0x8b,
+        0x3f, 0xce, 0x05,
+    ];
+
+    let private_key = PrivateKey::deserialize(&private_key_input).expect("fixed pre-key input");
+    let derived_public = private_key.public_key().expect("derive pre-key public key");
+
+    assert_eq!(derived_public.serialize().as_ref(), expected_public_key.as_slice());
+}
