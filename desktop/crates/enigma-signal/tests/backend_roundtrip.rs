@@ -135,10 +135,24 @@ fn public_backend_establishes_prekey_session_and_ratchets_reply() {
         .windows(reply_plaintext.len())
         .any(|window| window == reply_plaintext));
 
+    // Authentication must fail closed on an altered ratchet ciphertext. This check intentionally
+    // happens before the valid decrypt: a rejected packet must not poison the receiver session.
+    let mut tampered_reply = reply.clone();
+    let last = tampered_reply
+        .serialized
+        .last_mut()
+        .expect("libsignal ciphertext is non-empty");
+    *last ^= 0x01;
+    assert!(alice
+        .decrypt(&address("bob"), &tampered_reply, &mut alice_rng)
+        .now_or_never()
+        .expect("in-memory tampered decrypt is synchronous")
+        .is_err());
+
     let reply_decrypted = alice
         .decrypt(&address("bob"), &reply, &mut alice_rng)
         .now_or_never()
         .expect("in-memory backend signal decrypt is synchronous")
-        .expect("alice decrypts ratcheted reply");
+        .expect("alice decrypts ratcheted reply after rejecting tampered ciphertext");
     assert_eq!(reply_decrypted, reply_plaintext);
 }
