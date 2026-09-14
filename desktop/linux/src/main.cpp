@@ -9,7 +9,11 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <exception>
+#include <memory>
+
 #include "../../design/enigma_tokens.hpp"
+#include "enigma_core.hpp"
 
 namespace {
 
@@ -54,6 +58,23 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("ENIGMA"));
     app.setOrganizationName(QStringLiteral("ENIGMA"));
+
+    std::unique_ptr<enigma::Core> core;
+    bool coreReady = false;
+    QString coreStatus = QStringLiteral("Cœur sécurisé indisponible");
+    QString coreDetail = QStringLiteral("Le cœur Rust/libsignal n’est pas prêt");
+
+    try {
+        core = std::make_unique<enigma::Core>();
+        coreReady = core->ready();
+        if (coreReady) {
+            coreStatus = QStringLiteral("Cœur sécurisé prêt");
+            coreDetail = QStringLiteral("Rust/libsignal • ABI %1").arg(enigma::linked_core_abi_version());
+        }
+    } catch (const std::exception& error) {
+        coreDetail = QStringLiteral("Initialisation du cœur ENIGMA impossible : %1")
+                         .arg(QString::fromUtf8(error.what()));
+    }
 
     QWidget window;
     window.setObjectName(QStringLiteral("root"));
@@ -101,11 +122,13 @@ int main(int argc, char* argv[]) {
     auto* title = new QLabel(QStringLiteral("Messagerie sécurisée"), surface);
     title->setObjectName(QStringLiteral("headline"));
 
-    auto* status = new QLabel(
-        QStringLiteral("Le client Linux utilise le cœur Rust ENIGMA ; les opérations cryptographiques restent confinées à libsignal."),
-        surface);
-    status->setObjectName(QStringLiteral("body"));
-    status->setWordWrap(true);
+    auto* status = new QLabel(coreStatus, surface);
+    status->setObjectName(QStringLiteral("secure"));
+    status->setAccessibleName(coreStatus);
+
+    auto* detail = new QLabel(coreDetail, surface);
+    detail->setObjectName(QStringLiteral("body"));
+    detail->setWordWrap(true);
 
     auto* secure = new QLabel(QStringLiteral("● Chiffrement de bout en bout"), surface);
     secure->setObjectName(QStringLiteral("secure"));
@@ -113,10 +136,14 @@ int main(int argc, char* argv[]) {
     auto* openMessages = new QPushButton(QStringLiteral("Ouvrir les messages"), surface);
     openMessages->setAccessibleName(QStringLiteral("Ouvrir les messages"));
     openMessages->setEnabled(false);
-    openMessages->setToolTip(QStringLiteral("Disponible lorsque le shell sera relié à la session desktop."));
+    openMessages->setToolTip(
+        coreReady
+            ? QStringLiteral("Le cœur sécurisé est prêt ; l’interface de conversation reste à relier à l’ABI.")
+            : coreDetail);
 
     content->addWidget(title);
     content->addWidget(status);
+    content->addWidget(detail);
     content->addWidget(secure);
     content->addSpacing(enigma::design::kSpacingSm);
     content->addWidget(openMessages, 0, Qt::AlignLeft);
