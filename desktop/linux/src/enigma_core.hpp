@@ -3,6 +3,7 @@
 #include "../../include/enigma_core.h"
 
 #include <cstdint>
+#include <span>
 #include <stdexcept>
 #include <utility>
 
@@ -37,6 +38,22 @@ public:
 
     [[nodiscard]] bool ready() const noexcept {
         return handle_ != nullptr && enigma_core_is_ready(handle_);
+    }
+
+    [[nodiscard]] bool signalReady() const noexcept {
+        return handle_ != nullptr && enigma_core_signal_is_ready(handle_);
+    }
+
+    [[nodiscard]] bool initializeSignalIdentity(
+        std::span<const std::uint8_t> serializedIdentity,
+        std::uint32_t registrationId) noexcept {
+        return handle_ != nullptr
+            && !serializedIdentity.empty()
+            && enigma_core_signal_initialize(
+                handle_,
+                serializedIdentity.data(),
+                serializedIdentity.size(),
+                registrationId);
     }
 
 private:
