@@ -46,9 +46,11 @@
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource EnigmaSecureBrush}" />
                         <TextBlock
-                            Text="Chiffrement de bout en bout actif"
+                            x:Name="CoreStatusText"
+                            Text="Initialisation du cœur sécurisé…"
                             Foreground="{ThemeResource EnigmaTextBrush}"
-                            VerticalAlignment="Center" />
+                            VerticalAlignment="Center"
+                            AutomationProperties.LiveSetting="Polite" />
                     </StackPanel>
                 </Border>
 
@@ -63,7 +65,8 @@
                         <StackPanel Spacing="4">
                             <TextBlock Text="Appareil principal" FontWeight="SemiBold" />
                             <TextBlock
-                                Text="Session libsignal prête"
+                                x:Name="CoreDetailText"
+                                Text="Vérification du cœur Rust/libsignal"
                                 FontSize="12"
                                 Foreground="{ThemeResource EnigmaMutedTextBrush}" />
                         </StackPanel>
@@ -134,11 +137,15 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBox
+                        x:Name="MessageComposer"
                         PlaceholderText="Message"
+                        IsEnabled="False"
                         AutomationProperties.Name="Composer un message" />
                     <Button
+                        x:Name="SendButton"
                         Grid.Column="1"
                         Content="Envoyer"
+                        IsEnabled="False"
                         Background="{ThemeResource EnigmaPrimaryBrush}"
                         Foreground="White"
                         AutomationProperties.Name="Envoyer le message" />
