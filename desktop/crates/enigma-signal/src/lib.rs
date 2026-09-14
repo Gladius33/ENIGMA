@@ -9,7 +9,18 @@ use libsignal_protocol::IdentityKey;
 pub const ANDROID_LIBSIGNAL_VERSION: &str = "0.86.5";
 pub const DESKTOP_LIBSIGNAL_TAG: &str = "v0.86.5";
 pub const DESKTOP_LIBSIGNAL_SOURCE_PIN: &str = "b39e93f1a5e6531044dfcdf5876585cbcf08f884";
+pub const SIGNAL_ENVELOPE_VERSION: u16 = 1;
+pub const SIGNAL_ENVELOPE_ALGORITHM: &str = "Signal-Protocol-libsignal-0.86.5";
+pub const SIGNAL_ENVELOPE_LEGACY_ALGORITHM_076: &str = "Signal-Protocol-libsignal-0.76";
 pub const DESKTOP_LIBSIGNAL_INTEROP_VERIFIED: bool = false;
+
+#[must_use]
+pub fn signal_envelope_algorithm_supported(value: &str) -> bool {
+    matches!(
+        value,
+        SIGNAL_ENVELOPE_ALGORITHM | SIGNAL_ENVELOPE_LEGACY_ALGORITHM_076
+    )
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SignalPublicBundle {
@@ -377,6 +388,19 @@ mod tests {
             verifier.verify_identity_proof(&[1, 2, 3], b"transcript", &[7; 64]),
             Err(SignalAdapterError::CryptoFailure)
         );
+    }
+
+    #[test]
+    fn signal_envelope_contract_matches_android_and_accepts_legacy_076() {
+        assert_eq!(SIGNAL_ENVELOPE_VERSION, 1);
+        assert_eq!(SIGNAL_ENVELOPE_ALGORITHM, "Signal-Protocol-libsignal-0.86.5");
+        assert!(signal_envelope_algorithm_supported(SIGNAL_ENVELOPE_ALGORITHM));
+        assert!(signal_envelope_algorithm_supported(
+            SIGNAL_ENVELOPE_LEGACY_ALGORITHM_076
+        ));
+        assert!(!signal_envelope_algorithm_supported(
+            "Signal-Protocol-libsignal-unknown"
+        ));
     }
 
     #[test]
