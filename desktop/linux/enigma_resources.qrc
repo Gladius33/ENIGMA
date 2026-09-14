@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/enigma">
+        <file alias="enigma_logo.png">../../android/app/src/main/res/drawable-nodpi/enigma_logo.png</file>
+    </qresource>
+</RCC>
