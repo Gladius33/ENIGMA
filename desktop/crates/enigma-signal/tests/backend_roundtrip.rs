@@ -156,3 +156,65 @@ fn public_backend_establishes_prekey_session_and_ratchets_reply() {
         .expect("alice decrypts ratcheted reply after rejecting tampered ciphertext");
     assert_eq!(reply_decrypted, reply_plaintext);
 }
+
+#[test]
+fn public_backend_rejects_tampered_signed_prekey_bundle_without_creating_session() {
+    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let mut alice_rng = StdRng::from_seed([0x61; 32]);
+    let mut bob_rng = StdRng::from_seed([0x62; 32]);
+
+    let alice_identity = IdentityKeyPair::generate(&mut alice_rng);
+    let bob_identity = IdentityKeyPair::generate(&mut bob_rng);
+    let pre_key_pair = KeyPair::generate(&mut bob_rng);
+    let signed_pre_key_pair = KeyPair::generate(&mut bob_rng);
+    let kyber_pre_key_pair = kem::KeyPair::generate(kem::KeyType::Kyber1024, &mut bob_rng);
+
+    let signed_pre_key_public = signed_pre_key_pair.public_key.serialize();
+    let mut tampered_signed_pre_key_signature = bob_identity
+        .private_key()
+        .calculate_signature(&signed_pre_key_public, &mut bob_rng)
+        .expect("sign signed pre-key")
+        .to_vec();
+    tampered_signed_pre_key_signature[0] ^= 0x01;
+
+    let kyber_public = kyber_pre_key_pair.public_key.serialize();
+    let kyber_signature = bob_identity
+        .private_key()
+        .calculate_signature(&kyber_public, &mut bob_rng)
+        .expect("sign kyber pre-key");
+
+    let tampered_bundle = PreKeyBundle::new(
+        0x7202,
+        DeviceId::new(1).expect("valid device id"),
+        Some((21u32.into(), pre_key_pair.public_key)),
+        22u32.into(),
+        signed_pre_key_pair.public_key,
+        tampered_signed_pre_key_signature,
+        23u32.into(),
+        kyber_pre_key_pair.public_key,
+        kyber_signature.to_vec(),
+        *bob_identity.identity_key(),
+    )
+    .expect("construct syntactically valid tampered bundle");
+
+    let mut alice =
+        LibsignalSessionBackend::new(alice_identity, 0x7101).expect("initialize alice backend");
+
+    let rejected = alice
+        .process_remote_prekey_bundle(&address("bob"), &tampered_bundle, now, &mut alice_rng)
+        .now_or_never()
+        .expect("in-memory session setup is synchronous");
+    assert!(rejected.is_err());
+
+    // A rejected authentication transcript must not leave behind a usable outbound session.
+    let encrypt_after_rejection = alice
+        .encrypt(
+            &address("bob"),
+            b"must not encrypt after invalid pre-key signature",
+            now + Duration::from_secs(1),
+            &mut alice_rng,
+        )
+        .now_or_never()
+        .expect("in-memory post-rejection encryption is synchronous");
+    assert!(encrypt_after_rejection.is_err());
+}
