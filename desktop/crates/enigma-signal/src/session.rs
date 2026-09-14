@@ -2,7 +2,8 @@ use std::time::SystemTime;
 
 use libsignal_protocol::{
     kem, message_decrypt_prekey, message_decrypt_signal, message_encrypt, process_prekey_bundle,
-    CiphertextMessage, CiphertextMessageType, IdentityKeyPair, IdentityKeyStore,
+    CiphertextMessage, CiphertextMessageType, GenericSignedPreKey, IdentityKeyPair,
+    IdentityKeyStore,
     InMemSignalProtocolStore, KeyPair, KyberPreKeyRecord, KyberPreKeyStore, PreKeyBundle,
     PreKeyRecord, PreKeySignalMessage, PreKeyStore, ProtocolAddress, SignalMessage,
     SignedPreKeyRecord, SignedPreKeyStore, Timestamp,
