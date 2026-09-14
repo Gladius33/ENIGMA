@@ -154,7 +154,9 @@ class SignalCryptoEngine(
 
     private companion object {
         const val V1_PROTOCOL_DEVICE_ID = 1
-        const val ALGORITHM = "Signal-Protocol-libsignal-0.86.5"\n        const val LEGACY_ALGORITHM_076 = "Signal-Protocol-libsignal-0.76"\n        val SUPPORTED_ALGORITHMS = setOf(ALGORITHM, LEGACY_ALGORITHM_076)
+        const val ALGORITHM = "Signal-Protocol-libsignal-0.86.5"
+        const val LEGACY_ALGORITHM_076 = "Signal-Protocol-libsignal-0.76"
+        val SUPPORTED_ALGORITHMS = setOf(ALGORITHM, LEGACY_ALGORITHM_076)
         const val MESSAGE_TYPE_PREKEY = "prekey"
         const val MESSAGE_TYPE_SIGNAL = "signal"
         const val MAX_IDENTITY_PROOF_TRANSCRIPT_BYTES = 16 * 1024
