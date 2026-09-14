@@ -393,8 +393,13 @@ mod tests {
     #[test]
     fn signal_envelope_contract_matches_android_and_accepts_legacy_076() {
         assert_eq!(SIGNAL_ENVELOPE_VERSION, 1);
-        assert_eq!(SIGNAL_ENVELOPE_ALGORITHM, "Signal-Protocol-libsignal-0.86.5");
-        assert!(signal_envelope_algorithm_supported(SIGNAL_ENVELOPE_ALGORITHM));
+        assert_eq!(
+            SIGNAL_ENVELOPE_ALGORITHM,
+            "Signal-Protocol-libsignal-0.86.5"
+        );
+        assert!(signal_envelope_algorithm_supported(
+            SIGNAL_ENVELOPE_ALGORITHM
+        ));
         assert!(signal_envelope_algorithm_supported(
             SIGNAL_ENVELOPE_LEGACY_ALGORITHM_076
         ));
