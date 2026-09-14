@@ -296,14 +296,7 @@ fn generated_desktop_prekeys_are_publishable_and_receive_first_message() {
         LibsignalSessionBackend::new(bob_identity, 0xB002).expect("initialize bob backend");
 
     let published = bob
-        .generate_and_store_prekey_bundle(
-            1001,
-            2,
-            2001,
-            3001,
-            1_700_000_000_000,
-            &mut bob_rng,
-        )
+        .generate_and_store_prekey_bundle(1001, 2, 2001, 3001, 1_700_000_000_000, &mut bob_rng)
         .now_or_never()
         .expect("in-memory pre-key generation is synchronous")
         .expect("generate bob publishable pre-keys");
