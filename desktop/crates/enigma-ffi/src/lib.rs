@@ -1,11 +1,12 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+use enigma_platform::{PlatformKeyError, PlatformKeyProtector};
 use enigma_runtime_core::CoreRuntime;
 use enigma_signal::session::LibsignalSessionBackend;
 
 pub const ENIGMA_CORE_ABI_VERSION: u32 = 1;
 const DEFAULT_DEDUP_CAPACITY: usize = 16_384;
-const MAX_SERIALIZED_SIGNAL_IDENTITY_BYTES: usize = 4_096;
+const MAX_PROTECTED_SIGNAL_IDENTITY_BYTES: usize = 64 * 1024;
 
 pub struct EnigmaCoreHandle {
     _runtime: CoreRuntime,
@@ -50,7 +51,7 @@ pub extern "C" fn enigma_core_is_ready(handle: *mut EnigmaCoreHandle) -> bool {
     !handle.is_null()
 }
 
-/// Returns whether a real libsignal session backend has been loaded into this core.
+/// Returns whether a real libsignal session backend has been restored from protected storage.
 ///
 /// # Safety
 ///
@@ -66,43 +67,52 @@ pub unsafe extern "C" fn enigma_core_signal_is_ready(handle: *const EnigmaCoreHa
     unsafe { (*handle).signal_backend.is_some() }
 }
 
-/// Loads a canonical serialized libsignal identity into the native session backend.
+/// Restores a canonical serialized libsignal identity from platform-protected storage.
 ///
-/// The private identity bytes must have been restored from ENIGMA's protected
-/// local storage. ENIGMA does not parse or reinterpret this representation:
-/// the pinned libsignal backend validates it directly.
+/// Windows accepts an ENIGMA DPAPI user-scope blob. Linux accepts only an ENIGMA
+/// Secret Service locator; the identity itself remains inside the Secret Service
+/// provider. The recovered plaintext is handled only inside Rust, parsed by the
+/// pinned libsignal backend and then wiped on a best-effort basis.
 ///
 /// # Safety
 ///
 /// - handle must be a live pointer returned by enigma_core_create.
-/// - serialized_identity must point to serialized_identity_len readable bytes.
+/// - protected_identity must point to protected_identity_len readable bytes.
 /// - both pointers must remain valid and unaliased for mutation for this call.
 /// - the same handle must not be accessed concurrently.
 #[no_mangle]
-pub unsafe extern "C" fn enigma_core_signal_initialize(
+pub unsafe extern "C" fn enigma_core_signal_initialize_protected(
     handle: *mut EnigmaCoreHandle,
-    serialized_identity: *const u8,
-    serialized_identity_len: usize,
+    protected_identity: *const u8,
+    protected_identity_len: usize,
     registration_id: u32,
 ) -> bool {
     if handle.is_null()
-        || serialized_identity.is_null()
-        || serialized_identity_len == 0
-        || serialized_identity_len > MAX_SERIALIZED_SIGNAL_IDENTITY_BYTES
+        || protected_identity.is_null()
+        || protected_identity_len == 0
+        || protected_identity_len > MAX_PROTECTED_SIGNAL_IDENTITY_BYTES
     {
         return false;
     }
 
     // SAFETY: caller guarantees a readable region of exactly
-    // serialized_identity_len bytes for this call; bounds were capped above.
-    let serialized =
-        unsafe { std::slice::from_raw_parts(serialized_identity, serialized_identity_len) };
+    // protected_identity_len bytes for this call; bounds were capped above.
+    let protected =
+        unsafe { std::slice::from_raw_parts(protected_identity, protected_identity_len) };
+
+    let mut serialized_identity = match unprotect_signal_identity(protected) {
+        Ok(identity) if !identity.is_empty() => identity,
+        Ok(_) | Err(_) => return false,
+    };
 
     let backend =
-        match LibsignalSessionBackend::from_serialized_identity(serialized, registration_id) {
-            Ok(backend) => backend,
-            Err(_) => return false,
-        };
+        LibsignalSessionBackend::from_serialized_identity(&serialized_identity, registration_id);
+    serialized_identity.fill(0);
+
+    let backend = match backend {
+        Ok(backend) => backend,
+        Err(_) => return false,
+    };
 
     // SAFETY: caller guarantees exclusive live access to handle for this call.
     unsafe {
@@ -111,10 +121,28 @@ pub unsafe extern "C" fn enigma_core_signal_initialize(
     true
 }
 
+#[cfg(windows)]
+fn unprotect_signal_identity(protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::WindowsDpapiProtector;
+
+    WindowsDpapiProtector.unprotect(protected)
+}
+
+#[cfg(target_os = "linux")]
+fn unprotect_signal_identity(protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::LinuxSecretServiceProtector;
+
+    let protector = LinuxSecretServiceProtector::from_locator(protected)?;
+    protector.unprotect(protected)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn unprotect_signal_identity(_protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    Err(PlatformKeyError::BackendUnavailable)
+}
+
 #[cfg(test)]
 mod tests {
-    use libsignal_protocol::{IdentityKeyPair, PrivateKey};
-
     use super::*;
 
     #[test]
@@ -131,50 +159,77 @@ mod tests {
     }
 
     #[test]
-    fn signal_backend_initializes_only_from_valid_libsignal_identity() {
+    fn protected_signal_initialization_fails_closed_on_invalid_value() {
         let handle = enigma_core_create();
         assert!(!handle.is_null());
 
-        let malformed = [1_u8, 2, 3];
-        // SAFETY: handle is live and malformed is readable for this call.
+        let invalid = b"not-an-enigma-protected-identity";
+        // SAFETY: handle is live and invalid points to a readable immutable
+        // region for the duration of this call.
         assert!(!unsafe {
-            enigma_core_signal_initialize(handle, malformed.as_ptr(), malformed.len(), 7)
+            enigma_core_signal_initialize_protected(
+                handle,
+                invalid.as_ptr(),
+                invalid.len(),
+                7,
+            )
         });
         // SAFETY: handle is still live and exclusively owned by this test.
         assert!(!unsafe { enigma_core_signal_is_ready(handle) });
-
-        let private = PrivateKey::deserialize(&[0x42; 32]).expect("fixed private key");
-        let identity = IdentityKeyPair::try_from(private).expect("identity key pair");
-        let serialized = identity.serialize();
-
-        // SAFETY: serialized points to a live immutable buffer for the duration
-        // of this call and handle is live/exclusively owned.
-        assert!(unsafe {
-            enigma_core_signal_initialize(handle, serialized.as_ptr(), serialized.len(), 7)
-        });
-        // SAFETY: handle remains live and exclusively owned.
-        assert!(unsafe { enigma_core_signal_is_ready(handle) });
 
         // SAFETY: handle is live and destroyed exactly once here.
         unsafe { enigma_core_destroy(handle) };
     }
 
     #[test]
-    fn signal_initialization_rejects_null_and_oversized_inputs() {
+    fn protected_signal_initialization_rejects_null_and_oversized_inputs() {
         let handle = enigma_core_create();
 
         // SAFETY: null identity pointer is explicitly permitted and rejected.
-        assert!(!unsafe { enigma_core_signal_initialize(handle, std::ptr::null(), 1, 7) });
+        assert!(!unsafe {
+            enigma_core_signal_initialize_protected(handle, std::ptr::null(), 1, 7)
+        });
         // SAFETY: this pointer is never dereferenced because the length fails
         // the bounded-input check before slice construction.
         assert!(!unsafe {
-            enigma_core_signal_initialize(
+            enigma_core_signal_initialize_protected(
                 handle,
                 std::ptr::NonNull::<u8>::dangling().as_ptr(),
-                MAX_SERIALIZED_SIGNAL_IDENTITY_BYTES + 1,
+                MAX_PROTECTED_SIGNAL_IDENTITY_BYTES + 1,
                 7,
             )
         });
+
+        // SAFETY: handle is live and destroyed exactly once here.
+        unsafe { enigma_core_destroy(handle) };
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn protected_signal_identity_restores_through_dpapi_without_ui_plaintext() {
+        use enigma_platform::WindowsDpapiProtector;
+        use libsignal_protocol::{IdentityKeyPair, PrivateKey};
+
+        let private = PrivateKey::deserialize(&[0x42; 32]).expect("fixed private key");
+        let identity = IdentityKeyPair::try_from(private).expect("identity key pair");
+        let mut serialized = identity.serialize().to_vec();
+        let protector = WindowsDpapiProtector;
+        let protected = protector.protect(&serialized).expect("DPAPI protect");
+        serialized.fill(0);
+
+        let handle = enigma_core_create();
+        // SAFETY: handle is live and protected points to a readable immutable
+        // region for the duration of this call.
+        assert!(unsafe {
+            enigma_core_signal_initialize_protected(
+                handle,
+                protected.as_ptr(),
+                protected.len(),
+                7,
+            )
+        });
+        // SAFETY: handle remains live and exclusively owned.
+        assert!(unsafe { enigma_core_signal_is_ready(handle) });
 
         // SAFETY: handle is live and destroyed exactly once here.
         unsafe { enigma_core_destroy(handle) };
