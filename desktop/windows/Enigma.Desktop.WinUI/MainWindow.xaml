@@ -1,0 +1,149 @@
+<Window
+    x:Class="Enigma.Desktop.WinUI.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="ENIGMA">
+
+    <Grid Background="{ThemeResource EnigmaBackgroundBrush}">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="320" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Border
+            Grid.Column="0"
+            Margin="16"
+            Padding="20"
+            Background="{ThemeResource EnigmaSurfaceBrush}"
+            CornerRadius="18">
+            <StackPanel Spacing="20">
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Image
+                        Width="48"
+                        Height="48"
+                        Source="ms-appx:///Assets/enigma_logo.png"
+                        AutomationProperties.Name="Logo ENIGMA" />
+                    <StackPanel VerticalAlignment="Center" Spacing="2">
+                        <TextBlock
+                            Text="ENIGMA"
+                            FontSize="24"
+                            FontWeight="SemiBold"
+                            Foreground="{ThemeResource EnigmaTextBrush}" />
+                        <TextBlock
+                            Text="Messagerie chiffrée"
+                            FontSize="12"
+                            Foreground="{ThemeResource EnigmaMutedTextBrush}" />
+                    </StackPanel>
+                </StackPanel>
+
+                <Border
+                    Padding="12"
+                    Background="{ThemeResource EnigmaBackgroundBrush}"
+                    CornerRadius="12">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource EnigmaSecureBrush}" />
+                        <TextBlock
+                            Text="Chiffrement de bout en bout actif"
+                            Foreground="{ThemeResource EnigmaTextBrush}"
+                            VerticalAlignment="Center" />
+                    </StackPanel>
+                </Border>
+
+                <TextBlock
+                    Text="Conversations"
+                    FontSize="14"
+                    FontWeight="SemiBold"
+                    Foreground="{ThemeResource EnigmaMutedTextBrush}" />
+
+                <ListView SelectionMode="Single" AutomationProperties.Name="Conversations">
+                    <ListViewItem IsSelected="True">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Appareil principal" FontWeight="SemiBold" />
+                            <TextBlock
+                                Text="Session libsignal prête"
+                                FontSize="12"
+                                Foreground="{ThemeResource EnigmaMutedTextBrush}" />
+                        </StackPanel>
+                    </ListViewItem>
+                </ListView>
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Column="1" Margin="0,16,16,16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Border
+                Grid.Row="0"
+                Padding="20,14"
+                Background="{ThemeResource EnigmaSurfaceBrush}"
+                CornerRadius="18">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="3">
+                        <TextBlock
+                            Text="ENIGMA Desktop"
+                            FontSize="20"
+                            FontWeight="SemiBold"
+                            Foreground="{ThemeResource EnigmaTextBrush}" />
+                        <TextBlock
+                            Text="P2P prioritaire • relais temporaire si nécessaire"
+                            FontSize="12"
+                            Foreground="{ThemeResource EnigmaMutedTextBrush}" />
+                    </StackPanel>
+                    <Button
+                        Grid.Column="1"
+                        Content="Appareils"
+                        AutomationProperties.Name="Gérer les appareils liés" />
+                </Grid>
+            </Border>
+
+            <ScrollViewer Grid.Row="1" Margin="8,18">
+                <StackPanel Spacing="12">
+                    <Border
+                        HorizontalAlignment="Left"
+                        MaxWidth="520"
+                        Padding="14"
+                        Background="{ThemeResource EnigmaSurfaceBrush}"
+                        CornerRadius="14">
+                        <TextBlock
+                            Text="Les opérations cryptographiques restent confinées au cœur Rust/libsignal partagé."
+                            TextWrapping="Wrap"
+                            Foreground="{ThemeResource EnigmaTextBrush}" />
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <Border
+                Grid.Row="2"
+                Padding="12"
+                Background="{ThemeResource EnigmaSurfaceBrush}"
+                CornerRadius="18">
+                <Grid ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox
+                        PlaceholderText="Message"
+                        AutomationProperties.Name="Composer un message" />
+                    <Button
+                        Grid.Column="1"
+                        Content="Envoyer"
+                        Background="{ThemeResource EnigmaPrimaryBrush}"
+                        Foreground="White"
+                        AutomationProperties.Name="Envoyer le message" />
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>
