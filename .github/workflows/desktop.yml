@@ -55,6 +55,38 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo +1.94.1 doc --workspace --no-deps
 
+  windows-abi-consumer:
+    name: windows-abi-consumer
+    runs-on: windows-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build C# ABI consumer
+        run: dotnet build windows/Enigma.Desktop.Interop/Enigma.Desktop.Interop.csproj --configuration Release --nologo
+
+  linux-abi-consumer:
+    name: linux-abi-consumer
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Configure C++ ABI consumer
+        run: cmake -S linux -B linux/build -DCMAKE_BUILD_TYPE=Release
+      - name: Build C++ ABI consumer
+        run: cmake --build linux/build --config Release --parallel 2
+
   unsafe-policy:
     name: desktop-unsafe-policy
     runs-on: ubuntu-latest
