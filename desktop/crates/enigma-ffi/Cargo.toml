@@ -15,6 +15,7 @@ name = "enigma_core"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+enigma-platform = { path = "../enigma-platform" }
 enigma-runtime-core = { package = "enigma-core", path = "../enigma-core" }
 enigma-signal = { path = "../enigma-signal" }
 
