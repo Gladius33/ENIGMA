@@ -75,7 +75,7 @@ jobs:
   linux-abi-consumer:
     name: linux-qt6-consumer
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: desktop
@@ -86,8 +86,12 @@ jobs:
           persist-credentials: false
       - name: Install Qt 6 development packages
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends qt6-base-dev
-      - name: Configure Qt 6 C++ consumer
-        run: cmake -S linux -B linux/build -DCMAKE_BUILD_TYPE=Release
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.94.1 --profile minimal
+      - name: Build Rust ABI library
+        run: cargo +1.94.1 build --package enigma-ffi --release
+      - name: Configure Qt 6 C++ consumer against Rust ABI
+        run: cmake -S linux -B linux/build -DCMAKE_BUILD_TYPE=Release -DENIGMA_CORE_LIBRARY="${GITHUB_WORKSPACE}/desktop/target/release/libenigma_core.so"
       - name: Build Qt 6 C++ consumer
         run: cmake --build linux/build --config Release --parallel 2
 
