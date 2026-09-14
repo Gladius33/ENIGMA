@@ -1,0 +1,39 @@
+name: lock-refresh-probe
+
+on:
+  push:
+    branches:
+      - feat/desktop-multidevice-p2p-1.0
+
+permissions:
+  contents: read
+
+jobs:
+  regenerate-server-lock:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Restore last green server lock
+        run: git show 8447c8eb7b2e52758842efcbe7a43b501b0455ff:server/Cargo.lock > server/Cargo.lock
+
+      - name: Install project Rust toolchain
+        run: |
+          rustup toolchain install 1.94.1 --profile minimal
+          cargo +1.94.1 --version
+
+      - name: Regenerate rustls lock entry with Cargo
+        working-directory: server
+        run: cargo +1.94.1 update -p rustls --precise 0.23.45
+
+      - name: Emit regenerated lock
+        working-directory: server
+        run: |
+          echo LOCK_B64_BEGIN
+          base64 -w0 Cargo.lock
+          echo
+          echo LOCK_B64_END
