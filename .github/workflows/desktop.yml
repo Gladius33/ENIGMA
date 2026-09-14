@@ -58,7 +58,7 @@ jobs:
   windows-abi-consumer:
     name: windows-winui3-consumer
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: desktop
@@ -67,10 +67,28 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.94.1 --profile minimal
+      - name: Build Rust ABI library
+        run: cargo +1.94.1 build --package enigma-ffi --release
+      - name: Require native ABI DLL
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "target/release/enigma_core.dll")) {
+            throw "Rust ABI build did not produce target/release/enigma_core.dll"
+          }
       - name: Build C# ABI consumer
         run: dotnet build windows/Enigma.Desktop.Interop/Enigma.Desktop.Interop.csproj --configuration Release --nologo
       - name: Build WinUI 3 client
         run: dotnet build windows/Enigma.Desktop.WinUI/Enigma.Desktop.WinUI.csproj --configuration Release --nologo
+      - name: Require packaged native core
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem "windows/Enigma.Desktop.WinUI/bin/Release" -Recurse -Filter "enigma_core.dll" | Select-Object -First 1
+          if (-not $dll) {
+            throw "WinUI output does not contain enigma_core.dll"
+          }
+          Write-Host "Packaged native core: $($dll.FullName)"
 
   linux-abi-consumer:
     name: linux-qt6-consumer
