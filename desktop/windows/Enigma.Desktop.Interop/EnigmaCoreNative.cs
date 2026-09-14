@@ -24,12 +24,12 @@ internal static partial class EnigmaCoreNative
     [return: MarshalAs(UnmanagedType.I1)]
     internal static partial bool SignalIsReady(IntPtr handle);
 
-    [LibraryImport(LibraryName, EntryPoint = "enigma_core_signal_initialize")]
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_signal_initialize_protected")]
     [return: MarshalAs(UnmanagedType.I1)]
-    internal static unsafe partial bool SignalInitialize(
+    internal static unsafe partial bool SignalInitializeProtected(
         IntPtr handle,
-        byte* serializedIdentity,
-        nuint serializedIdentityLength,
+        byte* protectedIdentity,
+        nuint protectedIdentityLength,
         uint registrationId);
 }
 
@@ -55,19 +55,21 @@ internal sealed class EnigmaCoreHandle : SafeHandle
 
     internal bool SignalIsReady => EnigmaCoreNative.SignalIsReady(handle);
 
-    internal unsafe bool InitializeSignalIdentity(ReadOnlySpan<byte> serializedIdentity, uint registrationId)
+    internal unsafe bool InitializeProtectedSignalIdentity(
+        ReadOnlySpan<byte> protectedIdentity,
+        uint registrationId)
     {
-        if (serializedIdentity.IsEmpty)
+        if (protectedIdentity.IsEmpty)
         {
             return false;
         }
 
-        fixed (byte* identity = serializedIdentity)
+        fixed (byte* identity = protectedIdentity)
         {
-            return EnigmaCoreNative.SignalInitialize(
+            return EnigmaCoreNative.SignalInitializeProtected(
                 handle,
                 identity,
-                checked((nuint)serializedIdentity.Length),
+                checked((nuint)protectedIdentity.Length),
                 registrationId);
         }
     }
@@ -81,7 +83,7 @@ internal sealed class EnigmaCoreHandle : SafeHandle
 
 /// <summary>
 /// Managed lifetime boundary for the shared Rust ENIGMA core.
-/// Cryptographic operations remain implemented by the Rust/libsignal backend.
+/// Cryptographic operations and protected-identity restoration remain inside Rust.
 /// </summary>
 public sealed class EnigmaCoreClient : IDisposable
 {
@@ -109,15 +111,15 @@ public sealed class EnigmaCoreClient : IDisposable
     }
 
     /// <summary>
-    /// Restores the canonical libsignal identity previously read from protected local storage.
-    /// The serialized representation is validated inside the pinned Rust/libsignal backend.
+    /// Restores Signal from an OS-protected blob/locator. Plaintext private-key
+    /// material never crosses the managed UI boundary.
     /// </summary>
-    public unsafe bool InitializeSignalIdentity(
-        ReadOnlySpan<byte> serializedIdentity,
+    public unsafe bool InitializeProtectedSignalIdentity(
+        ReadOnlySpan<byte> protectedIdentity,
         uint registrationId)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return _handle.InitializeSignalIdentity(serializedIdentity, registrationId);
+        return _handle.InitializeProtectedSignalIdentity(protectedIdentity, registrationId);
     }
 
     public void Dispose()
