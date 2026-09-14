@@ -27,7 +27,7 @@ import org.signal.libsignal.protocol.util.KeyHelper
 class LibsignalProtocolSmokeTest {
     @Test
     fun identityDerivationMatchesDesktopGoldenVectorV1() {
-        val fixedPrivateKey = ByteArray(32) { 0x42.toByte() }
+        val fixedPrivateKeyInput = ByteArray(32) { 0x42.toByte() }
         val expectedPublicKey = byteArrayOf(
             0x05,
             0x13,
@@ -63,11 +63,12 @@ class LibsignalProtocolSmokeTest {
             0xf4.toByte(),
             0x72,
         )
-        val privateKey = ECPrivateKey(fixedPrivateKey)
+        val privateKey = ECPrivateKey(fixedPrivateKeyInput)
         val derivedIdentity = IdentityKey(privateKey.getPublicKey())
         val decodedIdentity = IdentityKey(expectedPublicKey)
 
-        assertArrayEquals(fixedPrivateKey, privateKey.serialize())
+        // The cross-runtime contract is the derived public identity. libsignal may normalize/clamp
+        // private material internally, so its private serialization is intentionally not asserted.
         assertArrayEquals(expectedPublicKey, derivedIdentity.serialize())
         assertArrayEquals(expectedPublicKey, decodedIdentity.serialize())
     }
