@@ -29,6 +29,19 @@ impl LibsignalSessionBackend {
         Ok(Self { store })
     }
 
+    /// Restore a backend from libsignal's canonical serialized identity-key-pair representation.
+    ///
+    /// The serialized private identity is expected to come from ENIGMA's protected local storage.
+    /// It is parsed by the pinned libsignal implementation rather than by ENIGMA.
+    pub fn from_serialized_identity(
+        serialized_identity: &[u8],
+        registration_id: u32,
+    ) -> Result<Self, SignalAdapterError> {
+        let identity = IdentityKeyPair::try_from(serialized_identity)
+            .map_err(|_| SignalAdapterError::InvalidBundle)?;
+        Self::new(identity, registration_id)
+    }
+
     /// Install the local classical, signed and post-quantum pre-key records required to receive
     /// a first Signal message. Frontends should not manipulate libsignal stores directly.
     pub async fn install_local_prekeys(
