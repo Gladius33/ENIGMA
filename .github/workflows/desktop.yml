@@ -71,7 +71,7 @@ jobs:
         run: dotnet build windows/Enigma.Desktop.Interop/Enigma.Desktop.Interop.csproj --configuration Release --nologo
 
   linux-abi-consumer:
-    name: linux-abi-consumer
+    name: linux-qt6-consumer
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -82,9 +82,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Configure C++ ABI consumer
+      - name: Install Qt 6 development packages
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends qt6-base-dev
+      - name: Configure Qt 6 C++ consumer
         run: cmake -S linux -B linux/build -DCMAKE_BUILD_TYPE=Release
-      - name: Build C++ ABI consumer
+      - name: Build Qt 6 C++ consumer
         run: cmake --build linux/build --config Release --parallel 2
 
   unsafe-policy:
