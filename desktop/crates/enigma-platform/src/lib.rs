@@ -118,6 +118,18 @@ impl LinuxSecretServiceProtector {
         locator
     }
 
+    pub fn from_locator(protected: &[u8]) -> Result<Self, PlatformKeyError> {
+        let slot_bytes = protected
+            .strip_prefix(SECRET_SERVICE_LOCATOR_PREFIX)
+            .filter(|slot| !slot.is_empty())
+            .ok_or(PlatformKeyError::CorruptProtectedValue)?;
+        let slot = std::str::from_utf8(slot_bytes)
+            .map_err(|_| PlatformKeyError::CorruptProtectedValue)?;
+        let protector = Self::new(slot)?;
+        protector.validate_locator(protected)?;
+        Ok(protector)
+    }
+
     fn validate_locator(&self, protected: &[u8]) -> Result<(), PlatformKeyError> {
         if protected == self.locator() {
             Ok(())
