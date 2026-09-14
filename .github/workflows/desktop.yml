@@ -56,9 +56,9 @@ jobs:
         run: cargo +1.94.1 doc --workspace --no-deps
 
   windows-abi-consumer:
-    name: windows-abi-consumer
+    name: windows-winui3-consumer
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: desktop
@@ -69,6 +69,8 @@ jobs:
           persist-credentials: false
       - name: Build C# ABI consumer
         run: dotnet build windows/Enigma.Desktop.Interop/Enigma.Desktop.Interop.csproj --configuration Release --nologo
+      - name: Build WinUI 3 client
+        run: dotnet build windows/Enigma.Desktop.WinUI/Enigma.Desktop.WinUI.csproj --configuration Release --nologo
 
   linux-abi-consumer:
     name: linux-qt6-consumer
