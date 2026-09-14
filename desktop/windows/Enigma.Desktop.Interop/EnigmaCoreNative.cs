@@ -19,6 +19,18 @@ internal static partial class EnigmaCoreNative
     [LibraryImport(LibraryName, EntryPoint = "enigma_core_is_ready")]
     [return: MarshalAs(UnmanagedType.I1)]
     internal static partial bool IsReady(IntPtr handle);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_signal_is_ready")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static partial bool SignalIsReady(IntPtr handle);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_signal_initialize")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static unsafe partial bool SignalInitialize(
+        IntPtr handle,
+        byte* serializedIdentity,
+        nuint serializedIdentityLength,
+        uint registrationId);
 }
 
 internal sealed class EnigmaCoreHandle : SafeHandle
@@ -40,6 +52,25 @@ internal sealed class EnigmaCoreHandle : SafeHandle
     public override bool IsInvalid => handle == IntPtr.Zero;
 
     internal bool IsReady => EnigmaCoreNative.IsReady(handle);
+
+    internal bool SignalIsReady => EnigmaCoreNative.SignalIsReady(handle);
+
+    internal unsafe bool InitializeSignalIdentity(ReadOnlySpan<byte> serializedIdentity, uint registrationId)
+    {
+        if (serializedIdentity.IsEmpty)
+        {
+            return false;
+        }
+
+        fixed (byte* identity = serializedIdentity)
+        {
+            return EnigmaCoreNative.SignalInitialize(
+                handle,
+                identity,
+                checked((nuint)serializedIdentity.Length),
+                registrationId);
+        }
+    }
 
     protected override bool ReleaseHandle()
     {
@@ -66,6 +97,27 @@ public sealed class EnigmaCoreClient : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             return _handle.IsReady;
         }
+    }
+
+    public bool SignalReady
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _handle.SignalIsReady;
+        }
+    }
+
+    /// <summary>
+    /// Restores the canonical libsignal identity previously read from protected local storage.
+    /// The serialized representation is validated inside the pinned Rust/libsignal backend.
+    /// </summary>
+    public unsafe bool InitializeSignalIdentity(
+        ReadOnlySpan<byte> serializedIdentity,
+        uint registrationId)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _handle.InitializeSignalIdentity(serializedIdentity, registrationId);
     }
 
     public void Dispose()
