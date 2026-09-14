@@ -2,9 +2,10 @@ use std::time::SystemTime;
 
 use libsignal_protocol::{
     message_decrypt_prekey, message_decrypt_signal, message_encrypt, process_prekey_bundle,
-    CiphertextMessage, CiphertextMessageType, IdentityKeyPair, InMemSignalProtocolStore,
-    KyberPreKeyRecord, KyberPreKeyStore, PreKeyBundle, PreKeyRecord, PreKeySignalMessage,
-    PreKeyStore, ProtocolAddress, SignalMessage, SignedPreKeyRecord, SignedPreKeyStore,
+    kem, CiphertextMessage, CiphertextMessageType, GenericSignedPreKey, IdentityKeyPair,
+    IdentityKeyStore, InMemSignalProtocolStore, KeyPair, KyberPreKeyRecord, KyberPreKeyStore,
+    PreKeyBundle, PreKeyRecord, PreKeySignalMessage, PreKeyStore, ProtocolAddress, SignalMessage,
+    SignedPreKeyRecord, SignedPreKeyStore, Timestamp,
 };
 use rand::{CryptoRng, Rng};
 
@@ -17,6 +18,28 @@ use crate::SignalAdapterError;
 /// decryption to libsignal-protocol.
 pub struct LibsignalSessionBackend {
     store: InMemSignalProtocolStore,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublishedOneTimePreKey {
+    pub key_id: u32,
+    pub public_key: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublishedSignedPreKey {
+    pub key_id: u32,
+    pub public_key: Vec<u8>,
+    pub signature: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublishedPreKeyBundle {
+    pub registration_id: u32,
+    pub identity_key: Vec<u8>,
+    pub signed_pre_key: PublishedSignedPreKey,
+    pub kyber_pre_key: PublishedSignedPreKey,
+    pub one_time_pre_keys: Vec<PublishedOneTimePreKey>,
 }
 
 impl LibsignalSessionBackend {
@@ -40,6 +63,117 @@ impl LibsignalSessionBackend {
         let identity = IdentityKeyPair::try_from(serialized_identity)
             .map_err(|_| SignalAdapterError::InvalidBundle)?;
         Self::new(identity, registration_id)
+    }
+
+    /// Generates, signs and stores the public pre-key material a desktop device publishes.
+    ///
+    /// All private material remains owned by libsignal inside the Rust backend. The returned
+    /// structure contains only public keys, signatures and identifiers suitable for the existing
+    /// ENIGMA server upload contract used by Android.
+    pub async fn generate_and_store_prekey_bundle<R>(
+        &mut self,
+        first_one_time_pre_key_id: u32,
+        one_time_pre_key_count: u32,
+        signed_pre_key_id: u32,
+        kyber_pre_key_id: u32,
+        timestamp_unix_ms: u64,
+        rng: &mut R,
+    ) -> Result<PublishedPreKeyBundle, SignalAdapterError>
+    where
+        R: Rng + CryptoRng,
+    {
+        if one_time_pre_key_count == 0
+            || one_time_pre_key_count > 100
+            || first_one_time_pre_key_id == 0
+            || first_one_time_pre_key_id
+                .checked_add(one_time_pre_key_count)
+                .is_none()
+            || signed_pre_key_id == 0
+            || kyber_pre_key_id == 0
+        {
+            return Err(SignalAdapterError::InvalidBundle);
+        }
+
+        let identity = self
+            .store
+            .identity_store
+            .get_identity_key_pair()
+            .await
+            .map_err(|_| SignalAdapterError::CryptoFailure)?;
+        let registration_id = self
+            .store
+            .identity_store
+            .get_local_registration_id()
+            .await
+            .map_err(|_| SignalAdapterError::CryptoFailure)?;
+
+        let signed_pair = KeyPair::generate(rng);
+        let signed_public = signed_pair.public_key.serialize().to_vec();
+        let signed_signature = identity
+            .private_key()
+            .calculate_signature(&signed_public, rng)
+            .map_err(|_| SignalAdapterError::CryptoFailure)?;
+        let signed_record = SignedPreKeyRecord::new(
+            signed_pre_key_id.into(),
+            Timestamp::from_epoch_millis(timestamp_unix_ms),
+            &signed_pair,
+            &signed_signature,
+        );
+        self.store
+            .signed_pre_key_store
+            .save_signed_pre_key(signed_pre_key_id.into(), &signed_record)
+            .await
+            .map_err(|_| SignalAdapterError::CryptoFailure)?;
+
+        let kyber_pair = kem::KeyPair::generate(kem::KeyType::Kyber1024, rng);
+        let kyber_public = kyber_pair.public_key.serialize().to_vec();
+        let kyber_signature = identity
+            .private_key()
+            .calculate_signature(&kyber_public, rng)
+            .map_err(|_| SignalAdapterError::CryptoFailure)?;
+        let kyber_record = KyberPreKeyRecord::new(
+            kyber_pre_key_id.into(),
+            Timestamp::from_epoch_millis(timestamp_unix_ms),
+            &kyber_pair,
+            &kyber_signature,
+        );
+        self.store
+            .kyber_pre_key_store
+            .save_kyber_pre_key(kyber_pre_key_id.into(), &kyber_record)
+            .await
+            .map_err(|_| SignalAdapterError::CryptoFailure)?;
+
+        let mut one_time_pre_keys = Vec::with_capacity(one_time_pre_key_count as usize);
+        for offset in 0..one_time_pre_key_count {
+            let key_id = first_one_time_pre_key_id
+                .checked_add(offset)
+                .ok_or(SignalAdapterError::InvalidBundle)?;
+            let pair = KeyPair::generate(rng);
+            let public_key = pair.public_key.serialize().to_vec();
+            let record = PreKeyRecord::new(key_id.into(), &pair);
+            self.store
+                .pre_key_store
+                .save_pre_key(key_id.into(), &record)
+                .await
+                .map_err(|_| SignalAdapterError::CryptoFailure)?;
+            one_time_pre_keys.push(PublishedOneTimePreKey { key_id, public_key });
+        }
+
+        Ok(PublishedPreKeyBundle {
+            registration_id,
+            identity_key: identity.identity_key().serialize().to_vec(),
+            signed_pre_key: PublishedSignedPreKey {
+                key_id: signed_pre_key_id,
+                public_key: signed_public,
+                signature: signed_signature.to_vec(),
+            },
+            kyber_pre_key: PublishedSignedPreKey {
+                key_id: kyber_pre_key_id,
+                public_key: kyber_public,
+                signature: kyber_signature.to_vec(),
+            },
+            one_time_pre_keys,
+        })
     }
 
     /// Install the local classical, signed and post-quantum pre-key records required to receive
