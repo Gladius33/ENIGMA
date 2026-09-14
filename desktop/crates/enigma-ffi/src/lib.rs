@@ -1,6 +1,6 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
-use enigma_core::CoreRuntime;
+use enigma_runtime_core::CoreRuntime;
 use enigma_signal::session::LibsignalSessionBackend;
 
 pub const ENIGMA_CORE_ABI_VERSION: u32 = 1;
