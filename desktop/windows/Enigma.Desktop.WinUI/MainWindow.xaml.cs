@@ -20,17 +20,22 @@ public sealed partial class MainWindow : Window
         try
         {
             _core = new EnigmaCoreClient();
-            bool ready = _core.IsReady;
+            bool runtimeReady = _core.IsReady;
+            bool signalReady = runtimeReady && _core.SignalReady;
 
-            CoreStatusText.Text = ready
+            CoreStatusText.Text = signalReady
                 ? "Cœur sécurisé prêt"
-                : "Cœur sécurisé indisponible";
-            CoreDetailText.Text = ready
+                : runtimeReady
+                    ? "Identité E2EE protégée requise"
+                    : "Cœur sécurisé indisponible";
+            CoreDetailText.Text = signalReady
                 ? $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion}"
-                : "Le cœur Rust/libsignal n’est pas prêt";
+                : runtimeReady
+                    ? $"Rust chargé • ABI {EnigmaCoreClient.AbiVersion} • identité libsignal non restaurée"
+                    : "Le cœur Rust n’est pas prêt";
 
-            MessageComposer.IsEnabled = ready;
-            SendButton.IsEnabled = ready;
+            MessageComposer.IsEnabled = signalReady;
+            SendButton.IsEnabled = signalReady;
         }
         catch (DllNotFoundException)
         {
