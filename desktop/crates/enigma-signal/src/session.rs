@@ -82,14 +82,18 @@ impl LibsignalSessionBackend {
     where
         R: Rng + CryptoRng,
     {
+        const MAX_SIGNAL_KEY_ID: u32 = i32::MAX as u32;
+        let one_time_range_end = first_one_time_pre_key_id
+            .checked_add(one_time_pre_key_count)
+            .filter(|end| *end <= MAX_SIGNAL_KEY_ID);
         if one_time_pre_key_count == 0
             || one_time_pre_key_count > 100
             || first_one_time_pre_key_id == 0
-            || first_one_time_pre_key_id
-                .checked_add(one_time_pre_key_count)
-                .is_none()
+            || one_time_range_end.is_none()
             || signed_pre_key_id == 0
+            || signed_pre_key_id > MAX_SIGNAL_KEY_ID
             || kyber_pre_key_id == 0
+            || kyber_pre_key_id > MAX_SIGNAL_KEY_ID
         {
             return Err(SignalAdapterError::InvalidBundle);
         }
