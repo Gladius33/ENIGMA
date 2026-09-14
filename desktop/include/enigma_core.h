@@ -2,6 +2,7 @@
 #define ENIGMA_CORE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -15,6 +16,18 @@ uint32_t enigma_core_abi_version(void);
 EnigmaCoreHandle *enigma_core_create(void);
 void enigma_core_destroy(EnigmaCoreHandle *handle);
 bool enigma_core_is_ready(EnigmaCoreHandle *handle);
+
+/*
+ * Signal readiness is intentionally separate from basic runtime readiness.
+ * A newly-created core is not E2EE-ready until a canonical libsignal identity
+ * has been restored from protected local storage.
+ */
+bool enigma_core_signal_is_ready(const EnigmaCoreHandle *handle);
+bool enigma_core_signal_initialize(
+    EnigmaCoreHandle *handle,
+    const uint8_t *serialized_identity,
+    size_t serialized_identity_len,
+    uint32_t registration_id);
 
 #ifdef __cplusplus
 }
