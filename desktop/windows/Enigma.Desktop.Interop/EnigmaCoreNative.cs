@@ -26,15 +26,56 @@ internal sealed class EnigmaCoreHandle : SafeHandle
     internal EnigmaCoreHandle() : base(IntPtr.Zero, ownsHandle: true)
     {
         SetHandle(EnigmaCoreNative.Create());
-        if (IsInvalid) throw new InvalidOperationException("Unable to create ENIGMA core");
-        if (EnigmaCoreNative.AbiVersion() != 1) throw new NotSupportedException("Unsupported ENIGMA core ABI");
+        if (IsInvalid)
+        {
+            throw new InvalidOperationException("Unable to create ENIGMA core");
+        }
+
+        if (EnigmaCoreNative.AbiVersion() != 1)
+        {
+            throw new NotSupportedException("Unsupported ENIGMA core ABI");
+        }
     }
 
     public override bool IsInvalid => handle == IntPtr.Zero;
+
+    internal bool IsReady => EnigmaCoreNative.IsReady(handle);
 
     protected override bool ReleaseHandle()
     {
         EnigmaCoreNative.Destroy(handle);
         return true;
+    }
+}
+
+/// <summary>
+/// Managed lifetime boundary for the shared Rust ENIGMA core.
+/// Cryptographic operations remain implemented by the Rust/libsignal backend.
+/// </summary>
+public sealed class EnigmaCoreClient : IDisposable
+{
+    private readonly EnigmaCoreHandle _handle = new();
+    private bool _disposed;
+
+    public static uint AbiVersion => EnigmaCoreNative.AbiVersion();
+
+    public bool IsReady
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _handle.IsReady;
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _handle.Dispose();
+        _disposed = true;
     }
 }
