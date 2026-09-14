@@ -117,12 +117,12 @@ impl LibsignalSessionBackend {
         R: Rng + CryptoRng,
     {
         match ciphertext.message_type {
-            SessionMessageType::PreKey => {
-                self.decrypt_prekey(remote, &ciphertext.serialized, rng).await
-            }
-            SessionMessageType::Signal => {
-                self.decrypt_signal(remote, &ciphertext.serialized, rng).await
-            }
+            SessionMessageType::PreKey => self
+                .decrypt_prekey(remote, &ciphertext.serialized, rng)
+                .await,
+            SessionMessageType::Signal => self
+                .decrypt_signal(remote, &ciphertext.serialized, rng)
+                .await,
         }
     }
 
