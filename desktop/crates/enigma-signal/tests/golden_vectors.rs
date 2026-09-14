@@ -52,5 +52,8 @@ fn android_prekey_derivation_golden_vector_v1_matches_rust() {
     let private_key = PrivateKey::deserialize(&private_key_input).expect("fixed pre-key input");
     let derived_public = private_key.public_key().expect("derive pre-key public key");
 
-    assert_eq!(derived_public.serialize().as_ref(), expected_public_key.as_slice());
+    assert_eq!(
+        derived_public.serialize().as_ref(),
+        expected_public_key.as_slice()
+    );
 }
