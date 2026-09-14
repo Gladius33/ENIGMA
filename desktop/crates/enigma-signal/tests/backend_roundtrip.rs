@@ -218,3 +218,65 @@ fn public_backend_rejects_tampered_signed_prekey_bundle_without_creating_session
         .expect("in-memory post-rejection encryption is synchronous");
     assert!(encrypt_after_rejection.is_err());
 }
+
+#[test]
+fn public_backend_rejects_tampered_kyber_prekey_bundle_without_creating_session() {
+    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let mut alice_rng = StdRng::from_seed([0x71; 32]);
+    let mut bob_rng = StdRng::from_seed([0x72; 32]);
+
+    let alice_identity = IdentityKeyPair::generate(&mut alice_rng);
+    let bob_identity = IdentityKeyPair::generate(&mut bob_rng);
+    let pre_key_pair = KeyPair::generate(&mut bob_rng);
+    let signed_pre_key_pair = KeyPair::generate(&mut bob_rng);
+    let kyber_pre_key_pair = kem::KeyPair::generate(kem::KeyType::Kyber1024, &mut bob_rng);
+
+    let signed_pre_key_public = signed_pre_key_pair.public_key.serialize();
+    let signed_pre_key_signature = bob_identity
+        .private_key()
+        .calculate_signature(&signed_pre_key_public, &mut bob_rng)
+        .expect("sign signed pre-key");
+
+    let kyber_public = kyber_pre_key_pair.public_key.serialize();
+    let mut tampered_kyber_signature = bob_identity
+        .private_key()
+        .calculate_signature(&kyber_public, &mut bob_rng)
+        .expect("sign kyber pre-key")
+        .to_vec();
+    tampered_kyber_signature[0] ^= 0x01;
+
+    let tampered_bundle = PreKeyBundle::new(
+        0x8202,
+        DeviceId::new(1).expect("valid device id"),
+        Some((31u32.into(), pre_key_pair.public_key)),
+        32u32.into(),
+        signed_pre_key_pair.public_key,
+        signed_pre_key_signature.to_vec(),
+        33u32.into(),
+        kyber_pre_key_pair.public_key,
+        tampered_kyber_signature,
+        *bob_identity.identity_key(),
+    )
+    .expect("construct syntactically valid tampered Kyber bundle");
+
+    let mut alice =
+        LibsignalSessionBackend::new(alice_identity, 0x8101).expect("initialize alice backend");
+
+    let rejected = alice
+        .process_remote_prekey_bundle(&address("bob"), &tampered_bundle, now, &mut alice_rng)
+        .now_or_never()
+        .expect("in-memory Kyber session setup is synchronous");
+    assert!(rejected.is_err());
+
+    // Kyber authentication failure must be atomic as well: no partial session may remain usable.
+    let encrypt_after_rejection = alice
+        .encrypt(
+            &address("bob"),
+            b"must not encrypt after invalid Kyber pre-key signature",
+            now + Duration::from_secs(1),
+            &mut alice_rng,
+        )
+        .now_or_never()
+        .expect("in-memory post-Kyber-rejection encryption is synchronous");
+    assert!(encrypt_after_rejection.is_err());
+}
