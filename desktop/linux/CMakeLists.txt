@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(enigma_linux_desktop LANGUAGES CXX)
 
 find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets)
+set(CMAKE_AUTORCC ON)
 
 add_library(enigma_linux_interop STATIC
     src/enigma_core.cpp
@@ -16,8 +17,13 @@ target_include_directories(enigma_linux_interop
 
 add_executable(enigma_linux_desktop
     src/main.cpp
+    enigma_resources.qrc
 )
 target_compile_features(enigma_linux_desktop PRIVATE cxx_std_20)
+target_include_directories(enigma_linux_desktop
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../design
+)
 target_link_libraries(enigma_linux_desktop
     PRIVATE
         Qt6::Widgets
