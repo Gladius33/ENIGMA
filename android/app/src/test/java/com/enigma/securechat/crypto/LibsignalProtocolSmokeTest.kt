@@ -74,6 +74,51 @@ class LibsignalProtocolSmokeTest {
     }
 
     @Test
+    fun preKeyDerivationMatchesDesktopGoldenVectorV1() {
+        val fixedPrivateKeyInput = ByteArray(32) { 0x24.toByte() }
+        val expectedPublicKey = byteArrayOf(
+            0x05,
+            0x04,
+            0xbc.toByte(),
+            0xd2.toByte(),
+            0xe0.toByte(),
+            0xd0.toByte(),
+            0x0f,
+            0x2c,
+            0xce.toByte(),
+            0x5f,
+            0xe8.toByte(),
+            0xf1.toByte(),
+            0xc6.toByte(),
+            0xc2.toByte(),
+            0xfb.toByte(),
+            0xec.toByte(),
+            0x5c,
+            0x07,
+            0xfa.toByte(),
+            0x56,
+            0xe3.toByte(),
+            0xaa.toByte(),
+            0x5c,
+            0x88.toByte(),
+            0xa5.toByte(),
+            0x68,
+            0x99.toByte(),
+            0x75,
+            0xd8.toByte(),
+            0x8b.toByte(),
+            0x3f,
+            0xce.toByte(),
+            0x05,
+        )
+        val privateKey = ECPrivateKey(fixedPrivateKeyInput)
+
+        // This is the same deterministic public pre-key contract asserted by the Rust desktop
+        // runtime. Session/ciphertext interoperability remains a separate SIG-001 release gate.
+        assertArrayEquals(expectedPublicKey, privateKey.getPublicKey().serialize())
+    }
+
+    @Test
     fun rejectsTamperedSignedPreKeyBundle() {
         val bobAddress = SignalProtocolAddress("bob", 1)
         val aliceIdentity = IdentityKeyPair.generate()
