@@ -11,6 +11,7 @@ repository.workspace = true
 workspace = true
 
 [lib]
+name = "enigma_core"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
