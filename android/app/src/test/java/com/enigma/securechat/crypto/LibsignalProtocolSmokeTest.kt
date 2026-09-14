@@ -3,6 +3,7 @@ package com.enigma.securechat.crypto
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import org.signal.libsignal.protocol.IdentityKey
@@ -12,6 +13,7 @@ import org.signal.libsignal.protocol.SessionCipher
 import org.signal.libsignal.protocol.SignalProtocolAddress
 import org.signal.libsignal.protocol.ecc.ECKeyPair
 import org.signal.libsignal.protocol.ecc.ECPrivateKey
+import org.signal.libsignal.protocol.ecc.ECPublicKey
 import org.signal.libsignal.protocol.kem.KEMKeyPair
 import org.signal.libsignal.protocol.kem.KEMKeyType
 import org.signal.libsignal.protocol.message.CiphertextMessage
@@ -116,6 +118,40 @@ class LibsignalProtocolSmokeTest {
         // This is the same deterministic public pre-key contract asserted by the Rust desktop
         // runtime. Session/ciphertext interoperability remains a separate SIG-001 release gate.
         assertArrayEquals(expectedPublicKey, privateKey.getPublicKey().serialize())
+    }
+
+    @Test
+    fun xeddsaVerificationMatchesDesktopGoldenVectorV1() {
+        val identityPublicKey = byteArrayOf(
+            0xab.toByte(), 0x7e, 0x71, 0x7d, 0x4a, 0x16, 0x3b, 0x7d,
+            0x9a.toByte(), 0x1d, 0x80.toByte(), 0x71, 0xdf.toByte(), 0xe9.toByte(), 0xdc.toByte(), 0xf8.toByte(),
+            0xcd.toByte(), 0xcd.toByte(), 0x1c, 0xea.toByte(), 0x33, 0x39, 0xb6.toByte(), 0x35,
+            0x6b, 0xe8.toByte(), 0x4d, 0x88.toByte(), 0x7e, 0x32, 0x2c, 0x64,
+        )
+        val signedPreKeyPublic = byteArrayOf(
+            0x05, 0xed.toByte(), 0xce.toByte(), 0x9d.toByte(), 0x9c.toByte(), 0x41, 0x5c, 0xa7.toByte(),
+            0x8c.toByte(), 0xb7.toByte(), 0x25, 0x2e, 0x72, 0xc2.toByte(), 0xc4.toByte(), 0xa5.toByte(),
+            0x54, 0xd3.toByte(), 0xeb.toByte(), 0x29, 0x48, 0x5a, 0x0e, 0x1d,
+            0x50, 0x31, 0x18, 0xd1.toByte(), 0xa8.toByte(), 0x2d, 0x99.toByte(), 0xfb.toByte(),
+            0x4a,
+        )
+        val signature = byteArrayOf(
+            0x5d, 0xe8.toByte(), 0x8c.toByte(), 0xa9.toByte(), 0xa8.toByte(), 0x9b.toByte(), 0x4a, 0x11,
+            0x5d, 0xa7.toByte(), 0x91.toByte(), 0x09, 0xc6.toByte(), 0x7c, 0x9c.toByte(), 0x74,
+            0x64, 0xa3.toByte(), 0xe4.toByte(), 0x18, 0x02, 0x74, 0xf1.toByte(), 0xcb.toByte(),
+            0x8c.toByte(), 0x63, 0xc2.toByte(), 0x98.toByte(), 0x4e, 0x28, 0x6d, 0xfb.toByte(),
+            0xed.toByte(), 0xe8.toByte(), 0x2d, 0xeb.toByte(), 0x9d.toByte(), 0xcd.toByte(), 0x9f.toByte(), 0xae.toByte(),
+            0x0b, 0xfb.toByte(), 0xb8.toByte(), 0x21, 0x56, 0x9b.toByte(), 0x3d, 0x90.toByte(),
+            0x01, 0xbd.toByte(), 0x81.toByte(), 0x30, 0xcd.toByte(), 0x11, 0xd4.toByte(), 0x86.toByte(),
+            0xce.toByte(), 0xf0.toByte(), 0x47, 0xbd.toByte(), 0x60, 0xb8.toByte(), 0x6e, 0x88.toByte(),
+        )
+        val identityPublic = ECPublicKey.fromPublicKeyBytes(identityPublicKey)
+
+        assertTrue(identityPublic.verifySignature(signedPreKeyPublic, signature))
+
+        val tamperedSignature = signature.copyOf()
+        tamperedSignature[0] = (tamperedSignature[0].toInt() xor 0x01).toByte()
+        assertFalse(identityPublic.verifySignature(signedPreKeyPublic, tamperedSignature))
     }
 
     @Test
