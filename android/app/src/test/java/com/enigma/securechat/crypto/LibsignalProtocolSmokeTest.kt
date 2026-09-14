@@ -11,6 +11,7 @@ import org.signal.libsignal.protocol.SessionBuilder
 import org.signal.libsignal.protocol.SessionCipher
 import org.signal.libsignal.protocol.SignalProtocolAddress
 import org.signal.libsignal.protocol.ecc.ECKeyPair
+import org.signal.libsignal.protocol.ecc.ECPrivateKey
 import org.signal.libsignal.protocol.kem.KEMKeyPair
 import org.signal.libsignal.protocol.kem.KEMKeyType
 import org.signal.libsignal.protocol.message.CiphertextMessage
@@ -25,7 +26,8 @@ import org.signal.libsignal.protocol.util.KeyHelper
 
 class LibsignalProtocolSmokeTest {
     @Test
-    fun identitySerializationMatchesDesktopGoldenVectorV1() {
+    fun identityDerivationMatchesDesktopGoldenVectorV1() {
+        val fixedPrivateKey = ByteArray(32) { 0x42.toByte() }
         val expectedPublicKey = byteArrayOf(
             0x05,
             0x13,
@@ -61,8 +63,12 @@ class LibsignalProtocolSmokeTest {
             0xf4.toByte(),
             0x72,
         )
+        val privateKey = ECPrivateKey(fixedPrivateKey)
+        val derivedIdentity = IdentityKey(privateKey.getPublicKey())
         val decodedIdentity = IdentityKey(expectedPublicKey)
 
+        assertArrayEquals(fixedPrivateKey, privateKey.serialize())
+        assertArrayEquals(expectedPublicKey, derivedIdentity.serialize())
         assertArrayEquals(expectedPublicKey, decodedIdentity.serialize())
     }
 
