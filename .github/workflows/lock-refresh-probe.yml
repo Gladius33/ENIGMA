@@ -30,10 +30,10 @@ jobs:
         working-directory: server
         run: cargo +1.94.1 update -p rustls --precise 0.23.45
 
-      - name: Emit regenerated lock
-        working-directory: server
-        run: |
-          echo LOCK_B64_BEGIN
-          base64 -w0 Cargo.lock
-          echo
-          echo LOCK_B64_END
+      - name: Upload regenerated lock
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: regenerated-server-lock
+          path: server/Cargo.lock
+          if-no-files-found: error
+          retention-days: 1
