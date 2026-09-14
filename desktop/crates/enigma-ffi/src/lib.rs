@@ -167,12 +167,7 @@ mod tests {
         // SAFETY: handle is live and invalid points to a readable immutable
         // region for the duration of this call.
         assert!(!unsafe {
-            enigma_core_signal_initialize_protected(
-                handle,
-                invalid.as_ptr(),
-                invalid.len(),
-                7,
-            )
+            enigma_core_signal_initialize_protected(handle, invalid.as_ptr(), invalid.len(), 7)
         });
         // SAFETY: handle is still live and exclusively owned by this test.
         assert!(!unsafe { enigma_core_signal_is_ready(handle) });
@@ -221,12 +216,7 @@ mod tests {
         // SAFETY: handle is live and protected points to a readable immutable
         // region for the duration of this call.
         assert!(unsafe {
-            enigma_core_signal_initialize_protected(
-                handle,
-                protected.as_ptr(),
-                protected.len(),
-                7,
-            )
+            enigma_core_signal_initialize_protected(handle, protected.as_ptr(), protected.len(), 7)
         });
         // SAFETY: handle remains live and exclusively owned.
         assert!(unsafe { enigma_core_signal_is_ready(handle) });
