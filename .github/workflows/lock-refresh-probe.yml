@@ -6,16 +6,16 @@ on:
       - feat/desktop-multidevice-p2p-1.0
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   regenerate-server-lock:
+    if: github.actor == 'Gladius33'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          persist-credentials: false
           fetch-depth: 0
 
       - name: Restore last green server lock
@@ -30,10 +30,12 @@ jobs:
         working-directory: server
         run: cargo +1.94.1 update -p rustls --precise 0.23.45
 
-      - name: Upload regenerated lock
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: regenerated-server-lock
-          path: server/Cargo.lock
-          if-no-files-found: error
-          retention-days: 1
+      - name: Commit regenerated lock and remove probe
+        run: |
+          rm .github/workflows/lock-refresh-probe.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add server/Cargo.lock .github/workflows/lock-refresh-probe.yml
+          git diff --cached --check
+          git commit -m 'fix(security): regenerate rustls lock with Cargo'
+          git push origin HEAD:feat/desktop-multidevice-p2p-1.0
