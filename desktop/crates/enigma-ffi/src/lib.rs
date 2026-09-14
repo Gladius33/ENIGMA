@@ -164,9 +164,7 @@ mod tests {
         let handle = enigma_core_create();
 
         // SAFETY: null identity pointer is explicitly permitted and rejected.
-        assert!(!unsafe {
-            enigma_core_signal_initialize(handle, std::ptr::null(), 1, 7)
-        });
+        assert!(!unsafe { enigma_core_signal_initialize(handle, std::ptr::null(), 1, 7) });
         // SAFETY: this pointer is never dereferenced because the length fails
         // the bounded-input check before slice construction.
         assert!(!unsafe {
