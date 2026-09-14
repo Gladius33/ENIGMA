@@ -281,7 +281,6 @@ fn public_backend_rejects_tampered_kyber_prekey_bundle_without_creating_session(
     assert!(encrypt_after_rejection.is_err());
 }
 
-
 #[test]
 fn generated_desktop_prekeys_are_publishable_and_receive_first_message() {
     let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
