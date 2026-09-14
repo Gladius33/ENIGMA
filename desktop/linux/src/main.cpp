@@ -66,10 +66,16 @@ int main(int argc, char* argv[]) {
 
     try {
         core = std::make_unique<enigma::Core>();
-        coreReady = core->ready();
-        if (coreReady) {
+        const bool runtimeReady = core->ready();
+        const bool signalReady = runtimeReady && core->signalReady();
+        coreReady = signalReady;
+        if (signalReady) {
             coreStatus = QStringLiteral("Cœur sécurisé prêt");
             coreDetail = QStringLiteral("Rust/libsignal • ABI %1").arg(enigma::linked_core_abi_version());
+        } else if (runtimeReady) {
+            coreStatus = QStringLiteral("Identité E2EE protégée requise");
+            coreDetail = QStringLiteral("Rust chargé • ABI %1 • identité libsignal non restaurée")
+                             .arg(enigma::linked_core_abi_version());
         }
     } catch (const std::exception& error) {
         coreDetail = QStringLiteral("Initialisation du cœur ENIGMA impossible : %1")
@@ -138,7 +144,7 @@ int main(int argc, char* argv[]) {
     openMessages->setEnabled(false);
     openMessages->setToolTip(
         coreReady
-            ? QStringLiteral("Le cœur sécurisé est prêt ; l’interface de conversation reste à relier à l’ABI.")
+            ? QStringLiteral("Le cœur Rust/libsignal est prêt.")
             : coreDetail);
 
     content->addWidget(title);
