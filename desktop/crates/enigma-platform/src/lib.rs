@@ -53,7 +53,7 @@ impl PlatformKeyProtector for WindowsDpapiProtector {
     }
 
     fn protect(&self, secret: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
-        use windows_dpapi::{Scope, encrypt_data};
+        use windows_dpapi::{encrypt_data, Scope};
 
         if secret.is_empty() {
             return Err(PlatformKeyError::CorruptProtectedValue);
@@ -69,7 +69,7 @@ impl PlatformKeyProtector for WindowsDpapiProtector {
     }
 
     fn unprotect(&self, protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
-        use windows_dpapi::{Scope, decrypt_data};
+        use windows_dpapi::{decrypt_data, Scope};
 
         let encrypted = protected
             .strip_prefix(DPAPI_PREFIX)
@@ -123,8 +123,8 @@ impl LinuxSecretServiceProtector {
             .strip_prefix(SECRET_SERVICE_LOCATOR_PREFIX)
             .filter(|slot| !slot.is_empty())
             .ok_or(PlatformKeyError::CorruptProtectedValue)?;
-        let slot = std::str::from_utf8(slot_bytes)
-            .map_err(|_| PlatformKeyError::CorruptProtectedValue)?;
+        let slot =
+            std::str::from_utf8(slot_bytes).map_err(|_| PlatformKeyError::CorruptProtectedValue)?;
         let protector = Self::new(slot)?;
         protector.validate_locator(protected)?;
         Ok(protector)
@@ -154,13 +154,14 @@ impl PlatformKeyProtector for LinuxSecretServiceProtector {
     }
 
     fn protect(&self, secret: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
-        use secret_service::{EncryptionType, blocking::SecretService};
+        use secret_service::{blocking::SecretService, EncryptionType};
 
         if secret.is_empty() {
             return Err(PlatformKeyError::CorruptProtectedValue);
         }
 
-        let service = SecretService::connect(EncryptionType::Dh).map_err(map_secret_service_error)?;
+        let service =
+            SecretService::connect(EncryptionType::Dh).map_err(map_secret_service_error)?;
         let collection = service
             .get_default_collection()
             .map_err(map_secret_service_error)?;
@@ -183,11 +184,12 @@ impl PlatformKeyProtector for LinuxSecretServiceProtector {
     }
 
     fn unprotect(&self, protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
-        use secret_service::{EncryptionType, blocking::SecretService};
+        use secret_service::{blocking::SecretService, EncryptionType};
 
         self.validate_locator(protected)?;
 
-        let service = SecretService::connect(EncryptionType::Dh).map_err(map_secret_service_error)?;
+        let service =
+            SecretService::connect(EncryptionType::Dh).map_err(map_secret_service_error)?;
         let mut found = service
             .search_items(self.attributes())
             .map_err(map_secret_service_error)?;
@@ -237,10 +239,7 @@ mod tests {
 
     #[test]
     fn primary_backends_remain_platform_native() {
-        assert_eq!(
-            WINDOWS_PRIMARY_BACKEND,
-            KeyProtectionBackend::WindowsDpapi
-        );
+        assert_eq!(WINDOWS_PRIMARY_BACKEND, KeyProtectionBackend::WindowsDpapi);
         assert_eq!(
             LINUX_PRIMARY_BACKEND,
             KeyProtectionBackend::LinuxSecretService
@@ -278,7 +277,12 @@ mod tests {
         let protected = protector.protect(secret).expect("DPAPI protect");
 
         assert!(protected.starts_with(DPAPI_PREFIX));
-        assert!(!protected.windows(secret.len()).any(|window| window == secret));
-        assert_eq!(protector.unprotect(&protected).expect("DPAPI unprotect"), secret);
+        assert!(!protected
+            .windows(secret.len())
+            .any(|window| window == secret));
+        assert_eq!(
+            protector.unprotect(&protected).expect("DPAPI unprotect"),
+            secret
+        );
     }
 }
