@@ -13,6 +13,7 @@ workspace = true
 [lib]
 name = "enigma_core"
 crate-type = ["cdylib", "rlib"]
+doc = false
 
 [dependencies]
 enigma-platform = { path = "../enigma-platform" }
