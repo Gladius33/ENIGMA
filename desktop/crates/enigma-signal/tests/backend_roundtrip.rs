@@ -3,8 +3,8 @@ use std::time::{Duration, SystemTime};
 use enigma_signal::session::{LibsignalSessionBackend, SessionMessageType};
 use futures_util::FutureExt;
 use libsignal_protocol::{
-    kem, DeviceId, GenericSignedPreKey, IdentityKeyPair, KeyPair, KyberPreKeyRecord, PreKeyBundle,
-    PreKeyRecord, ProtocolAddress, SignedPreKeyRecord, Timestamp,
+    kem, DeviceId, GenericSignedPreKey, IdentityKey, IdentityKeyPair, KeyPair, KyberPreKeyRecord,
+    PreKeyBundle, PreKeyRecord, ProtocolAddress, PublicKey, SignedPreKeyRecord, Timestamp,
 };
 use rand::{rngs::StdRng, SeedableRng};
 
@@ -279,4 +279,84 @@ fn public_backend_rejects_tampered_kyber_prekey_bundle_without_creating_session(
         .now_or_never()
         .expect("in-memory post-Kyber-rejection encryption is synchronous");
     assert!(encrypt_after_rejection.is_err());
+}
+
+
+#[test]
+fn generated_desktop_prekeys_are_publishable_and_receive_first_message() {
+    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let mut alice_rng = StdRng::from_seed([0x31; 32]);
+    let mut bob_rng = StdRng::from_seed([0x32; 32]);
+
+    let alice_identity = IdentityKeyPair::generate(&mut alice_rng);
+    let bob_identity = IdentityKeyPair::generate(&mut bob_rng);
+    let mut alice =
+        LibsignalSessionBackend::new(alice_identity, 0xA001).expect("initialize alice backend");
+    let mut bob =
+        LibsignalSessionBackend::new(bob_identity, 0xB002).expect("initialize bob backend");
+
+    let published = bob
+        .generate_and_store_prekey_bundle(
+            1001,
+            2,
+            2001,
+            3001,
+            1_700_000_000_000,
+            &mut bob_rng,
+        )
+        .now_or_never()
+        .expect("in-memory pre-key generation is synchronous")
+        .expect("generate bob publishable pre-keys");
+
+    assert_eq!(published.registration_id, 0xB002);
+    assert_eq!(published.one_time_pre_keys.len(), 2);
+    assert_eq!(published.signed_pre_key.key_id, 2001);
+    assert_eq!(published.kyber_pre_key.key_id, 3001);
+
+    let first_pre_key = &published.one_time_pre_keys[0];
+    let bundle = PreKeyBundle::new(
+        published.registration_id,
+        DeviceId::new(1).expect("valid device id"),
+        Some((
+            first_pre_key.key_id.into(),
+            PublicKey::deserialize(&first_pre_key.public_key).expect("decode public pre-key"),
+        )),
+        published.signed_pre_key.key_id.into(),
+        PublicKey::deserialize(&published.signed_pre_key.public_key)
+            .expect("decode signed pre-key"),
+        published.signed_pre_key.signature.clone(),
+        published.kyber_pre_key.key_id.into(),
+        kem::PublicKey::deserialize(&published.kyber_pre_key.public_key)
+            .expect("decode Kyber pre-key"),
+        published.kyber_pre_key.signature.clone(),
+        IdentityKey::decode(&published.identity_key).expect("decode identity key"),
+    )
+    .expect("published material forms a libsignal pre-key bundle");
+
+    alice
+        .process_remote_prekey_bundle(&address("bob"), &bundle, now, &mut alice_rng)
+        .now_or_never()
+        .expect("in-memory session setup is synchronous")
+        .expect("alice processes generated bob bundle");
+
+    let plaintext = b"ENIGMA desktop generated-prekey interop";
+    let first = alice
+        .encrypt(
+            &address("bob"),
+            plaintext,
+            now + Duration::from_secs(1),
+            &mut alice_rng,
+        )
+        .now_or_never()
+        .expect("in-memory encryption is synchronous")
+        .expect("alice encrypts first message");
+
+    assert_eq!(first.message_type, SessionMessageType::PreKey);
+    let decrypted = bob
+        .decrypt(&address("alice"), &first, &mut bob_rng)
+        .now_or_never()
+        .expect("in-memory decrypt is synchronous")
+        .expect("bob decrypts using generated/stored pre-keys");
+
+    assert_eq!(decrypted, plaintext);
 }
