@@ -11,6 +11,7 @@
     <WindowsPackageType>None</WindowsPackageType>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Deterministic>true</Deterministic>
+    <EnigmaCoreNativePath Condition="'$(EnigmaCoreNativePath)' == ''">$(MSBuildProjectDirectory)\..\..\target\release\enigma_core.dll</EnigmaCoreNativePath>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,5 +24,16 @@
       <Link>Assets\enigma_logo.png</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="$(EnigmaCoreNativePath)">
+      <Link>enigma_core.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
+
+  <Target Name="RequireEnigmaCoreNative" BeforeTargets="PrepareForBuild">
+    <Error
+      Condition="!Exists('$(EnigmaCoreNativePath)')"
+      Text="ENIGMA native core is missing. Build desktop/crates/enigma-ffi in release mode before building the WinUI client." />
+  </Target>
 </Project>
