@@ -44,15 +44,15 @@ public:
         return handle_ != nullptr && enigma_core_signal_is_ready(handle_);
     }
 
-    [[nodiscard]] bool initializeSignalIdentity(
-        std::span<const std::uint8_t> serializedIdentity,
+    [[nodiscard]] bool initializeProtectedSignalIdentity(
+        std::span<const std::uint8_t> protectedIdentity,
         std::uint32_t registrationId) noexcept {
         return handle_ != nullptr
-            && !serializedIdentity.empty()
-            && enigma_core_signal_initialize(
+            && !protectedIdentity.empty()
+            && enigma_core_signal_initialize_protected(
                 handle_,
-                serializedIdentity.data(),
-                serializedIdentity.size(),
+                protectedIdentity.data(),
+                protectedIdentity.size(),
                 registrationId);
     }
 
