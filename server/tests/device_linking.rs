@@ -7,7 +7,6 @@ use axum::{
 };
 use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
-use sha2::{Digest, Sha256};
 use enigma_e2ee_server::{
     build_state,
     config::{
@@ -18,6 +17,7 @@ use enigma_e2ee_server::{
     db, http,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -159,10 +159,7 @@ async fn certified_desktop_linking_is_bound_replay_safe_and_revocable() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{substitution}");
-    assert_eq!(
-        substitution["error_code"],
-        "PAIRING_CANDIDATE_SUBSTITUTION"
-    );
+    assert_eq!(substitution["error_code"], "PAIRING_CANDIDATE_SUBSTITUTION");
 
     let issued_at_unix_ms = Utc::now().timestamp_millis();
     let (status, linked) = request_json(
