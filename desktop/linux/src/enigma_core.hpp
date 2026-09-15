@@ -79,6 +79,13 @@ public:
         return handle_ != nullptr && enigma_core_device_session_ready(handle_);
     }
 
+    [[nodiscard]] bool initializeDevice() noexcept {
+        return handle_ != nullptr
+            && signalReady()
+            && deviceSessionReady()
+            && enigma_core_device_initialize(handle_);
+    }
+
     void cancelPairing() noexcept {
         if (handle_ != nullptr) {
             enigma_core_pairing_cancel(handle_);
