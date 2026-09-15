@@ -1035,9 +1035,7 @@ fn flush_desktop_outbox(
                             &remote_identity_key,
                             &ice_servers,
                         )
-                        .ok()
-                        .flatten()
-                        .is_some();
+                        .is_ok_and(|delivered| delivered);
                 }
             }
         }
