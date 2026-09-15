@@ -93,17 +93,17 @@ impl PairingBootstrap {
         let header = WireHeader::v1(capabilities);
         let pairing_public_key = STANDARD_NO_PAD.encode(signing_key.public_key());
         let target_identity_key = STANDARD_NO_PAD.encode(target_identity_public);
-        let candidate_canonical = canonical_pairing_candidate(
+        let candidate_canonical = canonical_pairing_candidate(&PairingCandidateTranscript {
             session_id,
             device_id,
             display_name,
             platform,
             header,
             expires_at_unix_ms,
-            &pairing_public_key,
-            &target_identity_key,
-            &claim_secret_hash,
-        );
+            pairing_public_key: &pairing_public_key,
+            target_identity_key: &target_identity_key,
+            claim_secret_hash: &claim_secret_hash,
+        });
         let candidate_commitment_bytes = Sha256::digest(candidate_canonical.as_bytes()).to_vec();
         let candidate_commitment = STANDARD_NO_PAD.encode(&candidate_commitment_bytes);
 
@@ -203,17 +203,19 @@ impl PairingBootstrap {
     }
 }
 
-fn canonical_pairing_candidate(
+struct PairingCandidateTranscript<'a> {
     session_id: PairingSessionId,
     device_id: DeviceId,
-    display_name: &str,
-    platform: &str,
+    display_name: &'a str,
+    platform: &'a str,
     header: WireHeader,
     expires_at_unix_ms: u64,
-    pairing_public_key: &str,
-    target_identity_key: &str,
-    claim_secret_hash: &str,
-) -> String {
+    pairing_public_key: &'a str,
+    target_identity_key: &'a str,
+    claim_secret_hash: &'a str,
+}
+
+fn canonical_pairing_candidate(candidate: &PairingCandidateTranscript<'_>) -> String {
     format!(
         concat!(
             "{}\n",
@@ -230,17 +232,17 @@ fn canonical_pairing_candidate(
             "claim_secret_hash={}\n"
         ),
         PAIRING_CANDIDATE_DOMAIN,
-        session_id.to_canonical_uuid(),
-        device_id.to_canonical_uuid(),
-        display_name,
-        platform,
-        header.protocol_version,
-        header.min_supported_version,
-        header.capabilities.bits(),
-        expires_at_unix_ms,
-        pairing_public_key,
-        target_identity_key,
-        claim_secret_hash,
+        candidate.session_id.to_canonical_uuid(),
+        candidate.device_id.to_canonical_uuid(),
+        candidate.display_name,
+        candidate.platform,
+        candidate.header.protocol_version,
+        candidate.header.min_supported_version,
+        candidate.header.capabilities.bits(),
+        candidate.expires_at_unix_ms,
+        candidate.pairing_public_key,
+        candidate.target_identity_key,
+        candidate.claim_secret_hash,
     )
 }
 
@@ -254,19 +256,19 @@ fn hex_lower(bytes: &[u8]) -> String {
     output
 }
 
+#[cfg(target_os = "windows")]
 fn desktop_platform() -> Result<(&'static str, &'static str), PairingBootstrapError> {
-    #[cfg(target_os = "windows")]
-    {
-        return Ok(("windows", "ENIGMA Windows"));
-    }
-    #[cfg(target_os = "linux")]
-    {
-        return Ok(("linux", "ENIGMA Linux"));
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    {
-        Err(PairingBootstrapError::UnsupportedPlatform)
-    }
+    Ok(("windows", "ENIGMA Windows"))
+}
+
+#[cfg(target_os = "linux")]
+fn desktop_platform() -> Result<(&'static str, &'static str), PairingBootstrapError> {
+    Ok(("linux", "ENIGMA Linux"))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+fn desktop_platform() -> Result<(&'static str, &'static str), PairingBootstrapError> {
+    Err(PairingBootstrapError::UnsupportedPlatform)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
