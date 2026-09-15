@@ -850,9 +850,7 @@ fn persist_default_signal_store(backend: &LibsignalSessionBackend) -> Result<(),
     persist_protected_record(&path, &record).map_err(|_| ())
 }
 
-fn restore_signal_backend_from_store_record(
-    record: &[u8],
-) -> Result<LibsignalSessionBackend, ()> {
+fn restore_signal_backend_from_store_record(record: &[u8]) -> Result<LibsignalSessionBackend, ()> {
     let protected = decode_signal_store_record(record).ok_or(())?;
     let mut snapshot = unprotect_signal_store(protected).map_err(|_| ())?;
     if snapshot.is_empty() || snapshot.len() > 16 * 1024 * 1024 {
