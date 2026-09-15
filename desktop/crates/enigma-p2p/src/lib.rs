@@ -8,7 +8,7 @@ const PROTOCOL_LABEL: &str = "ENIGMA_P2P_AUTH_V1";
 const MAX_FRAME_BYTES: usize = 768 * 1024;
 const MAX_CIPHERTEXT_BYTES: usize = 512 * 1024;
 const MAX_FINGERPRINT_BYTES: usize = 256;
-const MAX_NONCE_BYTES: usize = 128;
+const AUTH_NONCE_BYTES: usize = 32;
 const MAX_SIGNATURE_BYTES: usize = 4096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -197,17 +197,7 @@ pub fn encode_route(observation: &P2pRouteObservation) -> Result<String, P2pProt
 }
 
 pub fn encode_message(message: &P2pMessageEnvelope) -> Result<String, P2pProtocolError> {
-    validate_uuid(&message.bubble_id)?;
-    validate_uuid(&message.sender_device_id)?;
-    validate_uuid(&message.recipient_device_id)?;
-    validate_uuid(&message.client_message_id)?;
-    if message.sender_device_id == message.recipient_device_id
-        || !matches!(message.message_type.as_str(), "text" | "file" | "opaque")
-        || message.ciphertext.is_empty()
-        || message.ciphertext.len() > MAX_CIPHERTEXT_BYTES
-    {
-        return Err(P2pProtocolError::InvalidField);
-    }
+    validate_message(message)?;
     let mut frame = WireFrame::base("message");
     frame.bubble_id = Some(message.bubble_id.clone());
     frame.sender_device_id = Some(message.sender_device_id.clone());
@@ -219,14 +209,7 @@ pub fn encode_message(message: &P2pMessageEnvelope) -> Result<String, P2pProtoco
 }
 
 pub fn encode_receipt(receipt: &P2pReceiptEnvelope) -> Result<String, P2pProtocolError> {
-    validate_uuid(&receipt.receipt_id)?;
-    validate_uuid(&receipt.bubble_id)?;
-    validate_uuid(&receipt.sender_device_id)?;
-    validate_uuid(&receipt.recipient_device_id)?;
-    validate_uuid(&receipt.client_message_id)?;
-    if receipt.sender_device_id == receipt.recipient_device_id {
-        return Err(P2pProtocolError::InvalidField);
-    }
+    validate_receipt(receipt)?;
     let mut frame = WireFrame::base("receipt");
     frame.receipt_id = Some(receipt.receipt_id.clone());
     frame.bubble_id = Some(receipt.bubble_id.clone());
@@ -302,7 +285,7 @@ pub fn decode(value: &str) -> Result<DecodedP2pFrame, P2pProtocolError> {
                 message_type: required(frame.message_type)?,
                 ciphertext: required(frame.ciphertext)?,
             };
-            encode_message(&message)?;
+            validate_message(&message)?;
             Ok(DecodedP2pFrame::Message(message))
         }
         "receipt" => {
@@ -319,7 +302,7 @@ pub fn decode(value: &str) -> Result<DecodedP2pFrame, P2pProtocolError> {
                 client_message_id: required(frame.client_message_id)?,
                 status,
             };
-            encode_receipt(&receipt)?;
+            validate_receipt(&receipt)?;
             Ok(DecodedP2pFrame::Receipt(receipt))
         }
         "receipt_ack" => {
@@ -384,6 +367,33 @@ fn encode_frame(frame: &WireFrame) -> Result<String, P2pProtocolError> {
     Ok(encoded)
 }
 
+fn validate_message(message: &P2pMessageEnvelope) -> Result<(), P2pProtocolError> {
+    validate_uuid(&message.bubble_id)?;
+    validate_uuid(&message.sender_device_id)?;
+    validate_uuid(&message.recipient_device_id)?;
+    validate_uuid(&message.client_message_id)?;
+    if message.sender_device_id == message.recipient_device_id
+        || !matches!(message.message_type.as_str(), "text" | "file" | "opaque")
+        || message.ciphertext.is_empty()
+        || message.ciphertext.len() > MAX_CIPHERTEXT_BYTES
+    {
+        return Err(P2pProtocolError::InvalidField);
+    }
+    Ok(())
+}
+
+fn validate_receipt(receipt: &P2pReceiptEnvelope) -> Result<(), P2pProtocolError> {
+    validate_uuid(&receipt.receipt_id)?;
+    validate_uuid(&receipt.bubble_id)?;
+    validate_uuid(&receipt.sender_device_id)?;
+    validate_uuid(&receipt.recipient_device_id)?;
+    validate_uuid(&receipt.client_message_id)?;
+    if receipt.sender_device_id == receipt.recipient_device_id {
+        return Err(P2pProtocolError::InvalidField);
+    }
+    Ok(())
+}
+
 fn validate_auth(proof: &P2pAuthProof) -> Result<(), P2pProtocolError> {
     validate_uuid(&proof.session_id)?;
     validate_uuid(&proof.bubble_id)?;
@@ -391,13 +401,13 @@ fn validate_auth(proof: &P2pAuthProof) -> Result<(), P2pProtocolError> {
     validate_uuid(&proof.responder_device_id)?;
     validate_uuid(&proof.proof_device_id)?;
     if proof.initiator_device_id == proof.responder_device_id
-        || proof.proof_device_id != proof.initiator_device_id
-            && proof.proof_device_id != proof.responder_device_id
+        || (proof.proof_device_id != proof.initiator_device_id
+            && proof.proof_device_id != proof.responder_device_id)
         || proof.offer_fingerprint.is_empty()
         || proof.offer_fingerprint.len() > MAX_FINGERPRINT_BYTES
         || proof.answer_fingerprint.is_empty()
         || proof.answer_fingerprint.len() > MAX_FINGERPRINT_BYTES
-        || decode_bytes(&proof.nonce, 32)?.len() != 32
+        || decode_bytes(&proof.nonce, AUTH_NONCE_BYTES)?.len() != AUTH_NONCE_BYTES
         || decode_bytes(&proof.signature, MAX_SIGNATURE_BYTES)?.is_empty()
     {
         return Err(P2pProtocolError::InvalidField);
@@ -446,6 +456,35 @@ mod tests {
             nonce: encode_bytes(&[7; 32]),
             signature: encode_bytes(&[9; 64]),
         }
+    }
+
+    #[test]
+    fn decodes_literal_android_message_and_receipt_frames() {
+        let message = r#"{"version":1,"kind":"message","bubble_id":"22222222-2222-4222-8222-222222222222","sender_device_id":"33333333-3333-4333-8333-333333333333","recipient_device_id":"44444444-4444-4444-8444-444444444444","client_message_id":"55555555-5555-4555-8555-555555555555","message_type":"text","ciphertext":"opaque"}"#;
+        assert_eq!(
+            decode(message),
+            Ok(DecodedP2pFrame::Message(P2pMessageEnvelope {
+                bubble_id: "22222222-2222-4222-8222-222222222222".into(),
+                sender_device_id: "33333333-3333-4333-8333-333333333333".into(),
+                recipient_device_id: "44444444-4444-4444-8444-444444444444".into(),
+                client_message_id: "55555555-5555-4555-8555-555555555555".into(),
+                message_type: "text".into(),
+                ciphertext: "opaque".into(),
+            }))
+        );
+
+        let receipt = r#"{"version":1,"kind":"receipt","bubble_id":"22222222-2222-4222-8222-222222222222","sender_device_id":"44444444-4444-4444-8444-444444444444","recipient_device_id":"33333333-3333-4333-8333-333333333333","client_message_id":"55555555-5555-4555-8555-555555555555","receipt_id":"66666666-6666-4666-8666-666666666666","status":"DELIVERED"}"#;
+        assert_eq!(
+            decode(receipt),
+            Ok(DecodedP2pFrame::Receipt(P2pReceiptEnvelope {
+                receipt_id: "66666666-6666-4666-8666-666666666666".into(),
+                bubble_id: "22222222-2222-4222-8222-222222222222".into(),
+                sender_device_id: "44444444-4444-4444-8444-444444444444".into(),
+                recipient_device_id: "33333333-3333-4333-8333-333333333333".into(),
+                client_message_id: "55555555-5555-4555-8555-555555555555".into(),
+                status: P2pReceiptStatus::Delivered,
+            }))
+        );
     }
 
     #[test]
