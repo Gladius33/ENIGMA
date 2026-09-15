@@ -179,9 +179,11 @@ jobs:
           persist-credentials: false
       - name: Configure cross-runtime fixture paths
         run: |
-          echo "ENIGMA_ANDROID_INTEROP_FIXTURE=${RUNNER_TEMP}/enigma-android-rust-libsignal.properties" >> "${GITHUB_ENV}"
-          echo "ENIGMA_ANDROID_INTEROP_REPLY=${RUNNER_TEMP}/enigma-android-rust-libsignal-reply.properties" >> "${GITHUB_ENV}"
-          echo "ENIGMA_ANDROID_PAIRING_URI=${RUNNER_TEMP}/enigma-android-rust-pairing-uri.txt" >> "${GITHUB_ENV}"
+          {
+            echo "ENIGMA_ANDROID_INTEROP_FIXTURE=${RUNNER_TEMP}/enigma-android-rust-libsignal.properties"
+            echo "ENIGMA_ANDROID_INTEROP_REPLY=${RUNNER_TEMP}/enigma-android-rust-libsignal-reply.properties"
+            echo "ENIGMA_ANDROID_PAIRING_URI=${RUNNER_TEMP}/enigma-android-rust-pairing-uri.txt"
+          } >> "${GITHUB_ENV}"
       - name: Install pinned protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
