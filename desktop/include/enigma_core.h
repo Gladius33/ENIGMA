@@ -23,6 +23,7 @@ bool enigma_core_is_ready(EnigmaCoreHandle *handle);
  * has been restored from platform-protected local storage.
  */
 bool enigma_core_signal_is_ready(const EnigmaCoreHandle *handle);
+bool enigma_core_signal_load_or_create_default(EnigmaCoreHandle *handle);
 bool enigma_core_signal_initialize_protected(
     EnigmaCoreHandle *handle,
     const uint8_t *protected_identity,
