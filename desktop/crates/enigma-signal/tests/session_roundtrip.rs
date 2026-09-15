@@ -106,7 +106,7 @@ fn pinned_libsignal_establishes_and_decrypts_prekey_session() {
 
     let mut rejected_kyber_rng = StdRng::from_seed([0x44; 32]);
     let rejected_kyber_identity = IdentityKeyPair::generate(&mut rejected_kyber_rng);
-    let mut rejected_kyber_alice = InMemSignalProtocolStore::new(rejected_kyber_identity, 0x4567)
+    let mut rejected_kyber_alice = InMemSignalProtocolStore::new(rejected_kyber_identity, 0x3567)
         .expect("initialize kyber-rejected alice store");
     let rejected_kyber = process_prekey_bundle(
         &address("bob"),
