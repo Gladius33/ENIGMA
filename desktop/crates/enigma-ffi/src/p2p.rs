@@ -704,7 +704,12 @@ impl DesktopP2pManager {
             .map_err(|_| ())
     }
 
-    fn signal(&self, request: &P2pSendRequest<'_>, signal_kind: &str, payload: String) -> Result<(), ()> {
+    fn signal(
+        &self,
+        request: &P2pSendRequest<'_>,
+        signal_kind: &str,
+        payload: String,
+    ) -> Result<(), ()> {
         self.signal_to(
             request.bubble_id,
             request.recipient_device_id,
