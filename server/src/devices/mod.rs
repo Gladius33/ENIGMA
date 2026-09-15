@@ -3,8 +3,10 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::FromRow;
 use uuid::Uuid;
 
@@ -14,11 +16,17 @@ use crate::{
 
 const MULTIDEVICE_PROTOCOL_VERSION: i32 = 1;
 const LINK_CLOCK_SKEW_MS: i64 = 5 * 60 * 1_000;
+const MAX_PAIRING_TTL_MS: i64 = 5 * 60 * 1_000;
+const PAIRING_CANDIDATE_DOMAIN: &str = "ENIGMA_PAIRING_CANDIDATE_V1";
+const PAIRING_CLAIM_SECRET_BYTES: usize = 32;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/register", post(register_device))
+        .route("/link/candidate", post(create_pairing_candidate))
+        .route("/link/candidate/:pairing_session_id", get(get_pairing_candidate))
         .route("/link/authorize", post(authorize_linked_desktop))
+        .route("/link/claim", post(claim_linked_desktop))
         .route("/fcm-token", post(update_fcm_token))
         .route("/", get(list_devices))
         .route("/:device_id", delete(revoke_device))
@@ -32,6 +40,22 @@ struct RegisterDeviceRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct CreatePairingCandidateRequest {
+    pairing_session_id: Uuid,
+    device_id: Uuid,
+    display_name: String,
+    platform: String,
+    protocol_version: i32,
+    min_supported_version: i32,
+    capabilities: i64,
+    expires_at_unix_ms: i64,
+    pairing_public_key: String,
+    target_identity_key: String,
+    claim_secret_hash: String,
+    candidate_commitment: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct AuthorizeLinkedDesktopRequest {
     device_id: Uuid,
     display_name: String,
@@ -42,7 +66,14 @@ struct AuthorizeLinkedDesktopRequest {
     capabilities: i64,
     issued_at_unix_ms: i64,
     target_identity_key: String,
+    candidate_commitment: String,
     authorizer_signature: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaimLinkedDesktopRequest {
+    pairing_session_id: Uuid,
+    claim_secret: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,7 +101,29 @@ struct RegisterDeviceResponse {
 }
 
 #[derive(Debug, Serialize)]
-struct LinkedDesktopResponse {
+struct PairingCandidateResponse {
+    pairing_session_id: Uuid,
+    device_id: Uuid,
+    display_name: String,
+    platform: String,
+    protocol_version: i32,
+    min_supported_version: i32,
+    capabilities: i64,
+    expires_at_unix_ms: i64,
+    pairing_public_key: String,
+    target_identity_key: String,
+    claim_secret_hash: String,
+    candidate_commitment: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthorizedLinkedDesktopResponse {
+    device: DeviceResponse,
+    status: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct ClaimedLinkedDesktopResponse {
     device: DeviceResponse,
     access_token: String,
     token_type: &'static str,
@@ -125,6 +178,26 @@ struct ExistingDeviceRow {
 struct AuthorizerRow {
     platform: String,
     identity_key: String,
+}
+
+#[derive(Debug, FromRow)]
+struct PairingRendezvousRow {
+    pairing_session_id: Uuid,
+    device_id: Uuid,
+    display_name: String,
+    platform: String,
+    protocol_version: i32,
+    min_supported_version: i32,
+    capabilities: i64,
+    expires_at_unix_ms: i64,
+    pairing_public_key: String,
+    target_identity_key: String,
+    claim_secret_hash: String,
+    candidate_commitment: String,
+    authorized_user_id: Option<Uuid>,
+    authorizing_device_id: Option<Uuid>,
+    authorized_at: Option<DateTime<Utc>>,
+    claimed_at: Option<DateTime<Utc>>,
 }
 
 async fn register_device(
@@ -212,11 +285,81 @@ async fn register_device(
     }))
 }
 
+async fn create_pairing_candidate(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    Json(payload): Json<CreatePairingCandidateRequest>,
+) -> Result<Json<PairingCandidateResponse>, AppError> {
+    validate_pairing_candidate(&payload)?;
+    let expected_commitment = pairing_candidate_commitment(&payload);
+    if !constant_time_eq(
+        expected_commitment.as_bytes(),
+        payload.candidate_commitment.as_bytes(),
+    ) {
+        return Err(AppError::BadRequest("PAIRING_CANDIDATE_COMMITMENT_MISMATCH".into()));
+    }
+
+    let inserted = sqlx::query(
+        "INSERT INTO pairing_rendezvous (
+            pairing_session_id, device_id, display_name, platform,
+            protocol_version, min_supported_version, capabilities,
+            expires_at_unix_ms, pairing_public_key, target_identity_key,
+            claim_secret_hash, candidate_commitment
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(payload.pairing_session_id)
+    .bind(payload.device_id)
+    .bind(&payload.display_name)
+    .bind(&payload.platform)
+    .bind(payload.protocol_version)
+    .bind(payload.min_supported_version)
+    .bind(payload.capabilities)
+    .bind(payload.expires_at_unix_ms)
+    .bind(&payload.pairing_public_key)
+    .bind(&payload.target_identity_key)
+    .bind(&payload.claim_secret_hash)
+    .bind(&payload.candidate_commitment)
+    .execute(&state.pg)
+    .await?;
+
+    if inserted.rows_affected() != 1 {
+        return Err(AppError::Conflict("PAIRING_RENDEZVOUS_ALREADY_EXISTS".into()));
+    }
+
+    Ok(Json(pairing_candidate_response_from_request(payload)))
+}
+
+async fn get_pairing_candidate(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    Path(pairing_session_id): Path<Uuid>,
+) -> Result<Json<PairingCandidateResponse>, AppError> {
+    let row = sqlx::query_as::<_, PairingRendezvousRow>(
+        "SELECT pairing_session_id, device_id, display_name, platform,
+                protocol_version, min_supported_version, capabilities,
+                expires_at_unix_ms, pairing_public_key, target_identity_key,
+                claim_secret_hash, candidate_commitment, authorized_user_id,
+                authorizing_device_id, authorized_at, claimed_at
+         FROM pairing_rendezvous
+         WHERE pairing_session_id = $1",
+    )
+    .bind(pairing_session_id)
+    .fetch_optional(&state.pg)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    if row.expires_at_unix_ms <= Utc::now().timestamp_millis() || row.claimed_at.is_some() {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(Json(pairing_candidate_response(&row)))
+}
+
 async fn authorize_linked_desktop(
     axum::extract::State(state): axum::extract::State<AppState>,
     auth: AuthUser,
     Json(payload): Json<AuthorizeLinkedDesktopRequest>,
-) -> Result<Json<LinkedDesktopResponse>, AppError> {
+) -> Result<Json<AuthorizedLinkedDesktopResponse>, AppError> {
     auth.require_device_token()?;
     let authorizing_device_id = auth.require_device_id()?;
     validate_link_request(&payload, authorizing_device_id)?;
@@ -246,6 +389,29 @@ async fn authorize_linked_desktop(
 
     let mut tx = state.pg.begin().await?;
 
+    let rendezvous = sqlx::query_as::<_, PairingRendezvousRow>(
+        "SELECT pairing_session_id, device_id, display_name, platform,
+                protocol_version, min_supported_version, capabilities,
+                expires_at_unix_ms, pairing_public_key, target_identity_key,
+                claim_secret_hash, candidate_commitment, authorized_user_id,
+                authorizing_device_id, authorized_at, claimed_at
+         FROM pairing_rendezvous
+         WHERE pairing_session_id = $1
+         FOR UPDATE",
+    )
+    .bind(payload.pairing_session_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    validate_authorization_against_rendezvous(&payload, &rendezvous)?;
+    if rendezvous.authorized_at.is_some() || rendezvous.claimed_at.is_some() {
+        return Err(AppError::Conflict("PAIRING_SESSION_ALREADY_USED".into()));
+    }
+    if rendezvous.expires_at_unix_ms <= Utc::now().timestamp_millis() {
+        return Err(AppError::BadRequest("PAIRING_RENDEZVOUS_EXPIRED".into()));
+    }
+
     let existing_device: Option<Uuid> =
         sqlx::query_scalar("SELECT id FROM devices WHERE id = $1 FOR UPDATE")
             .bind(payload.device_id)
@@ -254,21 +420,6 @@ async fn authorize_linked_desktop(
     if existing_device.is_some() {
         return Err(AppError::Conflict(
             "DEVICE_ID_ALREADY_REGISTERED".to_string(),
-        ));
-    }
-
-    let used_pairing_session: Option<Uuid> = sqlx::query_scalar(
-        "SELECT device_id
-         FROM device_authorizations
-         WHERE pairing_session_id = $1
-         FOR UPDATE",
-    )
-    .bind(payload.pairing_session_id)
-    .fetch_optional(&mut *tx)
-    .await?;
-    if used_pairing_session.is_some() {
-        return Err(AppError::Conflict(
-            "PAIRING_SESSION_ALREADY_USED".to_string(),
         ));
     }
 
@@ -316,6 +467,101 @@ async fn authorize_linked_desktop(
     .execute(&mut *tx)
     .await?;
 
+    sqlx::query(
+        "UPDATE pairing_rendezvous
+         SET authorized_user_id = $1,
+             authorizing_device_id = $2,
+             authorized_at = now()
+         WHERE pairing_session_id = $3",
+    )
+    .bind(auth.user_id)
+    .bind(authorizing_device_id)
+    .bind(payload.pairing_session_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    let authorization = DeviceAuthorizationResponse {
+        authorizing_device_id,
+        canonical_payload,
+        authorizer_signature: payload.authorizer_signature,
+    };
+
+    Ok(Json(AuthorizedLinkedDesktopResponse {
+        device: DeviceResponse {
+            id: device.id,
+            display_name: device.display_name,
+            platform: device.platform,
+            created_at: device.created_at,
+            authorization: Some(authorization),
+        },
+        status: "authorized",
+    }))
+}
+
+async fn claim_linked_desktop(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    Json(payload): Json<ClaimLinkedDesktopRequest>,
+) -> Result<Json<ClaimedLinkedDesktopResponse>, AppError> {
+    validation::base64_field(
+        "claim_secret",
+        &payload.claim_secret,
+        PAIRING_CLAIM_SECRET_BYTES,
+        PAIRING_CLAIM_SECRET_BYTES,
+    )?;
+    let secret = STANDARD_NO_PAD
+        .decode(&payload.claim_secret)
+        .map_err(|_| AppError::BadRequest("INVALID_PAIRING_CLAIM_SECRET".into()))?;
+    let presented_hash = hex_lower(&Sha256::digest(&secret));
+
+    let mut tx = state.pg.begin().await?;
+    let rendezvous = sqlx::query_as::<_, PairingRendezvousRow>(
+        "SELECT pairing_session_id, device_id, display_name, platform,
+                protocol_version, min_supported_version, capabilities,
+                expires_at_unix_ms, pairing_public_key, target_identity_key,
+                claim_secret_hash, candidate_commitment, authorized_user_id,
+                authorizing_device_id, authorized_at, claimed_at
+         FROM pairing_rendezvous
+         WHERE pairing_session_id = $1
+         FOR UPDATE",
+    )
+    .bind(payload.pairing_session_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    if rendezvous.expires_at_unix_ms <= Utc::now().timestamp_millis() {
+        return Err(AppError::BadRequest("PAIRING_RENDEZVOUS_EXPIRED".into()));
+    }
+    if rendezvous.claimed_at.is_some() {
+        return Err(AppError::Conflict("PAIRING_CLAIM_ALREADY_USED".into()));
+    }
+    if !constant_time_eq(
+        rendezvous.claim_secret_hash.as_bytes(),
+        presented_hash.as_bytes(),
+    ) {
+        return Err(AppError::Unauthorized);
+    }
+
+    let user_id = rendezvous
+        .authorized_user_id
+        .ok_or_else(|| AppError::BadRequest("PAIRING_NOT_AUTHORIZED".into()))?;
+    if rendezvous.authorized_at.is_none() || rendezvous.authorizing_device_id.is_none() {
+        return Err(AppError::BadRequest("PAIRING_NOT_AUTHORIZED".into()));
+    }
+
+    let device = sqlx::query_as::<_, DeviceRow>(
+        "SELECT id, user_id, display_name, platform, created_at
+         FROM devices
+         WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(rendezvous.device_id)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(AppError::Forbidden)?;
+
     let linked_session_id = Uuid::new_v4();
     let expires_at = Utc::now()
         + ChronoDuration::from_std(state.config.jwt.access_ttl).map_err(|_| AppError::Internal)?;
@@ -324,35 +570,57 @@ async fn authorize_linked_desktop(
          VALUES ($1, $2, $3, $4)",
     )
     .bind(linked_session_id)
-    .bind(auth.user_id)
+    .bind(user_id)
     .bind(device.id)
     .bind(expires_at)
     .execute(&mut *tx)
     .await?;
 
+    let consumed = sqlx::query(
+        "UPDATE pairing_rendezvous
+         SET claimed_at = now()
+         WHERE pairing_session_id = $1 AND claimed_at IS NULL",
+    )
+    .bind(payload.pairing_session_id)
+    .execute(&mut *tx)
+    .await?;
+    if consumed.rows_affected() != 1 {
+        return Err(AppError::Conflict("PAIRING_CLAIM_ALREADY_USED".into()));
+    }
+
     tx.commit().await?;
 
     let access_token = jwt::issue_token(
         &state.config.jwt,
-        auth.user_id,
+        user_id,
         linked_session_id,
         Some(device.id),
         jwt::TokenType::Device,
     )?;
 
-    let authorization = DeviceAuthorizationResponse {
-        authorizing_device_id,
-        canonical_payload,
-        authorizer_signature: payload.authorizer_signature,
-    };
+    let authorization = sqlx::query_as::<_, DeviceListRow>(
+        "SELECT d.id, d.display_name, d.platform, d.created_at,
+                da.authorizing_device_id, da.canonical_payload, da.authorizer_signature
+         FROM devices d
+         LEFT JOIN device_authorizations da ON da.device_id = d.id
+         WHERE d.id = $1 AND d.user_id = $2",
+    )
+    .bind(device.id)
+    .bind(user_id)
+    .fetch_one(&state.pg)
+    .await?;
 
-    Ok(Json(LinkedDesktopResponse {
+    Ok(Json(ClaimedLinkedDesktopResponse {
         device: DeviceResponse {
-            id: device.id,
-            display_name: device.display_name,
-            platform: device.platform,
-            created_at: device.created_at,
-            authorization: Some(authorization),
+            id: authorization.id,
+            display_name: authorization.display_name,
+            platform: authorization.platform,
+            created_at: authorization.created_at,
+            authorization: authorization_from_parts(
+                authorization.authorizing_device_id,
+                authorization.canonical_payload,
+                authorization.authorizer_signature,
+            )?,
         },
         access_token,
         token_type: "Bearer",
@@ -519,7 +787,7 @@ fn canonical_device_authorization_payload(
     authorizer_identity_key: &str,
 ) -> String {
     format!(
-        "ENIGMA_DEVICE_LINK_V1\naccount_id={account_id}\nnew_device_id={}\nauthorizing_device_id={authorizing_device_id}\npairing_session_id={}\nplatform={}\nprotocol_version={}\nmin_supported_version={}\ncapabilities={}\nissued_at_unix_ms={}\ntarget_identity_key={}\nauthorizer_identity_key={}\n",
+        "ENIGMA_DEVICE_LINK_V1\naccount_id={account_id}\nnew_device_id={}\nauthorizing_device_id={authorizing_device_id}\npairing_session_id={}\nplatform={}\nprotocol_version={}\nmin_supported_version={}\ncapabilities={}\nissued_at_unix_ms={}\ntarget_identity_key={}\ncandidate_commitment={}\nauthorizer_identity_key={}\n",
         payload.device_id,
         payload.pairing_session_id,
         payload.platform,
@@ -528,8 +796,157 @@ fn canonical_device_authorization_payload(
         payload.capabilities,
         payload.issued_at_unix_ms,
         payload.target_identity_key,
+        payload.candidate_commitment,
         authorizer_identity_key,
     )
+}
+
+fn validate_pairing_candidate(payload: &CreatePairingCandidateRequest) -> Result<(), AppError> {
+    validation::device_name(&payload.display_name)?;
+    validation::platform(&payload.platform)?;
+    if !matches!(payload.platform.as_str(), "windows" | "linux") {
+        return Err(AppError::BadRequest("DESKTOP_PLATFORM_REQUIRED".into()));
+    }
+    if payload.protocol_version != MULTIDEVICE_PROTOCOL_VERSION
+        || payload.min_supported_version < 1
+        || payload.min_supported_version > MULTIDEVICE_PROTOCOL_VERSION
+    {
+        return Err(AppError::BadRequest(
+            "UNSUPPORTED_MULTIDEVICE_PROTOCOL_VERSION".into(),
+        ));
+    }
+    if payload.capabilities < 0 || payload.capabilities & (1_i64 << 2) == 0 {
+        return Err(AppError::BadRequest("INVALID_DEVICE_CAPABILITIES".into()));
+    }
+    let now_ms = Utc::now().timestamp_millis();
+    if payload.expires_at_unix_ms <= now_ms
+        || payload.expires_at_unix_ms > now_ms + MAX_PAIRING_TTL_MS
+    {
+        return Err(AppError::BadRequest("PAIRING_RENDEZVOUS_EXPIRY_INVALID".into()));
+    }
+    validation::base64_field("pairing_public_key", &payload.pairing_public_key, 32, 32)?;
+    validation::base64_field("target_identity_key", &payload.target_identity_key, 1, 4096)?;
+    validation::base64_field("candidate_commitment", &payload.candidate_commitment, 32, 32)?;
+    if payload.claim_secret_hash.len() != 64
+        || !payload
+            .claim_secret_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(AppError::BadRequest("INVALID_PAIRING_CLAIM_SECRET_HASH".into()));
+    }
+    Ok(())
+}
+
+fn pairing_candidate_commitment(payload: &CreatePairingCandidateRequest) -> String {
+    let canonical = format!(
+        concat!(
+            "{}\n",
+            "pairing_session_id={}\n",
+            "device_id={}\n",
+            "display_name={}\n",
+            "platform={}\n",
+            "protocol_version={}\n",
+            "min_supported_version={}\n",
+            "capabilities={}\n",
+            "expires_at_unix_ms={}\n",
+            "pairing_public_key={}\n",
+            "target_identity_key={}\n",
+            "claim_secret_hash={}\n"
+        ),
+        PAIRING_CANDIDATE_DOMAIN,
+        payload.pairing_session_id,
+        payload.device_id,
+        payload.display_name,
+        payload.platform,
+        payload.protocol_version,
+        payload.min_supported_version,
+        payload.capabilities,
+        payload.expires_at_unix_ms,
+        payload.pairing_public_key,
+        payload.target_identity_key,
+        payload.claim_secret_hash,
+    );
+    STANDARD_NO_PAD.encode(Sha256::digest(canonical.as_bytes()))
+}
+
+fn validate_authorization_against_rendezvous(
+    payload: &AuthorizeLinkedDesktopRequest,
+    rendezvous: &PairingRendezvousRow,
+) -> Result<(), AppError> {
+    let matches = payload.pairing_session_id == rendezvous.pairing_session_id
+        && payload.device_id == rendezvous.device_id
+        && payload.display_name == rendezvous.display_name
+        && payload.platform == rendezvous.platform
+        && payload.protocol_version == rendezvous.protocol_version
+        && payload.min_supported_version == rendezvous.min_supported_version
+        && payload.capabilities == rendezvous.capabilities
+        && payload.target_identity_key == rendezvous.target_identity_key
+        && constant_time_eq(
+            payload.candidate_commitment.as_bytes(),
+            rendezvous.candidate_commitment.as_bytes(),
+        );
+    if !matches {
+        return Err(AppError::BadRequest("PAIRING_CANDIDATE_SUBSTITUTION".into()));
+    }
+    Ok(())
+}
+
+fn pairing_candidate_response_from_request(
+    payload: CreatePairingCandidateRequest,
+) -> PairingCandidateResponse {
+    PairingCandidateResponse {
+        pairing_session_id: payload.pairing_session_id,
+        device_id: payload.device_id,
+        display_name: payload.display_name,
+        platform: payload.platform,
+        protocol_version: payload.protocol_version,
+        min_supported_version: payload.min_supported_version,
+        capabilities: payload.capabilities,
+        expires_at_unix_ms: payload.expires_at_unix_ms,
+        pairing_public_key: payload.pairing_public_key,
+        target_identity_key: payload.target_identity_key,
+        claim_secret_hash: payload.claim_secret_hash,
+        candidate_commitment: payload.candidate_commitment,
+    }
+}
+
+fn pairing_candidate_response(row: &PairingRendezvousRow) -> PairingCandidateResponse {
+    PairingCandidateResponse {
+        pairing_session_id: row.pairing_session_id,
+        device_id: row.device_id,
+        display_name: row.display_name.clone(),
+        platform: row.platform.clone(),
+        protocol_version: row.protocol_version,
+        min_supported_version: row.min_supported_version,
+        capabilities: row.capabilities,
+        expires_at_unix_ms: row.expires_at_unix_ms,
+        pairing_public_key: row.pairing_public_key.clone(),
+        target_identity_key: row.target_identity_key.clone(),
+        claim_secret_hash: row.claim_secret_hash.clone(),
+        candidate_commitment: row.candidate_commitment.clone(),
+    }
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut difference = 0_u8;
+    for (left_byte, right_byte) in left.iter().zip(right) {
+        difference |= left_byte ^ right_byte;
+    }
+    difference == 0
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    output
 }
 
 fn authorization_from_parts(
@@ -653,6 +1070,7 @@ mod tests {
             capabilities: 127,
             issued_at_unix_ms: 1_700_000_000_000,
             target_identity_key: "dGFyZ2V0LWlkZW50aXR5LWtleS0wMDAx".into(),
+            candidate_commitment: "Y2FuZGlkYXRlLWNvbW1pdG1lbnQtMDAwMDAwMDAwMDA=".into(),
             authorizer_signature: "YXV0aG9yaXplci1zaWduYXR1cmUtMDAwMQ==".into(),
         }
     }
@@ -683,6 +1101,7 @@ mod tests {
         assert!(first.contains("new_device_id=11111111-1111-4111-8111-111111111111\n"));
         assert!(first.contains("authorizing_device_id=44444444-4444-4444-8444-444444444444\n"));
         assert!(first.contains("target_identity_key=dGFyZ2V0LWlkZW50aXR5LWtleS0wMDAx\n"));
+        assert!(first.contains("candidate_commitment="));
     }
 
     #[test]
