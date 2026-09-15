@@ -52,16 +52,16 @@ pub(crate) struct DesktopP2pManager {
     deferred_signaling: VecDeque<P2pSignalingEvent>,
 }
 
-struct P2pSend<'a> {
-    session_id: &'a str,
-    bubble_id: &'a str,
-    sender_device_id: &'a str,
-    recipient_device_id: &'a str,
-    client_message_id: &'a str,
-    message_type: &'a str,
-    ciphertext: &'a str,
-    remote_identity_key: &'a [u8],
-    ice_servers: &'a [P2pIceServer],
+pub(crate) struct P2pSendRequest<'a> {
+    pub(crate) session_id: &'a str,
+    pub(crate) bubble_id: &'a str,
+    pub(crate) sender_device_id: &'a str,
+    pub(crate) recipient_device_id: &'a str,
+    pub(crate) client_message_id: &'a str,
+    pub(crate) message_type: &'a str,
+    pub(crate) ciphertext: &'a str,
+    pub(crate) remote_identity_key: &'a [u8],
+    pub(crate) ice_servers: &'a [P2pIceServer],
 }
 
 impl DesktopP2pManager {
@@ -401,30 +401,15 @@ impl DesktopP2pManager {
     pub(crate) fn try_send(
         &mut self,
         backend: &LibsignalSessionBackend,
-        session_id: &str,
-        bubble_id: &str,
-        sender_device_id: &str,
-        recipient_device_id: &str,
-        client_message_id: &str,
-        message_type: &str,
-        ciphertext: &str,
-        remote_identity_key: &[u8],
-        ice_servers: &[P2pIceServer],
+        request: &P2pSendRequest<'_>,
     ) -> Result<bool, ()> {
-        let request = P2pSend {
-            session_id,
-            bubble_id,
-            sender_device_id,
-            recipient_device_id,
-            client_message_id,
-            message_type,
-            ciphertext,
-            remote_identity_key,
-            ice_servers,
-        };
-        let result = self.try_send_once(backend, &request);
+        let result = self.try_send_once(backend, request);
         if result.is_err() || matches!(result, Ok(false)) {
-            self.invalidate(session_id, bubble_id, recipient_device_id);
+            self.invalidate(
+                request.session_id,
+                request.bubble_id,
+                request.recipient_device_id,
+            );
         }
         result
     }
@@ -432,7 +417,7 @@ impl DesktopP2pManager {
     fn try_send_once(
         &mut self,
         backend: &LibsignalSessionBackend,
-        request: &P2pSend<'_>,
+        request: &P2pSendRequest<'_>,
     ) -> Result<bool, ()> {
         self.coordinator
             .register_outgoing(
@@ -719,7 +704,7 @@ impl DesktopP2pManager {
             .map_err(|_| ())
     }
 
-    fn signal(&self, request: &P2pSend<'_>, signal_kind: &str, payload: String) -> Result<(), ()> {
+    fn signal(&self, request: &P2pSendRequest<'_>, signal_kind: &str, payload: String) -> Result<(), ()> {
         self.signal_to(
             request.bubble_id,
             request.recipient_device_id,
