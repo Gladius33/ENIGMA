@@ -37,15 +37,19 @@ La dépendance libsignal conserve sa propre attribution/licence et ne doit jamai
 
 **RELEASE GATE:** le contrôle CI de politique de licence doit rester vert et les notices tierces doivent être conservées.
 
-### SIG-001 — libsignal desktop / interop — PARTIALLY RESOLVED
+### SIG-001 — libsignal desktop / interop — RESOLVED
 
-La version Android reste `0.86.5`. Le tag correspondant `v0.86.5` est désormais relié à la révision source immuable :
+La version Android reste `0.86.5`. Le tag correspondant `v0.86.5` est relié à la révision source immuable :
 
 `b39e93f1a5e6531044dfcdf5876585cbcf08f884`
 
 `enigma-signal` conserve ce SHA complet comme pin de référence. `main`, `master`, `latest` et un tag seul sont interdits comme source de build RC.
 
-**BLOCK RELEASE** reste actif jusqu'à ce que le backend libsignal desktop réel utilise cette révision et que les golden vectors Android ↔ Windows ↔ Linux soient validés. Un pin source seul ne rend pas le backend release-ready.
+Le gate CI `android-rust-libsignal-interop` prouve maintenant un échange bidirectionnel réel à travers les deux runtimes libsignal : Rust construit une session à partir des prekeys, émet un premier ciphertext PREKEY canonique, Android restaure les enregistrements libsignal et le déchiffre, Android émet ensuite une réponse WHISPER ratchetée, puis Rust restaure sa session canonique et déchiffre cette réponse. Les ciphertexts sont aussi contrôlés pour l'absence du plaintext.
+
+Windows et Linux consomment exactement ce même backend Rust `enigma-signal` via l'ABI commune ; les jobs `rust-windows-latest`, `rust-ubuntu-latest`, `windows-winui3-consumer` et `linux-qt6-consumer` compilent et testent cette base sur les deux plateformes.
+
+**RELEASE GATE:** le job `android-rust-libsignal-interop`, les tests Rust multi-plateformes et les consommateurs WinUI 3 / Qt 6 doivent tous rester verts. Toute régression remet immédiatement SIG-001 en blocage.
 
 ### REAL-LAB-001
 
