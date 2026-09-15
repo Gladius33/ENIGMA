@@ -31,6 +31,8 @@ public sealed partial class MainWindow : Window
             bool sessionReady = signalReady && _core.DeviceSessionReady;
             bool deviceReady = sessionReady && await Task.Run(() => _core.InitializeDevice());
             bool operationalReady = signalReady && sessionReady && deviceReady;
+            bool inboxSynced = operationalReady && await Task.Run(() => _core.SyncPending());
+            nuint inboxCount = operationalReady ? _core.InboxCount : 0;
 
             CoreStatusText.Text = operationalReady
                 ? "Cœur sécurisé prêt • appareil lié"
@@ -42,7 +44,9 @@ public sealed partial class MainWindow : Window
                         ? "Identité E2EE protégée requise"
                         : "Cœur sécurisé indisponible";
             CoreDetailText.Text = operationalReady
-                ? $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion} • prekeys publiées"
+                ? inboxSynced
+                    ? $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion} • {inboxCount} message(s) local(aux)"
+                    : $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion} • synchronisation à réessayer"
                 : signalReady
                     ? sessionReady
                         ? "Session device restaurée, mais la publication des prekeys doit être réessayée"
@@ -188,8 +192,11 @@ public sealed partial class MainWindow : Window
                         {
                             pairingStatus.Text = "Ordinateur lié avec succès.";
                             CoreStatusText.Text = "Cœur sécurisé prêt • appareil lié";
-                            CoreDetailText.Text =
-                                $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion} • prekeys publiées";
+                            bool synchronized = await Task.Run(() => _core.SyncPending());
+                            nuint inboxCount = _core.InboxCount;
+                            CoreDetailText.Text = synchronized
+                                ? $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion} • {inboxCount} message(s) local(aux)"
+                                : $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion} • synchronisation à réessayer";
                             MessageComposer.IsEnabled = true;
                             SendButton.IsEnabled = true;
                             dialog.Hide();
