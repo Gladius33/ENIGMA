@@ -25,13 +25,6 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_DEFERRED_SIGNAL_EVENTS: usize = 256;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct P2pDelivery {
-    pub route: &'static str,
-    pub local_candidate_type: String,
-    pub remote_candidate_type: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct P2pIncomingOffer {
     pub sender_user_id: String,
     pub bubble_id: String,
@@ -168,7 +161,7 @@ impl DesktopP2pManager {
                     &offer.bubble_id,
                     &offer.sender_device_id,
                 );
-                return Ok(None);
+                return Ok(false);
             }
 
             while let Some(event) = self.engine.try_next_event() {
@@ -261,7 +254,7 @@ impl DesktopP2pManager {
                             &offer.bubble_id,
                             &offer.sender_device_id,
                         );
-                        return Ok(None);
+                        return Ok(false);
                     }
                     _ => {}
                 }
@@ -303,7 +296,7 @@ impl DesktopP2pManager {
                                     &offer.bubble_id,
                                     &offer.sender_device_id,
                                 );
-                                return Ok(None);
+                                return Ok(false);
                             }
                             "offer" | "answer" => return Err(()),
                             _ => return Err(()),
@@ -427,7 +420,7 @@ impl DesktopP2pManager {
         ciphertext: &str,
         remote_identity_key: &[u8],
         ice_servers: &[P2pIceServer],
-    ) -> Result<Option<P2pDelivery>, ()> {
+    ) -> Result<bool, ()> {
         let request = P2pSend {
             session_id,
             bubble_id,
@@ -440,7 +433,7 @@ impl DesktopP2pManager {
             ice_servers,
         };
         let result = self.try_send_once(backend, &request);
-        if result.is_err() || matches!(result, Ok(None)) {
+        if result.is_err() || matches!(result, Ok(false)) {
             self.invalidate(session_id, bubble_id, recipient_device_id);
         }
         result
@@ -450,7 +443,7 @@ impl DesktopP2pManager {
         &mut self,
         backend: &LibsignalSessionBackend,
         request: &P2pSend<'_>,
-    ) -> Result<Option<P2pDelivery>, ()> {
+    ) -> Result<bool, ()> {
         self.coordinator
             .register_outgoing(
                 request.session_id,
@@ -483,11 +476,11 @@ impl DesktopP2pManager {
         loop {
             let now = Instant::now();
             if !message_sent && now >= connect_deadline {
-                return Ok(None);
+                return Ok(false);
             }
             if let Some(deadline) = ack_deadline {
                 if now >= deadline {
-                    return Ok(None);
+                    return Ok(false);
                 }
             }
 
@@ -552,25 +545,14 @@ impl DesktopP2pManager {
                                     self.engine
                                         .send_text_blocking(request.session_id, &ack)
                                         .map_err(|_| ())?;
-                                    let authenticated = self
-                                        .coordinator
+                                    self.coordinator
                                         .authenticated_session(request.session_id)
                                         .map_err(|_| ())?
                                         .ok_or(())?;
-                                    let delivered = P2pDelivery {
-                                        route: match authenticated.route {
-                                            enigma_p2p::P2pRoute::Direct => "DIRECT",
-                                            enigma_p2p::P2pRoute::Turn => "TURN",
-                                        },
-                                        local_candidate_type: authenticated
-                                            .local_candidate_type,
-                                        remote_candidate_type: authenticated
-                                            .remote_candidate_type,
-                                    };
                                     thread::sleep(Duration::from_millis(20));
                                     self.engine.release_blocking(request.session_id);
                                     self.coordinator.invalidate(request.session_id);
-                                    return Ok(Some(delivered));
+                                    return Ok(true);
                                 }
                             }
                             DecodedP2pFrame::Message(_)
@@ -584,7 +566,7 @@ impl DesktopP2pManager {
                                 "failed" | "disconnected" | "closed" | "ended"
                             ) =>
                     {
-                        return Ok(None);
+                        return Ok(false);
                     }
                     _ => {}
                 }
@@ -654,7 +636,7 @@ impl DesktopP2pManager {
                             && recipient_device_id == request.recipient_device_id
                             && session_id == request.session_id
                         {
-                            return Ok(None);
+                            return Ok(false);
                         }
                     }
                     P2pSignalingEvent::Disconnected => return Ok(None),
