@@ -4,6 +4,21 @@ using System.Text;
 
 namespace Enigma.Desktop.Interop;
 
+[StructLayout(LayoutKind.Sequential)]
+internal struct EnigmaSendTextRequestNative
+{
+    internal IntPtr RecipientUserId;
+    internal nuint RecipientUserIdLength;
+    internal IntPtr RecipientPublicId;
+    internal nuint RecipientPublicIdLength;
+    internal IntPtr RecipientDisplayName;
+    internal nuint RecipientDisplayNameLength;
+    internal IntPtr BubbleId;
+    internal nuint BubbleIdLength;
+    internal IntPtr Plaintext;
+    internal nuint PlaintextLength;
+}
+
 internal static partial class EnigmaCoreNative
 {
     private const string LibraryName = "enigma_core";
@@ -59,6 +74,19 @@ internal static partial class EnigmaCoreNative
     [LibraryImport(LibraryName, EntryPoint = "enigma_core_sync_pending")]
     [return: MarshalAs(UnmanagedType.I1)]
     internal static partial bool SyncPending(IntPtr handle);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_send_text")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static partial bool SendText(
+        IntPtr handle,
+        ref EnigmaSendTextRequestNative request);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_retry_outbox")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static partial bool RetryOutbox(IntPtr handle);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_outbox_count")]
+    internal static partial nuint OutboxCount(IntPtr handle);
 
     [LibraryImport(LibraryName, EntryPoint = "enigma_core_inbox_count")]
     internal static partial nuint InboxCount(IntPtr handle);
@@ -150,6 +178,46 @@ internal sealed class EnigmaCoreHandle : SafeHandle
     internal bool InitializeDevice() => EnigmaCoreNative.DeviceInitialize(handle);
 
     internal bool SyncPending() => EnigmaCoreNative.SyncPending(handle);
+
+    internal bool RetryOutbox() => EnigmaCoreNative.RetryOutbox(handle);
+
+    internal nuint OutboxCount => EnigmaCoreNative.OutboxCount(handle);
+
+    internal unsafe bool SendText(
+        string recipientUserId,
+        string recipientPublicId,
+        string recipientDisplayName,
+        string bubbleId,
+        string plaintext)
+    {
+        byte[] recipientUserIdBytes = Encoding.UTF8.GetBytes(recipientUserId);
+        byte[] recipientPublicIdBytes = Encoding.UTF8.GetBytes(recipientPublicId);
+        byte[] recipientDisplayNameBytes = Encoding.UTF8.GetBytes(recipientDisplayName);
+        byte[] bubbleIdBytes = Encoding.UTF8.GetBytes(bubbleId);
+        byte[] plaintextBytes = Encoding.UTF8.GetBytes(plaintext);
+
+        fixed (byte* recipientUserIdPointer = recipientUserIdBytes)
+        fixed (byte* recipientPublicIdPointer = recipientPublicIdBytes)
+        fixed (byte* recipientDisplayNamePointer = recipientDisplayNameBytes)
+        fixed (byte* bubbleIdPointer = bubbleIdBytes)
+        fixed (byte* plaintextPointer = plaintextBytes)
+        {
+            var request = new EnigmaSendTextRequestNative
+            {
+                RecipientUserId = (IntPtr)recipientUserIdPointer,
+                RecipientUserIdLength = checked((nuint)recipientUserIdBytes.Length),
+                RecipientPublicId = (IntPtr)recipientPublicIdPointer,
+                RecipientPublicIdLength = checked((nuint)recipientPublicIdBytes.Length),
+                RecipientDisplayName = (IntPtr)recipientDisplayNamePointer,
+                RecipientDisplayNameLength = checked((nuint)recipientDisplayNameBytes.Length),
+                BubbleId = (IntPtr)bubbleIdPointer,
+                BubbleIdLength = checked((nuint)bubbleIdBytes.Length),
+                Plaintext = (IntPtr)plaintextPointer,
+                PlaintextLength = checked((nuint)plaintextBytes.Length),
+            };
+            return EnigmaCoreNative.SendText(handle, ref request);
+        }
+    }
 
     internal nuint InboxCount => EnigmaCoreNative.InboxCount(handle);
 
@@ -337,6 +405,39 @@ public sealed class EnigmaCoreClient : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         return _handle.SignalIsReady && _handle.DeviceSessionReady && _handle.SyncPending();
+    }
+
+    public bool RetryOutbox()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _handle.SignalIsReady && _handle.DeviceSessionReady && _handle.RetryOutbox();
+    }
+
+    public bool SendText(
+        string recipientUserId,
+        string recipientPublicId,
+        string recipientDisplayName,
+        string bubbleId,
+        string plaintext)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _handle.SignalIsReady
+            && _handle.DeviceSessionReady
+            && _handle.SendText(
+                recipientUserId,
+                recipientPublicId,
+                recipientDisplayName,
+                bubbleId,
+                plaintext);
+    }
+
+    public nuint OutboxCount
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _handle.OutboxCount;
+        }
     }
 
     public nuint InboxCount
