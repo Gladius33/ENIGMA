@@ -60,7 +60,7 @@ object DeviceLinkAuthorization {
             "Unsupported minimum multi-device protocol version"
         }
         require(candidate.capabilities >= 0) { "Invalid device capability set" }
-        require(candidate.capabilities and CAPABILITY_MULTI_DEVICE != 0L) {
+        require((candidate.capabilities and CAPABILITY_MULTI_DEVICE) != 0L) {
             "Desktop must advertise multi-device support"
         }
 
@@ -181,7 +181,7 @@ object DeviceLinkAuthorization {
         }
         require(parsed.protocolVersion == PROTOCOL_VERSION)
         require(parsed.minSupportedVersion in MIN_SUPPORTED_VERSION..PROTOCOL_VERSION)
-        require(parsed.capabilities and CAPABILITY_MULTI_DEVICE != 0L)
+        require((parsed.capabilities and CAPABILITY_MULTI_DEVICE) != 0L)
         require(parsed.issuedAtUnixMs > 0L)
         return parsed
     }
