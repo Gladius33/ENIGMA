@@ -92,6 +92,7 @@ struct StatusResponse {
 
 #[derive(Debug, Serialize)]
 struct DevicesResponse {
+    user_id: Uuid,
     devices: Vec<DeviceResponse>,
 }
 
@@ -716,7 +717,10 @@ async fn list_devices(
         });
     }
 
-    Ok(Json(DevicesResponse { devices }))
+    Ok(Json(DevicesResponse {
+        user_id: auth.user_id,
+        devices,
+    }))
 }
 
 async fn revoke_device(
