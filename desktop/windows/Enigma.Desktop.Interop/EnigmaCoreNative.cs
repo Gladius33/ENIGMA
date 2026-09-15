@@ -148,6 +148,8 @@ internal static partial class EnigmaCoreNative
 
 internal sealed class EnigmaCoreHandle : SafeHandle
 {
+    private readonly object _nativeGate = new();
+
     internal EnigmaCoreHandle() : base(IntPtr.Zero, ownsHandle: true)
     {
         SetHandle(EnigmaCoreNative.Create());
@@ -166,7 +168,16 @@ internal sealed class EnigmaCoreHandle : SafeHandle
 
     internal bool IsReady => EnigmaCoreNative.IsReady(handle);
 
-    internal bool SignalIsReady => EnigmaCoreNative.SignalIsReady(handle);
+    internal bool SignalIsReady
+    {
+        get
+        {
+            lock (_nativeGate)
+            {
+                return EnigmaCoreNative.SignalIsReady(handle);
+            }
+        }
+    }
 
     internal bool EnsureDefaultSignalIdentity() =>
         EnigmaCoreNative.SignalLoadOrCreateDefault(handle);
@@ -196,19 +207,69 @@ internal sealed class EnigmaCoreHandle : SafeHandle
 
     internal uint ClaimPairing() => EnigmaCoreNative.PairingClaim(handle);
 
-    internal bool DeviceSessionReady => EnigmaCoreNative.DeviceSessionReady(handle);
+    internal bool DeviceSessionReady
+    {
+        get
+        {
+            lock (_nativeGate)
+            {
+                return EnigmaCoreNative.DeviceSessionReady(handle);
+            }
+        }
+    }
 
-    internal bool InitializeDevice() => EnigmaCoreNative.DeviceInitialize(handle);
+    internal bool InitializeDevice()
+    {
+        lock (_nativeGate)
+        {
+            return EnigmaCoreNative.DeviceInitialize(handle);
+        }
+    }
 
-    internal bool SyncPending() => EnigmaCoreNative.SyncPending(handle);
+    internal bool SyncPending()
+    {
+        lock (_nativeGate)
+        {
+            return EnigmaCoreNative.SyncPending(handle);
+        }
+    }
 
-    internal bool RetryOutbox() => EnigmaCoreNative.RetryOutbox(handle);
+    internal bool RetryOutbox()
+    {
+        lock (_nativeGate)
+        {
+            return EnigmaCoreNative.RetryOutbox(handle);
+        }
+    }
 
-    internal bool PollP2p() => EnigmaCoreNative.PollP2p(handle);
+    internal bool PollP2p()
+    {
+        lock (_nativeGate)
+        {
+            return EnigmaCoreNative.PollP2p(handle);
+        }
+    }
 
-    internal nuint OutboxCount => EnigmaCoreNative.OutboxCount(handle);
+    internal nuint OutboxCount
+    {
+        get
+        {
+            lock (_nativeGate)
+            {
+                return EnigmaCoreNative.OutboxCount(handle);
+            }
+        }
+    }
 
     internal unsafe string ReadContactsJson()
+    {
+        lock (_nativeGate)
+        {
+            return ReadContactsJsonLocked();
+        }
+    }
+
+    private unsafe string ReadContactsJsonLocked()
     {
         nuint length = EnigmaCoreNative.ContactsJsonLength(handle);
         if (length == 0 || length > int.MaxValue)
@@ -228,6 +289,14 @@ internal sealed class EnigmaCoreHandle : SafeHandle
     }
 
     internal unsafe bool SendTextToContact(string recipientUserId, string plaintext)
+    {
+        lock (_nativeGate)
+        {
+            return SendTextToContactLocked(recipientUserId, plaintext);
+        }
+    }
+
+    private unsafe bool SendTextToContactLocked(string recipientUserId, string plaintext)
     {
         byte[] userIdBytes = Encoding.UTF8.GetBytes(recipientUserId);
         byte[] plaintextBytes = Encoding.UTF8.GetBytes(plaintext);
@@ -279,9 +348,26 @@ internal sealed class EnigmaCoreHandle : SafeHandle
         }
     }
 
-    internal nuint InboxCount => EnigmaCoreNative.InboxCount(handle);
+    internal nuint InboxCount
+    {
+        get
+        {
+            lock (_nativeGate)
+            {
+                return EnigmaCoreNative.InboxCount(handle);
+            }
+        }
+    }
 
     internal unsafe string ReadInboxEntryJson(nuint index)
+    {
+        lock (_nativeGate)
+        {
+            return ReadInboxEntryJsonLocked(index);
+        }
+    }
+
+    private unsafe string ReadInboxEntryJsonLocked(nuint index)
     {
         nuint length = EnigmaCoreNative.InboxEntryJsonLength(handle, index);
         if (length == 0 || length > int.MaxValue)
@@ -344,8 +430,11 @@ internal sealed class EnigmaCoreHandle : SafeHandle
 
     protected override bool ReleaseHandle()
     {
-        EnigmaCoreNative.Destroy(handle);
-        return true;
+        lock (_nativeGate)
+        {
+            EnigmaCoreNative.Destroy(handle);
+            return true;
+        }
     }
 }
 
