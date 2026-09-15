@@ -353,6 +353,62 @@ impl LibsignalSessionBackend {
         .map_err(|_| SignalAdapterError::CryptoFailure)
     }
 
+    pub async fn has_session_for(
+        &self,
+        remote_device_id: &str,
+        protocol_device_id: u32,
+    ) -> Result<bool, SignalAdapterError> {
+        if remote_device_id.is_empty() || !(1..=127).contains(&protocol_device_id) {
+            return Err(SignalAdapterError::InvalidBundle);
+        }
+        let protocol_device_id = DeviceId::try_from(protocol_device_id)
+            .map_err(|_| SignalAdapterError::InvalidBundle)?;
+        let remote = ProtocolAddress::new(remote_device_id.to_owned(), protocol_device_id);
+        Ok(self
+            .store
+            .session_store
+            .load_session(&remote)
+            .await
+            .map_err(|_| SignalAdapterError::CryptoFailure)?
+            .is_some())
+    }
+
+    pub async fn encrypt_wire_for_device<R>(
+        &mut self,
+        sender_device_id: &str,
+        sender_protocol_device_id: u32,
+        recipient_device_id: &str,
+        recipient_protocol_device_id: u32,
+        plaintext: &[u8],
+        now: SystemTime,
+        rng: &mut R,
+    ) -> Result<String, SignalAdapterError>
+    where
+        R: Rng + CryptoRng,
+    {
+        let protocol_device_id = DeviceId::try_from(recipient_protocol_device_id)
+            .map_err(|_| SignalAdapterError::InvalidBundle)?;
+        let remote = ProtocolAddress::new(recipient_device_id.to_owned(), protocol_device_id);
+        if self
+            .store
+            .session_store
+            .load_session(&remote)
+            .await
+            .map_err(|_| SignalAdapterError::CryptoFailure)?
+            .is_none()
+        {
+            return Err(SignalAdapterError::SessionUnavailable);
+        }
+        let ciphertext = self.encrypt(&remote, plaintext, now, rng).await?;
+        crate::encode_signal_wire_envelope(
+            sender_device_id,
+            sender_protocol_device_id,
+            recipient_device_id,
+            recipient_protocol_device_id,
+            &ciphertext,
+        )
+    }
+
     pub async fn encrypt<R>(
         &mut self,
         remote: &ProtocolAddress,
