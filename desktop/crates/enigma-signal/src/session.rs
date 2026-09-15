@@ -2,7 +2,7 @@ use std::time::SystemTime;
 
 use libsignal_protocol::{
     kem, message_decrypt_prekey, message_decrypt_signal, message_encrypt, process_prekey_bundle,
-    CiphertextMessage, CiphertextMessageType, GenericSignedPreKey, IdentityKeyPair,
+    CiphertextMessage, CiphertextMessageType, DeviceId, GenericSignedPreKey, IdentityKeyPair,
     IdentityKeyStore, InMemSignalProtocolStore, KeyPair, KyberPreKeyRecord, KyberPreKeyStore,
     PreKeyBundle, PreKeyRecord, PreKeySignalMessage, PreKeyStore, ProtocolAddress, SignalMessage,
     SignedPreKeyRecord, SignedPreKeyStore, Timestamp,
@@ -280,6 +280,32 @@ impl LibsignalSessionBackend {
     /// dispatch to a frontend. Windows/Linux callers must not infer or reinterpret libsignal wire
     /// formats; the typed message kind is kept inside this Rust boundary and dispatched directly
     /// to the corresponding pinned libsignal primitive.
+    pub async fn decrypt_wire<R>(
+        &mut self,
+        encoded_envelope: &str,
+        expected_recipient_device_id: &str,
+        expected_recipient_protocol_device_id: u32,
+        rng: &mut R,
+    ) -> Result<(String, Vec<u8>), SignalAdapterError>
+    where
+        R: Rng + CryptoRng,
+    {
+        let envelope =
+            crate::parse_signal_wire_envelope(encoded_envelope, expected_recipient_device_id)?;
+        if envelope.recipient_protocol_device_id != expected_recipient_protocol_device_id {
+            return Err(SignalAdapterError::InvalidWireEnvelope);
+        }
+        let protocol_device_id = DeviceId::new(envelope.sender_protocol_device_id)
+            .map_err(|_| SignalAdapterError::InvalidWireEnvelope)?;
+        let remote = ProtocolAddress::new(envelope.sender_device_id.clone().into(), protocol_device_id);
+        let ciphertext = SessionCiphertext {
+            message_type: envelope.message_type,
+            serialized: envelope.ciphertext,
+        };
+        let plaintext = self.decrypt(&remote, &ciphertext, rng).await?;
+        Ok((envelope.sender_device_id, plaintext))
+    }
+
     pub async fn decrypt<R>(
         &mut self,
         remote: &ProtocolAddress,
