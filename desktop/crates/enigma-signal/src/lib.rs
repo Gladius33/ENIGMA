@@ -297,7 +297,7 @@ pub fn verify_linked_device_authorization_binding<A: SignalAdapter>(
         || parsed.new_device_id != target_device_id
         || parsed.authorizing_device_id != expected_authorizer_device_id
         || parsed.target_identity_key != target_identity_key
-        || parsed.authorizer_identity_key != STANDARD.encode(known_authorizer_identity_public)
+        || parsed.authorizer_identity_key != STANDARD_NO_PAD.encode(known_authorizer_identity_public)
         || parsed.protocol_version != 1
         || parsed.min_supported_version > 1
         || parsed.min_supported_version == 0
@@ -342,7 +342,7 @@ pub fn verify_device_authorization_proof<A: SignalAdapter>(
         || parsed.issued_at_unix_ms != expected.issued_at_unix_ms
         || parsed.target_identity_key != expected.target_identity_key
         || parsed.authorizer_identity_key != expected.authorizer_identity_key
-        || STANDARD.encode(known_authorizer_identity_public) != parsed.authorizer_identity_key
+        || STANDARD_NO_PAD.encode(known_authorizer_identity_public) != parsed.authorizer_identity_key
     {
         return Err(SignalAdapterError::InvalidDeviceAuthorizationProof);
     }
