@@ -133,20 +133,34 @@
                 Padding="12"
                 Background="{ThemeResource EnigmaSurfaceBrush}"
                 CornerRadius="18">
-                <Grid ColumnSpacing="10">
+                <Grid ColumnSpacing="10" RowSpacing="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <ComboBox
+                        x:Name="ContactSelector"
+                        Grid.Row="0"
+                        Grid.ColumnSpan="2"
+                        PlaceholderText="Choisir un contact"
+                        IsEnabled="False"
+                        AutomationProperties.Name="Choisir un contact" />
                     <TextBox
                         x:Name="MessageComposer"
+                        Grid.Row="1"
                         PlaceholderText="Message"
                         IsEnabled="False"
                         AutomationProperties.Name="Composer un message" />
                     <Button
                         x:Name="SendButton"
+                        Grid.Row="1"
                         Grid.Column="1"
                         Content="Envoyer"
+                        Click="OnSendClick"
                         IsEnabled="False"
                         Background="{ThemeResource EnigmaPrimaryBrush}"
                         Foreground="White"
