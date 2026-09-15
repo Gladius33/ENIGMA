@@ -80,8 +80,8 @@ fn rust_emits_android_prekey_fixture() {
     let alice_identity_serialized = alice_identity.serialize().to_vec();
     let bob_identity_serialized = bob_identity.serialize().to_vec();
 
-    let alice_registration_id = 0x5101u32;
-    let bob_registration_id = 0x5202u32;
+    let alice_registration_id = 5_101u32;
+    let bob_registration_id = 5_202u32;
     let pre_key_id = 5101u32;
     let signed_pre_key_id = 5201u32;
     let kyber_pre_key_id = 5301u32;
