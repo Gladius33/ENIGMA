@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use crate::{
-    auth_transcript, consensus_route, decode_bytes, encode_bytes, P2pAuthProof, P2pMessageEnvelope,
-    P2pProtocolError, P2pReceiptAck, P2pReceiptEnvelope, P2pRoute, P2pRouteObservation,
-    P2pSelectedRoute,
+    auth_transcript, consensus_route, decode_bytes, encode_bytes,
+    engine::P2pSelectedRoute, P2pAuthProof, P2pMessageEnvelope, P2pProtocolError, P2pReceiptAck,
+    P2pReceiptEnvelope, P2pRoute, P2pRouteObservation,
 };
 
 const AUTH_NONCE_BYTES: usize = 32;
