@@ -16,9 +16,12 @@ use base64::{
 };
 use enigma_platform::{PlatformKeyError, PlatformKeyProtector};
 use enigma_runtime_core::{CoreRuntime, PairingBootstrap, DEFAULT_PAIRING_TTL_MS};
-use enigma_signal::session::{
-    LibsignalSessionBackend, RemotePreKeyBundleMaterial, RemotePublicPreKey,
-    RemoteSignedPreKey as SignalRemoteSignedPreKey,
+use enigma_signal::{
+    session::{
+        LibsignalSessionBackend, RemotePreKeyBundleMaterial, RemotePublicPreKey,
+        RemoteSignedPreKey as SignalRemoteSignedPreKey,
+    },
+    verify_linked_device_authorization_binding, LibsignalIdentityProofVerifier,
 };
 use enigma_sodium::{random_public_bytes, SecureBytes};
 use enigma_storage::SodiumRecordVault;
@@ -754,6 +757,74 @@ fn discover_devices_for(
         .map_err(|_| ())
 }
 
+fn verified_sender_sync_targets(
+    backend: &LibsignalSessionBackend,
+    own_user_id: &str,
+    sender_device_id: &str,
+    devices: &[RemoteDeviceKeyBundle],
+) -> Result<Vec<RemoteDeviceKeyBundle>, ()> {
+    let current = devices
+        .iter()
+        .find(|device| device.device_id == sender_device_id)
+        .ok_or(())?;
+    let current_authorization = current.authorization.as_ref().ok_or(())?;
+    let local_identity = STANDARD_NO_PAD.encode(backend.identity_public_key());
+    if current.identity_key != local_identity {
+        return Err(());
+    }
+
+    let authorizer = devices
+        .iter()
+        .find(|device| device.device_id == current_authorization.authorizing_device_id)
+        .ok_or(())?;
+    let authorizer_identity = decode_signal_key(&authorizer.identity_key)?;
+    let current_signature = decode_signal_key(&current_authorization.authorizer_signature)?;
+    let verifier = LibsignalIdentityProofVerifier;
+    verify_linked_device_authorization_binding(
+        &verifier,
+        &authorizer_identity,
+        &current_authorization.canonical_payload,
+        &current_signature,
+        own_user_id,
+        sender_device_id,
+        &authorizer.device_id,
+        &current.identity_key,
+    )
+    .map_err(|_| ())?;
+
+    let mut targets = Vec::new();
+    for device in devices {
+        if device.device_id == sender_device_id {
+            continue;
+        }
+        if device.device_id == authorizer.device_id {
+            targets.push(device.clone());
+            continue;
+        }
+
+        let Some(authorization) = device.authorization.as_ref() else {
+            continue;
+        };
+        if authorization.authorizing_device_id != authorizer.device_id {
+            return Err(());
+        }
+        let signature = decode_signal_key(&authorization.authorizer_signature)?;
+        verify_linked_device_authorization_binding(
+            &verifier,
+            &authorizer_identity,
+            &authorization.canonical_payload,
+            &signature,
+            own_user_id,
+            &device.device_id,
+            &authorizer.device_id,
+            &device.identity_key,
+        )
+        .map_err(|_| ())?;
+        targets.push(device.clone());
+    }
+    Ok(targets)
+}
+
 struct OutboundDeliveryContext<'a> {
     sender_device_id: &'a str,
     recipient_user_id: &'a str,
@@ -909,9 +980,21 @@ pub unsafe extern "C" fn enigma_core_send_text(
         Ok(devices) if !devices.is_empty() => devices,
         Ok(_) | Err(_) => return false,
     };
-    let sibling_devices = match discover_devices_for(core, &client, &own_user_id) {
+    let own_devices = match discover_devices_for(core, &client, &own_user_id) {
         Ok(devices) => devices,
         Err(()) => return false,
+    };
+    let sibling_devices = match core.signal_backend.as_ref().and_then(|backend| {
+        verified_sender_sync_targets(
+            backend,
+            &own_user_id,
+            &sender_device_id,
+            &own_devices,
+        )
+        .ok()
+    }) {
+        Some(devices) => devices,
+        None => return false,
     };
     let encoded_payload = match encode_text_payload(&plaintext) {
         Ok(payload) => payload,
