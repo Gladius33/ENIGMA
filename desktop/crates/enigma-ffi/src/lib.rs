@@ -7,14 +7,25 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use enigma_platform::{PlatformKeyError, PlatformKeyProtector};
 use enigma_runtime_core::{CoreRuntime, PairingBootstrap, DEFAULT_PAIRING_TTL_MS};
 use enigma_signal::session::LibsignalSessionBackend;
+use enigma_sodium::SecureBytes;
+use enigma_transport::{
+    PairingCandidatePublish, PairingClaimState, PairingRendezvousClient,
+};
 
 pub const ENIGMA_CORE_ABI_VERSION: u32 = 1;
 const DEFAULT_DEDUP_CAPACITY: usize = 16_384;
 const MAX_PROTECTED_SIGNAL_IDENTITY_BYTES: usize = 64 * 1024;
 const SIGNAL_IDENTITY_RECORD_MAGIC: &[u8] = b"ENIGMA-SIGNAL-IDENTITY\0v1\0";
+const PAIRING_CLAIM_ERROR: u32 = 0;
+const PAIRING_CLAIM_PENDING: u32 = 1;
+const PAIRING_CLAIMED: u32 = 2;
+const PAIRING_CLAIM_ALREADY_USED: u32 = 3;
+const PAIRING_CLAIM_EXPIRED: u32 = 4;
+const PAIRING_CLAIM_MISSING: u32 = 5;
 #[cfg(target_os = "linux")]
 const LINUX_SIGNAL_IDENTITY_SLOT: &str = "signal-identity-primary";
 
@@ -22,6 +33,7 @@ pub struct EnigmaCoreHandle {
     _runtime: CoreRuntime,
     signal_backend: Option<LibsignalSessionBackend>,
     pairing_bootstrap: Option<PairingBootstrap>,
+    device_access_token: Option<SecureBytes>,
 }
 
 #[no_mangle]
@@ -35,6 +47,7 @@ pub extern "C" fn enigma_core_create() -> *mut EnigmaCoreHandle {
         _runtime: CoreRuntime::new(DEFAULT_DEDUP_CAPACITY),
         signal_backend: None,
         pairing_bootstrap: None,
+        device_access_token: None,
     }))
 }
 
@@ -156,6 +169,138 @@ pub unsafe extern "C" fn enigma_core_pairing_start(handle: *mut EnigmaCoreHandle
         (*handle).pairing_bootstrap = Some(pairing);
     }
     true
+}
+
+fn pairing_server_config() -> Option<(String, bool)> {
+    let base_url = std::env::var("ENIGMA_SERVER_BASE_URL").ok()?;
+    let allow_insecure_http = std::env::var("ENIGMA_ALLOW_INSECURE_HTTP")
+        .ok()
+        .is_some_and(|value| value == "1");
+    Some((base_url, allow_insecure_http))
+}
+
+fn pairing_client() -> Option<PairingRendezvousClient> {
+    let (base_url, allow_insecure_http) = pairing_server_config()?;
+    PairingRendezvousClient::new(&base_url, allow_insecure_http).ok()
+}
+
+/// Publishes the public pairing candidate to the configured rendezvous server.
+///
+/// No claim secret or private key crosses this ABI boundary.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create and exclusively accessed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_pairing_publish(handle: *mut EnigmaCoreHandle) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let Some(client) = pairing_client() else {
+        return false;
+    };
+    // SAFETY: caller guarantees exclusive live access to handle for this call.
+    let Some(pairing) = (unsafe { (*handle).pairing_bootstrap.as_ref() }) else {
+        return false;
+    };
+
+    let payload = pairing.payload();
+    let candidate = pairing.candidate();
+    let pairing_session_id = payload.session_id.to_canonical_uuid();
+    let device_id = candidate.device_id.to_canonical_uuid();
+    let pairing_public_key = STANDARD_NO_PAD.encode(&payload.pairing_public_key);
+    let publish = PairingCandidatePublish {
+        pairing_session_id: &pairing_session_id,
+        device_id: &device_id,
+        display_name: &candidate.display_name,
+        platform: &candidate.platform,
+        protocol_version: payload.header.protocol_version,
+        min_supported_version: payload.header.min_supported_version,
+        capabilities: payload.header.capabilities.bits(),
+        expires_at_unix_ms: payload.expires_at_unix_ms,
+        pairing_public_key: &pairing_public_key,
+        target_identity_key: &candidate.target_identity_key,
+        claim_secret_hash: &candidate.claim_secret_hash,
+        candidate_commitment: &candidate.candidate_commitment,
+    };
+    client.publish_candidate(&publish).is_ok()
+}
+
+/// Attempts the single-use desktop claim against the configured rendezvous server.
+///
+/// The claim secret is materialized only inside Rust, wiped immediately after the HTTP request,
+/// and the returned device token is moved into libsodium-protected memory.
+///
+/// Return values: 0 error, 1 pending authorization, 2 claimed, 3 already used, 4 expired, 5 missing.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create and exclusively accessed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_pairing_claim(handle: *mut EnigmaCoreHandle) -> u32 {
+    if handle.is_null() {
+        return PAIRING_CLAIM_ERROR;
+    }
+    let Some(client) = pairing_client() else {
+        return PAIRING_CLAIM_ERROR;
+    };
+
+    // SAFETY: caller guarantees exclusive live access to handle for this call.
+    let Some(pairing) = (unsafe { (*handle).pairing_bootstrap.as_mut() }) else {
+        return PAIRING_CLAIM_ERROR;
+    };
+    let pairing_session_id = pairing.payload().session_id.to_canonical_uuid();
+    let claim_secret = match pairing.claim_secret_base64() {
+        Ok(secret) => secret,
+        Err(_) => return PAIRING_CLAIM_ERROR,
+    };
+
+    let result = client.claim(&pairing_session_id, &claim_secret);
+    let mut secret_bytes = claim_secret.into_bytes();
+    secret_bytes.fill(0);
+
+    match result {
+        Ok((PairingClaimState::PendingAuthorization, None)) => PAIRING_CLAIM_PENDING,
+        Ok((PairingClaimState::Claimed, Some(token))) => {
+            let mut token_bytes = token.into_bytes();
+            let secure_token = match SecureBytes::copy_and_wipe(&mut token_bytes) {
+                Ok(token) => token,
+                Err(_) => return PAIRING_CLAIM_ERROR,
+            };
+            // SAFETY: caller guarantees exclusive live access to handle for this call.
+            unsafe {
+                (*handle).device_access_token = Some(secure_token);
+                (*handle).pairing_bootstrap = None;
+            }
+            PAIRING_CLAIMED
+        }
+        Ok((PairingClaimState::AlreadyClaimed, None)) => PAIRING_CLAIM_ALREADY_USED,
+        Ok((PairingClaimState::Expired, None)) => {
+            // SAFETY: caller guarantees exclusive live access to handle for this call.
+            unsafe {
+                (*handle).pairing_bootstrap = None;
+            }
+            PAIRING_CLAIM_EXPIRED
+        }
+        Ok((PairingClaimState::Missing, None)) => PAIRING_CLAIM_MISSING,
+        Ok(_) | Err(_) => PAIRING_CLAIM_ERROR,
+    }
+}
+
+/// Returns whether a device-bound session token has been claimed and retained in secure memory.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_device_session_ready(
+    handle: *const EnigmaCoreHandle,
+) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    // SAFETY: caller guarantees immutable live access.
+    unsafe { (*handle).device_access_token.is_some() }
 }
 
 /// Cancels and destroys the current ephemeral pairing bootstrap.
