@@ -132,14 +132,15 @@ jobs:
     name: android-rust-libsignal-interop
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      ENIGMA_ANDROID_INTEROP_FIXTURE: ${{ runner.temp }}/enigma-android-rust-libsignal.properties
-      ENIGMA_ANDROID_INTEROP_REPLY: ${{ runner.temp }}/enigma-android-rust-libsignal-reply.properties
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Configure cross-runtime fixture paths
+        run: |
+          echo "ENIGMA_ANDROID_INTEROP_FIXTURE=${RUNNER_TEMP}/enigma-android-rust-libsignal.properties" >> "${GITHUB_ENV}"
+          echo "ENIGMA_ANDROID_INTEROP_REPLY=${RUNNER_TEMP}/enigma-android-rust-libsignal-reply.properties" >> "${GITHUB_ENV}"
       - name: Install pinned protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
