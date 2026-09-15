@@ -56,6 +56,24 @@ internal static partial class EnigmaCoreNative
     [return: MarshalAs(UnmanagedType.I1)]
     internal static partial bool DeviceInitialize(IntPtr handle);
 
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_sync_pending")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static partial bool SyncPending(IntPtr handle);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_inbox_count")]
+    internal static partial nuint InboxCount(IntPtr handle);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_inbox_entry_json_len")]
+    internal static partial nuint InboxEntryJsonLength(IntPtr handle, nuint index);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_inbox_entry_json_copy")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static unsafe partial bool InboxEntryJsonCopy(
+        IntPtr handle,
+        nuint index,
+        byte* output,
+        nuint outputLength);
+
     [LibraryImport(LibraryName, EntryPoint = "enigma_core_pairing_cancel")]
     internal static partial void PairingCancel(IntPtr handle);
 
@@ -130,6 +148,29 @@ internal sealed class EnigmaCoreHandle : SafeHandle
     internal bool DeviceSessionReady => EnigmaCoreNative.DeviceSessionReady(handle);
 
     internal bool InitializeDevice() => EnigmaCoreNative.DeviceInitialize(handle);
+
+    internal bool SyncPending() => EnigmaCoreNative.SyncPending(handle);
+
+    internal nuint InboxCount => EnigmaCoreNative.InboxCount(handle);
+
+    internal unsafe string ReadInboxEntryJson(nuint index)
+    {
+        nuint length = EnigmaCoreNative.InboxEntryJsonLength(handle, index);
+        if (length == 0 || length > int.MaxValue)
+        {
+            return string.Empty;
+        }
+
+        byte[] bytes = new byte[(int)length];
+        fixed (byte* output = bytes)
+        {
+            if (!EnigmaCoreNative.InboxEntryJsonCopy(handle, index, output, length))
+            {
+                return string.Empty;
+            }
+        }
+        return Encoding.UTF8.GetString(bytes);
+    }
 
     internal void CancelPairing() => EnigmaCoreNative.PairingCancel(handle);
 
@@ -290,6 +331,27 @@ public sealed class EnigmaCoreClient : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         return _handle.SignalIsReady && _handle.DeviceSessionReady && _handle.InitializeDevice();
+    }
+
+    public bool SyncPending()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _handle.SignalIsReady && _handle.DeviceSessionReady && _handle.SyncPending();
+    }
+
+    public nuint InboxCount
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _handle.InboxCount;
+        }
+    }
+
+    public string ReadInboxEntryJson(nuint index)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _handle.ReadInboxEntryJson(index);
     }
 
     public void CancelPairing()
