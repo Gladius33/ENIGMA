@@ -41,6 +41,17 @@ internal static partial class EnigmaCoreNative
     [return: MarshalAs(UnmanagedType.I1)]
     internal static partial bool PairingStart(IntPtr handle);
 
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_pairing_publish")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static partial bool PairingPublish(IntPtr handle);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_pairing_claim")]
+    internal static partial uint PairingClaim(IntPtr handle);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_device_session_ready")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static partial bool DeviceSessionReady(IntPtr handle);
+
     [LibraryImport(LibraryName, EntryPoint = "enigma_core_pairing_cancel")]
     internal static partial void PairingCancel(IntPtr handle);
 
@@ -108,6 +119,12 @@ internal sealed class EnigmaCoreHandle : SafeHandle
 
     internal bool StartPairing() => EnigmaCoreNative.PairingStart(handle);
 
+    internal bool PublishPairing() => EnigmaCoreNative.PairingPublish(handle);
+
+    internal uint ClaimPairing() => EnigmaCoreNative.PairingClaim(handle);
+
+    internal bool DeviceSessionReady => EnigmaCoreNative.DeviceSessionReady(handle);
+
     internal void CancelPairing() => EnigmaCoreNative.PairingCancel(handle);
 
     internal unsafe string ReadPairingUri()
@@ -161,6 +178,16 @@ internal sealed class EnigmaCoreHandle : SafeHandle
 /// Managed lifetime boundary for the shared Rust ENIGMA core.
 /// Cryptographic operations and protected-identity restoration remain inside Rust.
 /// </summary>
+public enum EnigmaPairingClaimState : uint
+{
+    Error = 0,
+    PendingAuthorization = 1,
+    Claimed = 2,
+    AlreadyClaimed = 3,
+    Expired = 4,
+    Missing = 5,
+}
+
 public sealed record EnigmaPairingBootstrap(
     string Uri,
     string Svg,
@@ -220,6 +247,11 @@ public sealed class EnigmaCoreClient : IDisposable
         {
             return null;
         }
+        if (!_handle.PublishPairing())
+        {
+            _handle.CancelPairing();
+            return null;
+        }
 
         string uri = _handle.ReadPairingUri();
         string svg = _handle.ReadPairingSvg();
@@ -231,6 +263,21 @@ public sealed class EnigmaCoreClient : IDisposable
         }
 
         return new EnigmaPairingBootstrap(uri, svg, expiresAtUnixMs);
+    }
+
+    public EnigmaPairingClaimState TryClaimPairing()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return (EnigmaPairingClaimState)_handle.ClaimPairing();
+    }
+
+    public bool DeviceSessionReady
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _handle.DeviceSessionReady;
+        }
     }
 
     public void CancelPairing()
