@@ -86,6 +86,31 @@ public:
             && enigma_core_device_initialize(handle_);
     }
 
+    [[nodiscard]] bool syncPending() noexcept {
+        return handle_ != nullptr
+            && signalReady()
+            && deviceSessionReady()
+            && enigma_core_sync_pending(handle_);
+    }
+
+    [[nodiscard]] std::size_t inboxCount() const noexcept {
+        return handle_ == nullptr ? 0 : enigma_core_inbox_count(handle_);
+    }
+
+    [[nodiscard]] std::string inboxEntryJson(std::size_t index) const {
+        if (handle_ == nullptr) return {};
+        const auto length = enigma_core_inbox_entry_json_len(handle_, index);
+        if (length == 0) return {};
+        std::vector<std::uint8_t> bytes(length);
+        if (!enigma_core_inbox_entry_json_copy(
+                handle_, index, bytes.data(), bytes.size())) {
+            return {};
+        }
+        return std::string(
+            reinterpret_cast<const char*>(bytes.data()),
+            bytes.size());
+    }
+
     void cancelPairing() noexcept {
         if (handle_ != nullptr) {
             enigma_core_pairing_cancel(handle_);
