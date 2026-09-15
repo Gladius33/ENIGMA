@@ -312,7 +312,7 @@ impl LibsignalSessionBackend {
         let protocol_device_id = DeviceId::try_from(envelope.sender_protocol_device_id)
             .map_err(|_| SignalAdapterError::InvalidWireEnvelope)?;
         let remote =
-            ProtocolAddress::new(envelope.sender_device_id.clone().into(), protocol_device_id);
+            ProtocolAddress::new(envelope.sender_device_id.clone(), protocol_device_id);
         let ciphertext = SessionCiphertext {
             message_type: envelope.message_type,
             serialized: envelope.ciphertext,
