@@ -32,6 +32,7 @@ pub struct P2pSignalCommand {
 pub enum P2pSignalingEvent {
     Signal {
         bubble_id: String,
+        sender_user_id: String,
         sender_device_id: String,
         session_id: String,
         signal_kind: String,
@@ -72,6 +73,7 @@ enum WsClientCommand<'a> {
 enum WsServerEvent {
     P2pSignal {
         bubble_id: String,
+        sender_user_id: String,
         sender_device_id: String,
         session_id: String,
         signal_kind: String,
@@ -253,12 +255,14 @@ fn parse_server_event(value: &str) -> Option<P2pSignalingEvent> {
     match event {
         WsServerEvent::P2pSignal {
             bubble_id,
+            sender_user_id,
             sender_device_id,
             session_id,
             signal_kind,
             payload,
         } => {
             if !super::is_canonical_uuid(&bubble_id)
+                || !super::is_canonical_uuid(&sender_user_id)
                 || !super::is_canonical_uuid(&sender_device_id)
                 || !super::is_canonical_uuid(&session_id)
                 || !matches!(
@@ -273,6 +277,7 @@ fn parse_server_event(value: &str) -> Option<P2pSignalingEvent> {
             }
             Some(P2pSignalingEvent::Signal {
                 bubble_id,
+                sender_user_id,
                 sender_device_id,
                 session_id,
                 signal_kind,
@@ -320,11 +325,12 @@ mod tests {
 
     #[test]
     fn server_signal_contract_matches_axum_event_shape() {
-        let value = r#"{"type":"p2p_signal","bubble_id":"11111111-1111-4111-8111-111111111111","sender_device_id":"22222222-2222-4222-8222-222222222222","session_id":"33333333-3333-4333-8333-333333333333","signal_kind":"offer","payload":"v=0"}"#;
+        let value = r#"{"type":"p2p_signal","bubble_id":"11111111-1111-4111-8111-111111111111","sender_user_id":"44444444-4444-4444-8444-444444444444","sender_device_id":"22222222-2222-4222-8222-222222222222","session_id":"33333333-3333-4333-8333-333333333333","signal_kind":"offer","payload":"v=0"}"#;
         assert_eq!(
             parse_server_event(value),
             Some(P2pSignalingEvent::Signal {
                 bubble_id: "11111111-1111-4111-8111-111111111111".into(),
+                sender_user_id: "44444444-4444-4444-8444-444444444444".into(),
                 sender_device_id: "22222222-2222-4222-8222-222222222222".into(),
                 session_id: "33333333-3333-4333-8333-333333333333".into(),
                 signal_kind: "offer".into(),
