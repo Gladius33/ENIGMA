@@ -462,6 +462,11 @@ mod tests {
         format!("00000000-0000-4000-8000-{n:012x}")
     }
 
+    fn nonce_from_session(session_id: &str) -> [u8; AUTH_NONCE_BYTES] {
+        let session_bytes = session_id.as_bytes();
+        std::array::from_fn(|index| session_bytes[index % session_bytes.len()])
+    }
+
     #[test]
     fn auth_transcript_is_bound_to_session_devices_and_fingerprints() {
         let local = uuid(1);
@@ -476,7 +481,7 @@ mod tests {
             .set_dtls_fingerprints(&session, "sha-256 AA:BB", "sha-256 CC:DD")
             .expect("fingerprints");
 
-        let nonce = [7_u8; 32];
+        let nonce = nonce_from_session(&session);
         let transcript = coordinator
             .local_auth_transcript(&session, &nonce)
             .expect("transcript");
@@ -513,7 +518,7 @@ mod tests {
             offer_fingerprint: "sha-256 AA".into(),
             answer_fingerprint: "sha-256 BB".into(),
             proof_device_id: uuid(99),
-            nonce: encode_bytes(&[7; 32]),
+            nonce: encode_bytes(&nonce_from_session(&session)),
             signature: encode_bytes(&[9; 64]),
         };
         assert_eq!(
@@ -535,8 +540,9 @@ mod tests {
         coordinator
             .set_dtls_fingerprints(&session, "sha-256 AA", "sha-256 BB")
             .expect("fingerprints");
+        let nonce = nonce_from_session(&session);
         coordinator
-            .build_local_auth(&session, &[7; 32], &[9; 64])
+            .build_local_auth(&session, &nonce, &[9; 64])
             .expect("local auth");
         coordinator
             .confirm_remote_auth(&session, true)
