@@ -173,6 +173,7 @@ async fn route_p2p_signal(
         .notify_p2p_signal(
             recipient_device_id,
             bubble_id,
+            sender_user_id,
             sender_device_id,
             session_id,
             signal_kind,
