@@ -63,7 +63,20 @@ public:
     }
 
     [[nodiscard]] bool startPairing() noexcept {
-        return handle_ != nullptr && enigma_core_pairing_start(handle_);
+        if (handle_ == nullptr || !enigma_core_pairing_start(handle_)) return false;
+        if (!enigma_core_pairing_publish(handle_)) {
+            enigma_core_pairing_cancel(handle_);
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] std::uint32_t claimPairing() noexcept {
+        return handle_ == nullptr ? ENIGMA_PAIRING_CLAIM_ERROR : enigma_core_pairing_claim(handle_);
+    }
+
+    [[nodiscard]] bool deviceSessionReady() const noexcept {
+        return handle_ != nullptr && enigma_core_device_session_ready(handle_);
     }
 
     void cancelPairing() noexcept {
