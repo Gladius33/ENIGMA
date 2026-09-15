@@ -1372,14 +1372,41 @@ pub unsafe extern "C" fn enigma_core_send_text(
         return false;
     }
 
+    let Some(primary_recipient_device_id) = deliveries
+        .iter()
+        .find(|delivery| !delivery.sender_sync)
+        .map(|delivery| delivery.recipient_device_id.clone())
+    else {
+        return false;
+    };
+    let local_entry = DurableInboxEntry {
+        remote_message_id: client_message_id.clone(),
+        bubble_id: bubble_id.clone(),
+        sender_device_id: sender_device_id.clone(),
+        sender_user_id: own_user_id.clone(),
+        sender_public_id: own_user_id.clone(),
+        recipient_device_id: primary_recipient_device_id,
+        client_message_id: client_message_id.clone(),
+        message_type: "text".to_owned(),
+        plaintext: encoded_payload.clone(),
+        created_at: created_at.to_string(),
+        expires_at: "local".to_owned(),
+        direction: "outbound".to_owned(),
+        contact_user_id: Some(recipient_user_id.clone()),
+        contact_public_id: Some(recipient_public_id.clone()),
+        contact_display_name: Some(recipient_display_name.clone()),
+        original_created_at_unix_ms: Some(created_at),
+    };
+
     let mut snapshot = match working_backend.export_serialized_store() {
         Ok(value) => value,
         Err(_) => return false,
     };
-    let journal_written = core
-        .desktop_outbox
-        .as_ref()
-        .is_some_and(|outbox| outbox.write_journal(&deliveries, &snapshot).is_ok());
+    let journal_written = core.desktop_outbox.as_ref().is_some_and(|outbox| {
+        outbox
+            .write_journal(&deliveries, &snapshot, Some(&local_entry))
+            .is_ok()
+    });
     snapshot.fill(0);
     if !journal_written {
         return false;
@@ -1391,6 +1418,13 @@ pub unsafe extern "C" fn enigma_core_send_text(
         .desktop_outbox
         .as_ref()
         .is_none_or(|outbox| outbox.enqueue_batch(&deliveries).is_err())
+    {
+        return false;
+    }
+    if core
+        .desktop_inbox
+        .as_ref()
+        .is_none_or(|inbox| inbox.append(local_entry).is_err())
     {
         return false;
     }
@@ -2188,7 +2222,7 @@ fn load_or_create_desktop_outbox() -> Result<EncryptedDesktopOutbox, ()> {
 
 fn recover_outbox_journal(core: &mut EnigmaCoreHandle) -> Result<(), ()> {
     let journal = core.desktop_outbox.as_ref().ok_or(())?.read_journal()?;
-    let Some((deliveries, mut snapshot)) = journal else {
+    let Some((deliveries, mut snapshot, local_inbox_entry)) = journal else {
         return Ok(());
     };
 
@@ -2200,6 +2234,9 @@ fn recover_outbox_journal(core: &mut EnigmaCoreHandle) -> Result<(), ()> {
         .as_ref()
         .ok_or(())?
         .enqueue_batch(&deliveries)?;
+    if let Some(entry) = local_inbox_entry {
+        core.desktop_inbox.as_ref().ok_or(())?.append(entry)?;
+    }
     let _ = core.desktop_outbox.as_ref().ok_or(())?.clear_journal();
     Ok(())
 }
