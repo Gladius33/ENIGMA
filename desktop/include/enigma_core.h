@@ -46,6 +46,22 @@ bool enigma_core_pairing_publish(EnigmaCoreHandle *handle);
 uint32_t enigma_core_pairing_claim(EnigmaCoreHandle *handle);
 bool enigma_core_device_session_ready(const EnigmaCoreHandle *handle);
 bool enigma_core_device_initialize(EnigmaCoreHandle *handle);
+
+/*
+ * Desktop receive path. sync_pending performs relay fetch + libsignal decrypt +
+ * crash-safe encrypted local commit before acknowledging delivery.
+ */
+bool enigma_core_sync_pending(EnigmaCoreHandle *handle);
+size_t enigma_core_inbox_count(const EnigmaCoreHandle *handle);
+size_t enigma_core_inbox_entry_json_len(
+    const EnigmaCoreHandle *handle,
+    size_t index);
+bool enigma_core_inbox_entry_json_copy(
+    const EnigmaCoreHandle *handle,
+    size_t index,
+    uint8_t *output,
+    size_t output_len);
+
 void enigma_core_pairing_cancel(EnigmaCoreHandle *handle);
 size_t enigma_core_pairing_uri_len(const EnigmaCoreHandle *handle);
 bool enigma_core_pairing_uri_copy(
