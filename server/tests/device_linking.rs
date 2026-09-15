@@ -7,6 +7,7 @@ use axum::{
 };
 use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 use enigma_e2ee_server::{
     build_state,
     config::{
@@ -31,7 +32,7 @@ async fn certified_desktop_linking_is_bound_replay_safe_and_revocable() {
         .await
         .expect("build app state");
     db::migrate(&state.pg).await.expect("run migrations");
-    let app = http::router(state);
+    let app = http::router(state.clone());
 
     let suffix = Uuid::new_v4().simple().to_string();
     let public_id = format!("link_{}", &suffix[..12]);
@@ -84,8 +85,86 @@ async fn certified_desktop_linking_is_bound_replay_safe_and_revocable() {
     let pairing_session_id = Uuid::new_v4();
     let desktop_identity = key_material("windows-desktop-identity-key-0001");
     let authorizer_signature = key_material("android-authorizer-signature-0001");
-    let issued_at_unix_ms = Utc::now().timestamp_millis();
+    let pairing_public_key = general_purpose::STANDARD_NO_PAD.encode([0x42_u8; 32]);
+    let claim_secret = general_purpose::STANDARD_NO_PAD.encode([0x24_u8; 32]);
+    let claim_secret_hash = hex_lower(&Sha256::digest([0x24_u8; 32]));
+    let expires_at_unix_ms = Utc::now().timestamp_millis() + 120_000;
+    let candidate_commitment = candidate_commitment(
+        pairing_session_id,
+        desktop_id,
+        "Windows desktop",
+        "windows",
+        1,
+        1,
+        127,
+        expires_at_unix_ms,
+        &pairing_public_key,
+        &desktop_identity,
+        &claim_secret_hash,
+    );
 
+    let (status, candidate) = request_json(
+        app.clone(),
+        Method::POST,
+        "/v1/devices/link/candidate",
+        None,
+        Some(json!({
+            "pairing_session_id": pairing_session_id,
+            "device_id": desktop_id,
+            "display_name": "Windows desktop",
+            "platform": "windows",
+            "protocol_version": 1,
+            "min_supported_version": 1,
+            "capabilities": 127,
+            "expires_at_unix_ms": expires_at_unix_ms,
+            "pairing_public_key": pairing_public_key,
+            "target_identity_key": desktop_identity,
+            "claim_secret_hash": claim_secret_hash,
+            "candidate_commitment": candidate_commitment
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{candidate}");
+    assert_eq!(candidate["device_id"], desktop_id.to_string());
+
+    let (status, fetched) = request_json(
+        app.clone(),
+        Method::GET,
+        &format!("/v1/devices/link/candidate/{pairing_session_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{fetched}");
+    assert_eq!(fetched["candidate_commitment"], candidate_commitment);
+
+    let (status, substitution) = request_json(
+        app.clone(),
+        Method::POST,
+        "/v1/devices/link/authorize",
+        Some(android_token),
+        Some(json!({
+            "device_id": desktop_id,
+            "display_name": "Windows desktop",
+            "platform": "windows",
+            "pairing_session_id": pairing_session_id,
+            "protocol_version": 1,
+            "min_supported_version": 1,
+            "capabilities": 127,
+            "issued_at_unix_ms": Utc::now().timestamp_millis(),
+            "target_identity_key": key_material("substituted-desktop-identity-key"),
+            "candidate_commitment": candidate_commitment,
+            "authorizer_signature": authorizer_signature
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{substitution}");
+    assert_eq!(
+        substitution["error_code"],
+        "PAIRING_CANDIDATE_SUBSTITUTION"
+    );
+
+    let issued_at_unix_ms = Utc::now().timestamp_millis();
     let (status, linked) = request_json(
         app.clone(),
         Method::POST,
@@ -101,6 +180,7 @@ async fn certified_desktop_linking_is_bound_replay_safe_and_revocable() {
             "capabilities": 127,
             "issued_at_unix_ms": issued_at_unix_ms,
             "target_identity_key": desktop_identity,
+            "candidate_commitment": candidate_commitment,
             "authorizer_signature": authorizer_signature
         })),
     )
@@ -116,10 +196,53 @@ async fn certified_desktop_linking_is_bound_replay_safe_and_revocable() {
         .expect("canonical authorization payload")
         .contains(&format!("pairing_session_id={pairing_session_id}\n")));
 
-    let desktop_token = linked["access_token"]
+    assert_eq!(linked["status"], "authorized");
+    assert!(linked.get("access_token").is_none());
+
+    let (status, wrong_claim) = request_json(
+        app.clone(),
+        Method::POST,
+        "/v1/devices/link/claim",
+        None,
+        Some(json!({
+            "pairing_session_id": pairing_session_id,
+            "claim_secret": general_purpose::STANDARD_NO_PAD.encode([0x25_u8; 32])
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{wrong_claim}");
+
+    let (status, claimed) = request_json(
+        app.clone(),
+        Method::POST,
+        "/v1/devices/link/claim",
+        None,
+        Some(json!({
+            "pairing_session_id": pairing_session_id,
+            "claim_secret": claim_secret
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{claimed}");
+    let desktop_token = claimed["access_token"]
         .as_str()
-        .expect("linked desktop token")
+        .expect("claimed desktop token")
         .to_owned();
+    assert_eq!(claimed["device"]["id"], desktop_id.to_string());
+
+    let (status, claim_replay) = request_json(
+        app.clone(),
+        Method::POST,
+        "/v1/devices/link/claim",
+        None,
+        Some(json!({
+            "pairing_session_id": pairing_session_id,
+            "claim_secret": claim_secret
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{claim_replay}");
+    assert_eq!(claim_replay["error_code"], "PAIRING_CLAIM_ALREADY_USED");
 
     let (status, replay) = request_json(
         app.clone(),
@@ -136,6 +259,7 @@ async fn certified_desktop_linking_is_bound_replay_safe_and_revocable() {
             "capabilities": 127,
             "issued_at_unix_ms": Utc::now().timestamp_millis(),
             "target_identity_key": key_material("linux-replay-identity-key-0001"),
+            "candidate_commitment": candidate_commitment,
             "authorizer_signature": key_material("android-replay-signature-0001")
         })),
     )
@@ -240,6 +364,60 @@ async fn upload_keys_raw(
 
 fn key_material(value: &str) -> String {
     general_purpose::STANDARD_NO_PAD.encode(value.as_bytes())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn candidate_commitment(
+    pairing_session_id: Uuid,
+    device_id: Uuid,
+    display_name: &str,
+    platform: &str,
+    protocol_version: i32,
+    min_supported_version: i32,
+    capabilities: i64,
+    expires_at_unix_ms: i64,
+    pairing_public_key: &str,
+    target_identity_key: &str,
+    claim_secret_hash: &str,
+) -> String {
+    let canonical = format!(
+        concat!(
+            "ENIGMA_PAIRING_CANDIDATE_V1\n",
+            "pairing_session_id={}\n",
+            "device_id={}\n",
+            "display_name={}\n",
+            "platform={}\n",
+            "protocol_version={}\n",
+            "min_supported_version={}\n",
+            "capabilities={}\n",
+            "expires_at_unix_ms={}\n",
+            "pairing_public_key={}\n",
+            "target_identity_key={}\n",
+            "claim_secret_hash={}\n"
+        ),
+        pairing_session_id,
+        device_id,
+        display_name,
+        platform,
+        protocol_version,
+        min_supported_version,
+        capabilities,
+        expires_at_unix_ms,
+        pairing_public_key,
+        target_identity_key,
+        claim_secret_hash,
+    );
+    general_purpose::STANDARD_NO_PAD.encode(Sha256::digest(canonical.as_bytes()))
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    output
 }
 
 async fn request_json(
