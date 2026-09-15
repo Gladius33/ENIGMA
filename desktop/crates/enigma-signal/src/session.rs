@@ -1,12 +1,11 @@
 use std::time::SystemTime;
 
-use base64::{engine::general_purpose::{STANDARD, STANDARD_NO_PAD}, Engine as _};
 use libsignal_protocol::{
     kem, message_decrypt_prekey, message_decrypt_signal, message_encrypt, process_prekey_bundle,
     CiphertextMessage, CiphertextMessageType, DeviceId, GenericSignedPreKey, IdentityKeyPair,
     IdentityKeyStore, KeyPair, KyberPreKeyRecord, KyberPreKeyStore, PreKeyBundle, PreKeyRecord,
-    IdentityKey, PreKeySignalMessage, PreKeyStore, ProtocolAddress, PublicKey, SessionStore,
-    SignalMessage, SignedPreKeyRecord, SignedPreKeyStore, Timestamp,
+    PreKeySignalMessage, PreKeyStore, ProtocolAddress, SessionStore, SignalMessage,
+    SignedPreKeyRecord, SignedPreKeyStore, Timestamp,
 };
 use rand::{CryptoRng, Rng};
 
@@ -35,86 +34,6 @@ pub struct PublishedSignedPreKey {
     pub key_id: u32,
     pub public_key: Vec<u8>,
     pub signature: Vec<u8>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RemotePreKeyMaterial {
-    pub registration_id: u32,
-    pub protocol_device_id: u32,
-    pub identity_key: String,
-    pub signed_pre_key_id: u32,
-    pub signed_pre_key_public: String,
-    pub signed_pre_key_signature: String,
-    pub kyber_pre_key_id: u32,
-    pub kyber_pre_key_public: String,
-    pub kyber_pre_key_signature: String,
-    pub one_time_pre_key: Option<(u32, String)>,
-}
-
-impl RemotePreKeyMaterial {
-    fn to_libsignal(&self) -> Result<PreKeyBundle, SignalAdapterError> {
-        if !(1..=16_380).contains(&self.registration_id)
-            || !(1..=127).contains(&self.protocol_device_id)
-            || self.signed_pre_key_id > i32::MAX as u32
-            || self.kyber_pre_key_id > i32::MAX as u32
-        {
-            return Err(SignalAdapterError::InvalidBundle);
-        }
-
-        let identity_bytes = decode_base64(&self.identity_key)?;
-        let identity =
-            IdentityKey::decode(&identity_bytes).map_err(|_| SignalAdapterError::InvalidBundle)?;
-
-        let signed_public_bytes = decode_base64(&self.signed_pre_key_public)?;
-        let signed_public = PublicKey::deserialize(&signed_public_bytes)
-            .map_err(|_| SignalAdapterError::InvalidBundle)?;
-        let signed_signature = decode_base64(&self.signed_pre_key_signature)?;
-
-        let kyber_public_bytes = decode_base64(&self.kyber_pre_key_public)?;
-        let kyber_public = kem::PublicKey::deserialize(&kyber_public_bytes)
-            .map_err(|_| SignalAdapterError::InvalidBundle)?;
-        let kyber_signature = decode_base64(&self.kyber_pre_key_signature)?;
-
-        let one_time = self
-            .one_time_pre_key
-            .as_ref()
-            .map(|(key_id, public_key)| {
-                if *key_id > i32::MAX as u32 {
-                    return Err(SignalAdapterError::InvalidBundle);
-                }
-                let bytes = decode_base64(public_key)?;
-                let public =
-                    PublicKey::deserialize(&bytes).map_err(|_| SignalAdapterError::InvalidBundle)?;
-                Ok(((*key_id).into(), public))
-            })
-            .transpose()?;
-
-        let device_id = DeviceId::try_from(self.protocol_device_id)
-            .map_err(|_| SignalAdapterError::InvalidBundle)?;
-        PreKeyBundle::new(
-            self.registration_id,
-            device_id,
-            one_time,
-            self.signed_pre_key_id.into(),
-            signed_public,
-            signed_signature,
-            self.kyber_pre_key_id.into(),
-            kyber_public,
-            kyber_signature,
-            identity,
-        )
-        .map_err(|_| SignalAdapterError::InvalidBundle)
-    }
-}
-
-fn decode_base64(value: &str) -> Result<Vec<u8>, SignalAdapterError> {
-    if value.is_empty() || value.len() > 16 * 1024 {
-        return Err(SignalAdapterError::InvalidBundle);
-    }
-    STANDARD_NO_PAD
-        .decode(value)
-        .or_else(|_| STANDARD.decode(value))
-        .map_err(|_| SignalAdapterError::InvalidBundle)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -411,66 +330,6 @@ impl LibsignalSessionBackend {
         self.process_remote_prekey_bundle(&remote, &bundle, now, rng)
             .await?;
         Ok(remote)
-    }
-
-    pub async fn has_remote_session(
-        &self,
-        remote_device_id: &str,
-        protocol_device_id: u32,
-    ) -> Result<bool, SignalAdapterError> {
-        let device_id = DeviceId::try_from(protocol_device_id)
-            .map_err(|_| SignalAdapterError::InvalidBundle)?;
-        let remote = ProtocolAddress::new(remote_device_id.to_owned(), device_id);
-        self.store
-            .session_store
-            .load_session(&remote)
-            .await
-            .map(|record| record.is_some())
-            .map_err(|_| SignalAdapterError::CryptoFailure)
-    }
-
-    pub async fn process_remote_material<R>(
-        &mut self,
-        remote_device_id: &str,
-        material: &RemotePreKeyMaterial,
-        now: SystemTime,
-        rng: &mut R,
-    ) -> Result<(), SignalAdapterError>
-    where
-        R: Rng + CryptoRng,
-    {
-        let device_id = DeviceId::try_from(material.protocol_device_id)
-            .map_err(|_| SignalAdapterError::InvalidBundle)?;
-        let remote = ProtocolAddress::new(remote_device_id.to_owned(), device_id);
-        let bundle = material.to_libsignal()?;
-        self.process_remote_prekey_bundle(&remote, &bundle, now, rng)
-            .await
-    }
-
-    pub async fn encrypt_wire<R>(
-        &mut self,
-        sender_device_id: &str,
-        sender_protocol_device_id: u32,
-        recipient_device_id: &str,
-        recipient_protocol_device_id: u32,
-        plaintext: &[u8],
-        now: SystemTime,
-        rng: &mut R,
-    ) -> Result<String, SignalAdapterError>
-    where
-        R: Rng + CryptoRng,
-    {
-        let device_id = DeviceId::try_from(recipient_protocol_device_id)
-            .map_err(|_| SignalAdapterError::InvalidBundle)?;
-        let remote = ProtocolAddress::new(recipient_device_id.to_owned(), device_id);
-        let ciphertext = self.encrypt(&remote, plaintext, now, rng).await?;
-        crate::encode_signal_wire_envelope(
-            sender_device_id,
-            sender_protocol_device_id,
-            recipient_device_id,
-            recipient_protocol_device_id,
-            &ciphertext,
-        )
     }
 
     pub async fn process_remote_prekey_bundle<R>(
