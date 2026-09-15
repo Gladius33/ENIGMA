@@ -24,7 +24,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/register", post(register_device))
         .route("/link/candidate", post(create_pairing_candidate))
-        .route("/link/candidate/:pairing_session_id", get(get_pairing_candidate))
+        .route(
+            "/link/candidate/:pairing_session_id",
+            get(get_pairing_candidate),
+        )
         .route("/link/authorize", post(authorize_linked_desktop))
         .route("/link/claim", post(claim_linked_desktop))
         .route("/fcm-token", post(update_fcm_token))
@@ -295,7 +298,9 @@ async fn create_pairing_candidate(
         expected_commitment.as_bytes(),
         payload.candidate_commitment.as_bytes(),
     ) {
-        return Err(AppError::BadRequest("PAIRING_CANDIDATE_COMMITMENT_MISMATCH".into()));
+        return Err(AppError::BadRequest(
+            "PAIRING_CANDIDATE_COMMITMENT_MISMATCH".into(),
+        ));
     }
 
     let inserted = sqlx::query(
@@ -324,7 +329,9 @@ async fn create_pairing_candidate(
     .await?;
 
     if inserted.rows_affected() != 1 {
-        return Err(AppError::Conflict("PAIRING_RENDEZVOUS_ALREADY_EXISTS".into()));
+        return Err(AppError::Conflict(
+            "PAIRING_RENDEZVOUS_ALREADY_EXISTS".into(),
+        ));
     }
 
     Ok(Json(pairing_candidate_response_from_request(payload)))
@@ -844,18 +851,27 @@ fn validate_pairing_candidate(payload: &CreatePairingCandidateRequest) -> Result
     if payload.expires_at_unix_ms <= now_ms
         || payload.expires_at_unix_ms > now_ms + MAX_PAIRING_TTL_MS
     {
-        return Err(AppError::BadRequest("PAIRING_RENDEZVOUS_EXPIRY_INVALID".into()));
+        return Err(AppError::BadRequest(
+            "PAIRING_RENDEZVOUS_EXPIRY_INVALID".into(),
+        ));
     }
     validation::base64_field("pairing_public_key", &payload.pairing_public_key, 32, 32)?;
     validation::base64_field("target_identity_key", &payload.target_identity_key, 1, 4096)?;
-    validation::base64_field("candidate_commitment", &payload.candidate_commitment, 32, 32)?;
+    validation::base64_field(
+        "candidate_commitment",
+        &payload.candidate_commitment,
+        32,
+        32,
+    )?;
     if payload.claim_secret_hash.len() != 64
         || !payload
             .claim_secret_hash
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
-        return Err(AppError::BadRequest("INVALID_PAIRING_CLAIM_SECRET_HASH".into()));
+        return Err(AppError::BadRequest(
+            "INVALID_PAIRING_CLAIM_SECRET_HASH".into(),
+        ));
     }
     Ok(())
 }
@@ -909,7 +925,9 @@ fn validate_authorization_against_rendezvous(
             rendezvous.candidate_commitment.as_bytes(),
         );
     if !matches {
-        return Err(AppError::BadRequest("PAIRING_CANDIDATE_SUBSTITUTION".into()));
+        return Err(AppError::BadRequest(
+            "PAIRING_CANDIDATE_SUBSTITUTION".into(),
+        ));
     }
     Ok(())
 }
