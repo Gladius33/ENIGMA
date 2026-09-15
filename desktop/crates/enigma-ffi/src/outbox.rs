@@ -46,6 +46,12 @@ struct OutboxJournal {
     local_inbox_entry: Option<DurableInboxEntry>,
 }
 
+type RecoveredOutboxJournal = (
+    Vec<DurableOutboundDelivery>,
+    Vec<u8>,
+    Option<DurableInboxEntry>,
+);
+
 pub(crate) struct EncryptedDesktopOutbox {
     path: PathBuf,
     journal_path: PathBuf,
@@ -99,16 +105,7 @@ impl EncryptedDesktopOutbox {
         persist_atomic(&self.journal_path, &sealed).map_err(|_| ())
     }
 
-    pub(crate) fn read_journal(
-        &self,
-    ) -> Result<
-        Option<(
-            Vec<DurableOutboundDelivery>,
-            Vec<u8>,
-            Option<DurableInboxEntry>,
-        )>,
-        (),
-    > {
+    pub(crate) fn read_journal(&self) -> Result<Option<RecoveredOutboxJournal>, ()> {
         let sealed = match fs::read(&self.journal_path) {
             Ok(value) => value,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
