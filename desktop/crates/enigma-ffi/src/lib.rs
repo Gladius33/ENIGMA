@@ -213,6 +213,200 @@ fn current_unix_ms() -> Option<u64> {
     u64::try_from(millis).ok()
 }
 
+fn random_uuid_v4() -> Result<String, ()> {
+    let mut bytes = random_public_bytes::<16>().map_err(|_| ())?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Ok(format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15],
+    ))
+}
+
+unsafe fn read_utf8_input(
+    pointer: *const u8,
+    length: usize,
+    maximum: usize,
+) -> Option<String> {
+    if pointer.is_null() || length == 0 || length > maximum {
+        return None;
+    }
+    // SAFETY: the caller of the enclosing FFI function guarantees that pointer
+    // references at least length readable bytes for the duration of the call.
+    let bytes = unsafe { std::slice::from_raw_parts(pointer, length) };
+    let value = std::str::from_utf8(bytes).ok()?;
+    Some(value.to_owned())
+}
+
+fn encode_text_payload(body: &str) -> Result<String, ()> {
+    if body.trim().is_empty() || body.len() > MAX_OUTBOUND_TEXT_BYTES {
+        return Err(());
+    }
+    let json = serde_json::to_string(&TextPayloadDto {
+        version: 1,
+        body,
+        attachments: Vec::new(),
+    })
+    .map_err(|_| ())?;
+    Ok(format!("ENIGMA_PAYLOAD_V1:{json}"))
+}
+
+fn encode_sender_sync_payload(
+    contact_user_id: &str,
+    contact_public_id: &str,
+    contact_display_name: &str,
+    bubble_id: &str,
+    client_message_id: &str,
+    original_created_at: i64,
+    encoded_message_payload: &str,
+) -> Result<String, ()> {
+    if !is_canonical_device_uuid(contact_user_id)
+        || !is_canonical_device_uuid(bubble_id)
+        || !is_canonical_device_uuid(client_message_id)
+        || contact_public_id.trim().is_empty()
+        || contact_public_id.len() > MAX_CONTACT_PUBLIC_ID_BYTES
+        || contact_display_name.trim().is_empty()
+        || contact_display_name.len() > MAX_CONTACT_DISPLAY_NAME_BYTES
+        || original_created_at <= 0
+        || encoded_message_payload.is_empty()
+        || encoded_message_payload.len() > MAX_OUTBOUND_TEXT_BYTES
+    {
+        return Err(());
+    }
+    let json = serde_json::to_string(&SenderSyncDto {
+        version: 1,
+        contact_user_id,
+        contact_public_id,
+        contact_display_name,
+        bubble_id,
+        client_message_id,
+        original_created_at,
+        encoded_message_payload,
+    })
+    .map_err(|_| ())?;
+    Ok(format!("ENIGMA_SENDER_SYNC_V1:{json}"))
+}
+
+fn decode_signal_key(value: &str) -> Result<Vec<u8>, ()> {
+    if value.is_empty() || value.len() > 16 * 1024 {
+        return Err(());
+    }
+    STANDARD_NO_PAD
+        .decode(value)
+        .or_else(|_| STANDARD.decode(value))
+        .map_err(|_| ())
+}
+
+fn claimed_prekey_material(
+    claimed: &ClaimedRemoteDeviceKeyBundle,
+) -> Result<RemotePreKeyBundleMaterial, ()> {
+    let registration_id = u32::try_from(claimed.registration_id.ok_or(())?).map_err(|_| ())?;
+    let protocol_device_id =
+        u32::try_from(claimed.protocol_device_id.ok_or(())?).map_err(|_| ())?;
+    let signed_key_id = u32::try_from(claimed.signed_prekey.key_id).map_err(|_| ())?;
+    let kyber = claimed.kyber_prekey.as_ref().ok_or(())?;
+    let kyber_key_id = u32::try_from(kyber.key_id).map_err(|_| ())?;
+    let one_time_pre_key = claimed
+        .one_time_prekey
+        .as_ref()
+        .map(|prekey| {
+            Ok(RemotePublicPreKey {
+                key_id: u32::try_from(prekey.key_id).map_err(|_| ())?,
+                public_key: decode_signal_key(&prekey.public_key)?,
+            })
+        })
+        .transpose()?;
+
+    Ok(RemotePreKeyBundleMaterial {
+        registration_id,
+        protocol_device_id,
+        identity_key: decode_signal_key(&claimed.identity_key)?,
+        signed_pre_key: SignalRemoteSignedPreKey {
+            key_id: signed_key_id,
+            public_key: decode_signal_key(&claimed.signed_prekey.public_key)?,
+            signature: decode_signal_key(&claimed.signed_prekey.signature)?,
+        },
+        kyber_pre_key: SignalRemoteSignedPreKey {
+            key_id: kyber_key_id,
+            public_key: decode_signal_key(&kyber.public_key)?,
+            signature: decode_signal_key(&kyber.signature)?,
+        },
+        one_time_pre_key,
+    })
+}
+
+fn prepare_remote_session(
+    backend: &mut LibsignalSessionBackend,
+    client: &PairingRendezvousClient,
+    token: &mut SecureBytes,
+    user_id: &str,
+    discovered: &RemoteDeviceKeyBundle,
+    now: SystemTime,
+) -> Result<u32, ()> {
+    let registration_id = u32::try_from(discovered.registration_id.ok_or(())?).map_err(|_| ())?;
+    let protocol_device_id =
+        u32::try_from(discovered.protocol_device_id.ok_or(())?).map_err(|_| ())?;
+    if !(1..=16_380).contains(&registration_id)
+        || !(1..=127).contains(&protocol_device_id)
+        || !is_canonical_device_uuid(&discovered.device_id)
+    {
+        return Err(());
+    }
+
+    let discovered_identity = decode_signal_key(&discovered.identity_key)?;
+    if block_on(backend.has_session_for(&discovered.device_id, protocol_device_id))
+        .map_err(|_| ())?
+    {
+        let matches = block_on(backend.remote_identity_matches(
+            &discovered.device_id,
+            protocol_device_id,
+            &discovered_identity,
+        ))
+        .map_err(|_| ())?;
+        return matches.then_some(protocol_device_id).ok_or(());
+    }
+
+    let claimed = token
+        .with_read(|bytes| client.claim_prekey(bytes, user_id, &discovered.device_id))
+        .map_err(|_| ())?
+        .map_err(|_| ())?;
+    if claimed.identity_key != discovered.identity_key
+        || claimed.registration_id != discovered.registration_id
+        || claimed.protocol_device_id != discovered.protocol_device_id
+    {
+        return Err(());
+    }
+
+    let material = claimed_prekey_material(&claimed)?;
+    let mut rng = rand::rng();
+    let remote = block_on(backend.process_remote_prekey_material(
+        &discovered.device_id,
+        &material,
+        now,
+        &mut rng,
+    ))
+    .map_err(|_| ())?;
+    if u32::from(remote.device_id()) != protocol_device_id {
+        return Err(());
+    }
+    Ok(protocol_device_id)
+}
+
 /// Starts a fresh short-lived desktop pairing bootstrap.
 ///
 /// The ephemeral pairing secret remains inside Rust/libsodium. Only the public QR payload can be
