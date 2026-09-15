@@ -451,7 +451,7 @@ impl DesktopP2pManager {
                     session_id: event_session_id,
                     ..
                 } if event_session_id == session_id
-            ) || matches!(event, P2pSignalingEvent::Disconnected);
+            ) || matches!(&event, P2pSignalingEvent::Disconnected);
             if belongs {
                 return Some(event);
             }
