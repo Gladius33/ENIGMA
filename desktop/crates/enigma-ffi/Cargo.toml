@@ -16,9 +16,12 @@ crate-type = ["cdylib", "rlib"]
 doc = false
 
 [dependencies]
+base64 = "=0.22.1"
 enigma-platform = { path = "../enigma-platform" }
 enigma-runtime-core = { package = "enigma-core", path = "../enigma-core" }
 enigma-signal = { path = "../enigma-signal" }
+enigma-sodium = { path = "../enigma-sodium" }
+enigma-transport = { path = "../enigma-transport" }
 
 [dev-dependencies]
 libsignal-protocol = { git = "https://github.com/signalapp/libsignal", rev = "b39e93f1a5e6531044dfcdf5876585cbcf08f884" }
