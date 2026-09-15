@@ -15,3 +15,4 @@ base64 = "=0.22.1"
 enigma-protocol = { path = "../enigma-protocol" }
 enigma-sodium = { path = "../enigma-sodium" }
 qrcode = { version = "=0.14.1", default-features = false, features = ["svg"] }
+sha2 = "=0.10.9"
