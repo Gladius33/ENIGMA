@@ -492,21 +492,18 @@ mod tests {
     fn android_signal_wire_envelope_parser_is_strict_and_device_bound() {
         let json = r#"{"version":1,"algorithm":"Signal-Protocol-libsignal-0.86.5","messageType":"prekey","senderDeviceId":"11111111-1111-4111-8111-111111111111","senderProtocolDeviceId":1,"recipientDeviceId":"22222222-2222-4222-8222-222222222222","recipientProtocolDeviceId":1,"ciphertext":"AQID"}"#;
         let outer = STANDARD_NO_PAD.encode(json.as_bytes());
-        let parsed = parse_signal_wire_envelope(
-            &outer,
-            "22222222-2222-4222-8222-222222222222",
-        )
-        .expect("valid Android wire envelope");
-        assert_eq!(parsed.sender_device_id, "11111111-1111-4111-8111-111111111111");
+        let parsed = parse_signal_wire_envelope(&outer, "22222222-2222-4222-8222-222222222222")
+            .expect("valid Android wire envelope");
+        assert_eq!(
+            parsed.sender_device_id,
+            "11111111-1111-4111-8111-111111111111"
+        );
         assert_eq!(parsed.sender_protocol_device_id, 1);
         assert_eq!(parsed.message_type, session::SessionMessageType::PreKey);
         assert_eq!(parsed.ciphertext, vec![1, 2, 3]);
 
         assert_eq!(
-            parse_signal_wire_envelope(
-                &outer,
-                "33333333-3333-4333-8333-333333333333"
-            ),
+            parse_signal_wire_envelope(&outer, "33333333-3333-4333-8333-333333333333"),
             Err(SignalAdapterError::InvalidWireEnvelope)
         );
 
@@ -515,10 +512,7 @@ mod tests {
                 .as_bytes(),
         );
         assert_eq!(
-            parse_signal_wire_envelope(
-                &tampered,
-                "22222222-2222-4222-8222-222222222222"
-            ),
+            parse_signal_wire_envelope(&tampered, "22222222-2222-4222-8222-222222222222"),
             Err(SignalAdapterError::InvalidWireEnvelope)
         );
     }
