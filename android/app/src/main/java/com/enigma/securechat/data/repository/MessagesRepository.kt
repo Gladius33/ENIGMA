@@ -330,13 +330,13 @@ class MessagesRepository(
         if (receipt.recipientDeviceId != localDeviceId) return false
         val message = messageDao.findByClientMessageId(localDeviceId, receipt.clientMessageId) ?: return false
         if (message.direction != MessageDirection.OUTBOUND.name) return false
-        if (message.recipientDeviceId != receipt.senderDeviceId) return false
         val conversation = conversationDao.findById(message.conversationId) ?: return false
         if (conversation.bubbleId != receipt.bubbleId) return false
+        val receiptDevice = contactDeviceDao.findByDevice(receipt.senderDeviceId) ?: return false
+        if (receiptDevice.contactUserId != conversation.contactUserId) return false
         val status = receipt.status.toMessageStatus()
         messageDao.markOutboundP2pReceipt(
             clientMessageId = receipt.clientMessageId,
-            receiptSenderDeviceId = receipt.senderDeviceId,
             status = status.name,
         )
         return true
