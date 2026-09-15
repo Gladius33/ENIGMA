@@ -113,7 +113,7 @@
             </Border>
 
             <ScrollViewer Grid.Row="1" Margin="8,18">
-                <StackPanel Spacing="12">
+                <StackPanel x:Name="MessagesPanel" Spacing="12">
                     <Border
                         HorizontalAlignment="Left"
                         MaxWidth="520"
