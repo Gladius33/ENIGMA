@@ -156,6 +156,7 @@ impl WsHub {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn notify_p2p_signal(
         &self,
         recipient_device_id: Uuid,
