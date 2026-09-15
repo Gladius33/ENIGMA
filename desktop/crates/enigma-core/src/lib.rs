@@ -120,10 +120,7 @@ impl PairingBootstrap {
         &self.svg
     }
 
-    pub fn sign_pairing_message(
-        &self,
-        message: &[u8],
-    ) -> Result<[u8; 64], PairingBootstrapError> {
+    pub fn sign_pairing_message(&self, message: &[u8]) -> Result<[u8; 64], PairingBootstrapError> {
         self.signing_key
             .sign(message)
             .map_err(PairingBootstrapError::Randomness)
@@ -312,26 +309,20 @@ mod tests {
 
     #[test]
     fn pairing_bootstrap_matches_android_qr_contract() {
-        let bootstrap =
-            PairingBootstrap::generate(1_700_000_000_000, DEFAULT_PAIRING_TTL_MS)
-                .expect("pairing bootstrap");
+        let bootstrap = PairingBootstrap::generate(1_700_000_000_000, DEFAULT_PAIRING_TTL_MS)
+            .expect("pairing bootstrap");
 
         assert_eq!(
             bootstrap.payload().header.capabilities,
             CapabilitySet::MULTI_DEVICE
         );
-        assert_eq!(
-            bootstrap.payload().expires_at_unix_ms,
-            1_700_000_120_000
-        );
+        assert_eq!(bootstrap.payload().expires_at_unix_ms, 1_700_000_120_000);
         assert_eq!(bootstrap.payload().pairing_public_key.len(), 32);
         assert!(bootstrap.uri().starts_with("enigma://pair-device?payload="));
         assert!(bootstrap
             .payload_json()
             .contains("\"type\":\"enigma.pair_device\""));
-        assert!(bootstrap
-            .payload_json()
-            .contains("\"protocol_version\":1"));
+        assert!(bootstrap.payload_json().contains("\"protocol_version\":1"));
         assert!(bootstrap
             .payload_json()
             .contains("\"min_supported_version\":1"));
@@ -350,8 +341,8 @@ mod tests {
             Err(PairingBootstrapError::InvalidTtl)
         ));
 
-        let bootstrap = PairingBootstrap::generate(1_000, DEFAULT_PAIRING_TTL_MS)
-            .expect("pairing bootstrap");
+        let bootstrap =
+            PairingBootstrap::generate(1_000, DEFAULT_PAIRING_TTL_MS).expect("pairing bootstrap");
         let signature = bootstrap
             .sign_pairing_message(b"ENIGMA_PAIRING_CHANNEL_V1")
             .expect("pairing signature");
