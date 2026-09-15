@@ -24,6 +24,10 @@ internal static partial class EnigmaCoreNative
     [return: MarshalAs(UnmanagedType.I1)]
     internal static partial bool SignalIsReady(IntPtr handle);
 
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_signal_load_or_create_default")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static partial bool SignalLoadOrCreateDefault(IntPtr handle);
+
     [LibraryImport(LibraryName, EntryPoint = "enigma_core_signal_initialize_protected")]
     [return: MarshalAs(UnmanagedType.I1)]
     internal static unsafe partial bool SignalInitializeProtected(
@@ -54,6 +58,9 @@ internal sealed class EnigmaCoreHandle : SafeHandle
     internal bool IsReady => EnigmaCoreNative.IsReady(handle);
 
     internal bool SignalIsReady => EnigmaCoreNative.SignalIsReady(handle);
+
+    internal bool EnsureDefaultSignalIdentity() =>
+        EnigmaCoreNative.SignalLoadOrCreateDefault(handle);
 
     internal unsafe bool InitializeProtectedSignalIdentity(
         ReadOnlySpan<byte> protectedIdentity,
@@ -108,6 +115,16 @@ public sealed class EnigmaCoreClient : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             return _handle.SignalIsReady;
         }
+    }
+
+    /// <summary>
+    /// Restores the platform-protected Signal identity or provisions it on first launch.
+    /// The private identity remains inside Rust and the native OS protection backend.
+    /// </summary>
+    public bool EnsureDefaultSignalIdentity()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _handle.EnsureDefaultSignalIdentity();
     }
 
     /// <summary>
