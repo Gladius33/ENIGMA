@@ -44,6 +44,29 @@ pub struct PublishedPreKeyBundle {
     pub one_time_pre_keys: Vec<PublishedOneTimePreKey>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemotePublicPreKey {
+    pub key_id: u32,
+    pub public_key: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteSignedPreKey {
+    pub key_id: u32,
+    pub public_key: Vec<u8>,
+    pub signature: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemotePreKeyBundleMaterial {
+    pub registration_id: u32,
+    pub protocol_device_id: u32,
+    pub identity_key: Vec<u8>,
+    pub signed_pre_key: RemoteSignedPreKey,
+    pub kyber_pre_key: RemoteSignedPreKey,
+    pub one_time_pre_key: Option<RemotePublicPreKey>,
+}
+
 impl LibsignalSessionBackend {
     pub fn new(
         identity: IdentityKeyPair,
@@ -242,6 +265,70 @@ impl LibsignalSessionBackend {
             .save_kyber_pre_key(kyber_pre_key_id.into(), kyber_pre_key)
             .await
             .map_err(|_| SignalAdapterError::CryptoFailure)
+    }
+
+    pub async fn process_remote_prekey_material<R>(
+        &mut self,
+        remote_device_id: &str,
+        material: &RemotePreKeyBundleMaterial,
+        now: SystemTime,
+        rng: &mut R,
+    ) -> Result<ProtocolAddress, SignalAdapterError>
+    where
+        R: Rng + CryptoRng,
+    {
+        if remote_device_id.is_empty()
+            || material.registration_id == 0
+            || material.registration_id > 16_380
+            || material.protocol_device_id == 0
+            || material.protocol_device_id > 127
+            || material.identity_key.is_empty()
+            || material.signed_pre_key.public_key.is_empty()
+            || material.signed_pre_key.signature.is_empty()
+            || material.kyber_pre_key.public_key.is_empty()
+            || material.kyber_pre_key.signature.is_empty()
+        {
+            return Err(SignalAdapterError::InvalidBundle);
+        }
+
+        let protocol_device_id = DeviceId::try_from(material.protocol_device_id)
+            .map_err(|_| SignalAdapterError::InvalidBundle)?;
+        let remote = ProtocolAddress::new(remote_device_id.to_owned(), protocol_device_id);
+        let identity_key = libsignal_protocol::IdentityKey::decode(&material.identity_key)
+            .map_err(|_| SignalAdapterError::InvalidBundle)?;
+        let signed_public = libsignal_protocol::PublicKey::deserialize(
+            &material.signed_pre_key.public_key,
+        )
+        .map_err(|_| SignalAdapterError::InvalidBundle)?;
+        let kyber_public = kem::PublicKey::deserialize(&material.kyber_pre_key.public_key)
+            .map_err(|_| SignalAdapterError::InvalidBundle)?;
+        let one_time_pre_key = material
+            .one_time_pre_key
+            .as_ref()
+            .map(|prekey| {
+                libsignal_protocol::PublicKey::deserialize(&prekey.public_key)
+                    .map(|public_key| (prekey.key_id.into(), public_key))
+                    .map_err(|_| SignalAdapterError::InvalidBundle)
+            })
+            .transpose()?;
+
+        let bundle = PreKeyBundle::new(
+            material.registration_id,
+            protocol_device_id,
+            one_time_pre_key,
+            material.signed_pre_key.key_id.into(),
+            signed_public,
+            material.signed_pre_key.signature.clone(),
+            material.kyber_pre_key.key_id.into(),
+            kyber_public,
+            material.kyber_pre_key.signature.clone(),
+            identity_key,
+        )
+        .map_err(|_| SignalAdapterError::InvalidBundle)?;
+
+        self.process_remote_prekey_bundle(&remote, &bundle, now, rng)
+            .await?;
+        Ok(remote)
     }
 
     pub async fn process_remote_prekey_bundle<R>(
