@@ -20,12 +20,9 @@ fn rust_emits_android_pairing_uri() {
             .as_millis(),
     )
     .expect("current Unix time must fit u64");
-    let bootstrap = PairingBootstrap::generate(
-        now_unix_ms,
-        DEFAULT_PAIRING_TTL_MS,
-        &[0x51; 33],
-    )
-    .expect("pairing bootstrap");
+    let bootstrap =
+        PairingBootstrap::generate(now_unix_ms, DEFAULT_PAIRING_TTL_MS, &[0x51; 33])
+            .expect("pairing bootstrap");
 
     fs::write(path, bootstrap.uri()).expect("write Android pairing URI fixture");
 }
