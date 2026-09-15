@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod engine;
+
 use base64::{engine::general_purpose::{STANDARD, STANDARD_NO_PAD}, Engine as _};
 use serde::{Deserialize, Serialize};
 
@@ -423,13 +425,16 @@ fn validate_candidate_type(value: &str) -> Result<(), P2pProtocolError> {
     }
 }
 
-fn validate_uuid(value: &str) -> Result<(), P2pProtocolError> {
-    if value.len() == 36
+pub(crate) fn is_canonical_uuid(value: &str) -> bool {
+    value.len() == 36
         && value.bytes().enumerate().all(|(index, byte)| match index {
             8 | 13 | 18 | 23 => byte == b'-',
             _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
         })
-    {
+}
+
+fn validate_uuid(value: &str) -> Result<(), P2pProtocolError> {
+    if is_canonical_uuid(value) {
         Ok(())
     } else {
         Err(P2pProtocolError::InvalidField)
