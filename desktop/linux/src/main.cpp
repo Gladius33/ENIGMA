@@ -65,6 +65,7 @@ int main(int argc, char* argv[]) {
 
     std::unique_ptr<enigma::Core> core;
     bool coreReady = false;
+    bool signalReadyForPairing = false;
     QString coreStatus = QStringLiteral("Cœur sécurisé indisponible");
     QString coreDetail = QStringLiteral("Le cœur Rust/libsignal n’est pas prêt");
 
@@ -73,10 +74,21 @@ int main(int argc, char* argv[]) {
         const bool runtimeReady = core->ready();
         const bool signalReady = runtimeReady
             && (core->signalReady() || core->ensureDefaultSignalIdentity());
-        coreReady = signalReady;
-        if (signalReady) {
-            coreStatus = QStringLiteral("Cœur sécurisé prêt");
-            coreDetail = QStringLiteral("Rust/libsignal • ABI %1").arg(enigma::linked_core_abi_version());
+        signalReadyForPairing = signalReady;
+        const bool sessionReady = signalReady && core->deviceSessionReady();
+        const bool deviceReady = sessionReady && core->initializeDevice();
+        coreReady = signalReady && sessionReady && deviceReady;
+        if (coreReady) {
+            coreStatus = QStringLiteral("Cœur sécurisé prêt • appareil lié");
+            coreDetail = QStringLiteral("Rust/libsignal • ABI %1 • prekeys publiées")
+                             .arg(enigma::linked_core_abi_version());
+        } else if (signalReady && sessionReady) {
+            coreStatus = QStringLiteral("Session liée • initialisation réseau requise");
+            coreDetail = QStringLiteral(
+                "Session device restaurée, mais la publication des prekeys doit être réessayée");
+        } else if (signalReady) {
+            coreStatus = QStringLiteral("Appairage Android requis");
+            coreDetail = QStringLiteral("Identité libsignal prête • liez cet ordinateur depuis Android");
         } else if (runtimeReady) {
             coreStatus = QStringLiteral("Identité E2EE protégée requise");
             coreDetail = QStringLiteral("Rust chargé • ABI %1 • identité libsignal non restaurée")
@@ -146,9 +158,9 @@ int main(int argc, char* argv[]) {
 
     auto* pairDevice = new QPushButton(QStringLiteral("Lier un appareil"), surface);
     pairDevice->setAccessibleName(QStringLiteral("Lier un appareil Android"));
-    pairDevice->setEnabled(coreReady);
+    pairDevice->setEnabled(signalReadyForPairing);
     pairDevice->setToolTip(
-        coreReady
+        signalReadyForPairing
             ? QStringLiteral("Créer un QR d’appairage court-vivant.")
             : coreDetail);
 
@@ -206,12 +218,24 @@ int main(int argc, char* argv[]) {
         QObject::connect(finalize, &QPushButton::clicked, [&dialog, &core, pairingStatus, finalize, status]() {
             if (!core) return;
             finalize->setEnabled(false);
-            const std::uint32_t claimState = core->claimPairing();
+            const std::uint32_t claimState = core->deviceSessionReady()
+                ? ENIGMA_PAIRING_CLAIMED
+                : core->claimPairing();
             switch (claimState) {
                 case ENIGMA_PAIRING_CLAIMED:
-                    pairingStatus->setText(QStringLiteral("Ordinateur lié avec succès."));
-                    status->setText(QStringLiteral("Cœur sécurisé prêt • appareil lié"));
-                    dialog.accept();
+                    pairingStatus->setText(
+                        QStringLiteral("Session autorisée. Publication des clés libsignal…"));
+                    if (core->initializeDevice()) {
+                        pairingStatus->setText(QStringLiteral("Ordinateur lié avec succès."));
+                        status->setText(QStringLiteral("Cœur sécurisé prêt • appareil lié"));
+                        dialog.accept();
+                    } else {
+                        pairingStatus->setText(QStringLiteral(
+                            "Ordinateur autorisé, mais l’initialisation réseau a échoué. "
+                            "Réessayez sans rescanner le QR."));
+                        finalize->setText(QStringLiteral("Réessayer l’initialisation"));
+                        finalize->setEnabled(true);
+                    }
                     break;
                 case ENIGMA_PAIRING_CLAIM_PENDING:
                     pairingStatus->setText(
