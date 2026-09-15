@@ -161,7 +161,7 @@ impl DesktopP2pManager {
                     &offer.bubble_id,
                     &offer.sender_device_id,
                 );
-                return Ok(false);
+                return Ok(None);
             }
 
             while let Some(event) = self.engine.try_next_event() {
@@ -254,7 +254,7 @@ impl DesktopP2pManager {
                             &offer.bubble_id,
                             &offer.sender_device_id,
                         );
-                        return Ok(false);
+                        return Ok(None);
                     }
                     _ => {}
                 }
@@ -296,7 +296,7 @@ impl DesktopP2pManager {
                                     &offer.bubble_id,
                                     &offer.sender_device_id,
                                 );
-                                return Ok(false);
+                                return Ok(None);
                             }
                             "offer" | "answer" => return Err(()),
                             _ => return Err(()),
