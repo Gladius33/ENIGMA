@@ -67,10 +67,12 @@ QString buildStyleSheet(bool dark) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    // Bootstrap the Qt application identity before any widget or native-core work.
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("ENIGMA"));
     app.setOrganizationName(QStringLiteral("ENIGMA"));
 
+    // Initialize the Rust/libsignal core and derive the initial operational state fail-closed.
     std::unique_ptr<enigma::Core> core;
     bool coreReady = false;
     bool signalReadyForPairing = false;
@@ -116,6 +118,7 @@ int main(int argc, char* argv[]) {
                          .arg(QString::fromUtf8(error.what()));
     }
 
+    // Build the top-level desktop shell only after native-core initialization has been attempted.
     QWidget window;
     window.setObjectName(QStringLiteral("root"));
     window.setWindowTitle(QStringLiteral("ENIGMA"));
@@ -123,6 +126,7 @@ int main(int argc, char* argv[]) {
     window.setMinimumSize(640, 420);
     window.setStyleSheet(buildStyleSheet(isDarkPalette(app.palette())));
 
+    // Compose the persistent application chrome and spacing from shared ENIGMA design tokens.
     auto* root = new QVBoxLayout(&window);
     root->setContentsMargins(
         enigma::design::kSpacingXl,
@@ -149,6 +153,7 @@ int main(int argc, char* argv[]) {
     header->addStretch();
     root->addLayout(header);
 
+    // The secure surface contains status, contacts, encrypted history and message controls.
     auto* surface = new QFrame(&window);
     surface->setObjectName(QStringLiteral("surface"));
     auto* content = new QVBoxLayout(surface);
@@ -208,6 +213,7 @@ int main(int argc, char* argv[]) {
     messageList->setWordWrap(true);
     messageList->setMinimumHeight(180);
 
+    // Rebuild the contact model from authenticated core state; malformed JSON is ignored safely.
     const auto refreshContacts = [&core, contactSelector]() {
         contactSelector->clear();
         if (!core || !core->deviceSessionReady()) return;
@@ -224,6 +230,7 @@ int main(int argc, char* argv[]) {
         }
     };
 
+    // Render only normalized encrypted-inbox entries that match the selected contact.
     const auto refreshMessages = [&core, contactSelector, messageList]() {
         messageList->clear();
         if (!core || contactSelector->currentIndex() < 0) {
@@ -378,6 +385,7 @@ int main(int argc, char* argv[]) {
         refreshMessages();
     }
 
+    // Queue outbound plaintext through the Rust core; the frontend never implements encryption.
     QObject::connect(
         sendMessage,
         &QPushButton::clicked,
@@ -417,6 +425,7 @@ int main(int argc, char* argv[]) {
             sendMessage->setEnabled(true);
         });
 
+    // Device linking delegates authorization, libsignal state and replay protection to the core.
     QObject::connect(
         pairDevice,
         &QPushButton::clicked,
@@ -494,38 +503,43 @@ int main(int argc, char* argv[]) {
             const std::uint32_t claimState = core->deviceSessionReady()
                 ? ENIGMA_PAIRING_CLAIMED
                 : core->claimPairing();
+            const auto finalizeClaimedPairing = [&]() {
+                pairingStatus->setText(
+                    QStringLiteral("Session autorisée. Publication des clés libsignal…"));
+                if (core->initializeDevice()) {
+                    const bool outboundFlushed = core->retryOutbox();
+                    const bool synchronized = core->syncPending();
+                    pairingStatus->setText(
+                        synchronized && outboundFlushed
+                            ? QStringLiteral("Ordinateur lié et synchronisé avec succès.")
+                            : QStringLiteral(
+                                  "Ordinateur lié. La synchronisation sera réessayée."));
+                    status->setText(QStringLiteral("Cœur sécurisé prêt • appareil lié"));
+                    contactSelector->setEnabled(true);
+                    messageComposer->setEnabled(true);
+                    sendMessage->setEnabled(true);
+                    openMessages->setEnabled(true);
+                    refreshContacts();
+                    refreshMessages();
+                    p2pTimer.start();
+                    detail->setText(
+                        synchronized && outboundFlushed
+                            ? QStringLiteral("Rust/libsignal • synchronisation à jour")
+                            : QStringLiteral("Rust/libsignal • synchronisation à réessayer"));
+                    dialog.accept();
+                    return;
+                }
+
+                pairingStatus->setText(QStringLiteral(
+                    "Ordinateur autorisé, mais l’initialisation réseau a échoué. "
+                    "Réessayez sans rescanner le QR."));
+                finalize->setText(QStringLiteral("Réessayer l’initialisation"));
+                finalize->setEnabled(true);
+            };
+
             switch (claimState) {
                 case ENIGMA_PAIRING_CLAIMED:
-                    pairingStatus->setText(
-                        QStringLiteral("Session autorisée. Publication des clés libsignal…"));
-                    if (core->initializeDevice()) {
-                        const bool outboundFlushed = core->retryOutbox();
-                        const bool synchronized = core->syncPending();
-                        pairingStatus->setText(
-                            synchronized && outboundFlushed
-                                ? QStringLiteral("Ordinateur lié et synchronisé avec succès.")
-                                : QStringLiteral(
-                                      "Ordinateur lié. La synchronisation sera réessayée."));
-                        status->setText(QStringLiteral("Cœur sécurisé prêt • appareil lié"));
-                        contactSelector->setEnabled(true);
-                        messageComposer->setEnabled(true);
-                        sendMessage->setEnabled(true);
-                        openMessages->setEnabled(true);
-                        refreshContacts();
-                        refreshMessages();
-                        p2pTimer.start();
-                        detail->setText(
-                            synchronized && outboundFlushed
-                                ? QStringLiteral("Rust/libsignal • synchronisation à jour")
-                                : QStringLiteral("Rust/libsignal • synchronisation à réessayer"));
-                        dialog.accept();
-                    } else {
-                        pairingStatus->setText(QStringLiteral(
-                            "Ordinateur autorisé, mais l’initialisation réseau a échoué. "
-                            "Réessayez sans rescanner le QR."));
-                        finalize->setText(QStringLiteral("Réessayer l’initialisation"));
-                        finalize->setEnabled(true);
-                    }
+                    finalizeClaimedPairing();
                     break;
                 case ENIGMA_PAIRING_CLAIM_PENDING:
                     pairingStatus->setText(
@@ -565,6 +579,7 @@ int main(int argc, char* argv[]) {
         core->cancelPairing();
     });
 
+    // Finalize the stable widget hierarchy after all callbacks have captured their dependencies.
     content->addWidget(title);
     content->addWidget(status);
     content->addWidget(detail);
@@ -584,6 +599,7 @@ int main(int argc, char* argv[]) {
 
     root->addWidget(surface, 1);
 
+    // Enter Qt's event loop only after the initial secure state and UI affordances are consistent.
     window.show();
     const int exitCode = app.exec();
     p2pTimer.stop();
