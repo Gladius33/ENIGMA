@@ -126,6 +126,31 @@ public:
         return handle_ == nullptr ? 0 : enigma_core_outbox_count(handle_);
     }
 
+    [[nodiscard]] std::string contactsJson() {
+        if (handle_ == nullptr) return {};
+        const auto length = enigma_core_contacts_json_len(handle_);
+        if (length == 0) return "[]";
+        std::vector<std::uint8_t> bytes(length);
+        if (!enigma_core_contacts_json_copy(handle_, bytes.data(), bytes.size())) {
+            return "[]";
+        }
+        return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    }
+
+    [[nodiscard]] bool sendTextToContact(
+        const std::string& recipientUserId,
+        const std::string& plaintext) noexcept {
+        return handle_ != nullptr
+            && signalReady()
+            && deviceSessionReady()
+            && enigma_core_send_text_to_contact(
+                handle_,
+                reinterpret_cast<const std::uint8_t*>(recipientUserId.data()),
+                recipientUserId.size(),
+                reinterpret_cast<const std::uint8_t*>(plaintext.data()),
+                plaintext.size());
+    }
+
     [[nodiscard]] std::size_t inboxCount() const noexcept {
         return handle_ == nullptr ? 0 : enigma_core_inbox_count(handle_);
     }
