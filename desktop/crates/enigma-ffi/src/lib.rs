@@ -877,6 +877,146 @@ fn prepare_outbound_delivery(
     })
 }
 
+fn contacts_json(core: &mut EnigmaCoreHandle, client: &PairingRendezvousClient) -> Result<Vec<u8>, ()> {
+    let token = core.device_access_token.as_mut().ok_or(())?;
+    let contacts = token
+        .with_read(|bytes| client.contacts(bytes))
+        .map_err(|_| ())?
+        .map_err(|_| ())?;
+    serde_json::to_vec(&contacts).map_err(|_| ())
+}
+
+fn main_bubble_id(core: &mut EnigmaCoreHandle, client: &PairingRendezvousClient) -> Result<String, ()> {
+    let token = core.device_access_token.as_mut().ok_or(())?;
+    let bubbles = token
+        .with_read(|bytes| client.bubbles(bytes))
+        .map_err(|_| ())?
+        .map_err(|_| ())?;
+    bubbles
+        .into_iter()
+        .find(|bubble| bubble.mode == "MAIN_GLOBAL")
+        .map(|bubble| bubble.id)
+        .ok_or(())
+}
+
+/// Returns the UTF-8 JSON length for the authenticated account contact list.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create and exclusively accessed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_contacts_json_len(handle: *mut EnigmaCoreHandle) -> usize {
+    if handle.is_null() {
+        return 0;
+    }
+    let Some(client) = pairing_client() else {
+        return 0;
+    };
+    // SAFETY: caller guarantees exclusive live access for this call.
+    let core = unsafe { &mut *handle };
+    contacts_json(core, &client).map_or(0, |value| value.len())
+}
+
+/// Copies the authenticated account contact list as UTF-8 JSON.
+///
+/// # Safety
+///
+/// handle must be live or null. output must reference at least output_len writable bytes and must
+/// not overlap Rust-owned storage. The same handle must not be concurrently mutated or destroyed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_contacts_json_copy(
+    handle: *mut EnigmaCoreHandle,
+    output: *mut u8,
+    output_len: usize,
+) -> bool {
+    if handle.is_null() || output.is_null() {
+        return false;
+    }
+    let Some(client) = pairing_client() else {
+        return false;
+    };
+    // SAFETY: caller guarantees exclusive live access for this call.
+    let core = unsafe { &mut *handle };
+    let Ok(encoded) = contacts_json(core, &client) else {
+        return false;
+    };
+    copy_pairing_bytes(&encoded, output, output_len)
+}
+
+/// Sends text to one saved contact using the account MAIN_GLOBAL bubble.
+///
+/// # Safety
+///
+/// handle and all input buffers must be live for this call. The handle must not be concurrently
+/// accessed or destroyed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_send_text_to_contact(
+    handle: *mut EnigmaCoreHandle,
+    recipient_user_id: *const u8,
+    recipient_user_id_len: usize,
+    plaintext: *const u8,
+    plaintext_len: usize,
+) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    // SAFETY: caller guarantees readable input buffers for the declared lengths.
+    let Some(recipient_user_id) =
+        (unsafe { read_utf8_input(recipient_user_id, recipient_user_id_len, 36) })
+    else {
+        return false;
+    };
+    // SAFETY: caller guarantees readable input buffers for the declared lengths.
+    let Some(plaintext) =
+        (unsafe { read_utf8_input(plaintext, plaintext_len, MAX_OUTBOUND_TEXT_BYTES) })
+    else {
+        return false;
+    };
+    if !is_canonical_device_uuid(&recipient_user_id) || plaintext.trim().is_empty() {
+        return false;
+    }
+
+    let Some(client) = pairing_client() else {
+        return false;
+    };
+    // SAFETY: caller guarantees exclusive live access for this call.
+    let core = unsafe { &mut *handle };
+    let contact = {
+        let Some(token) = core.device_access_token.as_mut() else {
+            return false;
+        };
+        let contacts = match token.with_read(|bytes| client.contacts(bytes)) {
+            Ok(Ok(contacts)) => contacts,
+            Ok(Err(_)) | Err(_) => return false,
+        };
+        match contacts.into_iter().find(|contact| contact.user_id == recipient_user_id) {
+            Some(contact) => contact,
+            None => return false,
+        }
+    };
+    let bubble_id = match main_bubble_id(core, &client) {
+        Ok(value) => value,
+        Err(()) => return false,
+    };
+
+    let public_id = contact.public_id;
+    let request = EnigmaSendTextRequest {
+        recipient_user_id: recipient_user_id.as_ptr(),
+        recipient_user_id_len: recipient_user_id.len(),
+        recipient_public_id: public_id.as_ptr(),
+        recipient_public_id_len: public_id.len(),
+        recipient_display_name: public_id.as_ptr(),
+        recipient_display_name_len: public_id.len(),
+        bubble_id: bubble_id.as_ptr(),
+        bubble_id_len: bubble_id.len(),
+        plaintext: plaintext.as_ptr(),
+        plaintext_len: plaintext.len(),
+    };
+    // SAFETY: every pointer in request refers to Rust-owned strings that remain alive for this call,
+    // and handle is exclusively borrowed by the current FFI invocation.
+    unsafe { enigma_core_send_text(handle, &request) }
+}
+
 /// Encrypts and durably queues one text message for every active recipient device and every
 /// sibling device required for sender-sync. The function returns true once the exact ciphertext
 /// fanout and the advanced libsignal state are durably committed locally. Relay delivery is
