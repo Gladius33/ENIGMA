@@ -93,6 +93,19 @@ class MessageDeliveryOutboxStore(
             }
         }
 
+    suspend fun pendingFor(clientMessageId: String): List<PendingMessageDelivery> =
+        mutex.withLock {
+            withContext(Dispatchers.IO) {
+                requireUuid(clientMessageId, "client_message_id")
+                readEntries()
+                    .filter { it.clientMessageId == clientMessageId }
+                    .sortedBy(PendingMessageDelivery::createdAt)
+            }
+        }
+
+    suspend fun hasPendingFor(clientMessageId: String): Boolean =
+        pendingFor(clientMessageId).isNotEmpty()
+
     suspend fun remove(deliveryId: String) = mutex.withLock {
         withContext(Dispatchers.IO) {
             requireUuid(deliveryId, "delivery_id")
