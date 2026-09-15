@@ -1,10 +1,10 @@
-# Enigma 2
+# Enigma 
 
-Enigma 2 is an open-source messaging project focused on privacy and end-to-end encryption. It combines an Android client with a Rust server and prefers direct peer-to-peer communication while retaining relays and fallbacks for reachability.
+Enigma is an open-source messaging project focused on privacy and end-to-end encryption. It combines an Android client with a Rust server and prefers direct peer-to-peer communication while retaining relays and fallbacks for reachability.
 
 > **Status:** actively developed and testable, but not production-ready or a security guarantee. Independent review and real-device validation remain necessary.
 
-## Why Enigma 2?
+## Why Enigma ?
 
 The project aims to keep message and attachment content opaque to the server wherever the protocol permits, while remaining usable across restrictive networks. Direct paths are preferred; signaling, STUN/TURN and application relays remain available when a direct path cannot be established.
 
@@ -78,8 +78,8 @@ Preserve the documented security boundaries, avoid logging sensitive material an
 
 ## Présentation française
 
-Enigma 2 est une messagerie open source orientée confidentialité et chiffrement de bout en bout. Le client Android privilégie les communications directes P2P, tout en conservant des relais et des mécanismes de secours lorsque le réseau ne permet pas une connexion directe.
+Enigma est une messagerie open source orientée confidentialité et chiffrement de bout en bout. Le client Android privilégie les communications directes P2P, tout en conservant des relais et des mécanismes de secours lorsque le réseau ne permet pas une connexion directe.
 
 ## License
 
-Enigma 2 is released under the [MIT License](LICENSE).
+Enigma is released under the [MIT License](LICENSE).
