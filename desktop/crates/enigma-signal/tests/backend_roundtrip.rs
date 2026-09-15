@@ -42,7 +42,7 @@ fn public_backend_establishes_prekey_session_and_ratchets_reply() {
         .expect("sign kyber pre-key");
 
     let bundle = PreKeyBundle::new(
-        0x6202,
+        0x1202,
         DeviceId::new(1).expect("valid device id"),
         Some((pre_key_id.into(), pre_key_pair.public_key)),
         signed_pre_key_id.into(),
@@ -56,9 +56,9 @@ fn public_backend_establishes_prekey_session_and_ratchets_reply() {
     .expect("construct bob pre-key bundle");
 
     let mut alice =
-        LibsignalSessionBackend::new(alice_identity, 0x6101).expect("initialize alice backend");
+        LibsignalSessionBackend::new(alice_identity, 0x1101).expect("initialize alice backend");
     let mut bob =
-        LibsignalSessionBackend::new(bob_identity, 0x6202).expect("initialize bob backend");
+        LibsignalSessionBackend::new(bob_identity, 0x1202).expect("initialize bob backend");
 
     let pre_key_record = PreKeyRecord::new(pre_key_id.into(), &pre_key_pair);
     let signed_pre_key_record = SignedPreKeyRecord::new(
@@ -184,7 +184,7 @@ fn public_backend_rejects_tampered_signed_prekey_bundle_without_creating_session
         .expect("sign kyber pre-key");
 
     let tampered_bundle = PreKeyBundle::new(
-        0x7202,
+        0x2202,
         DeviceId::new(1).expect("valid device id"),
         Some((21u32.into(), pre_key_pair.public_key)),
         22u32.into(),
@@ -198,7 +198,7 @@ fn public_backend_rejects_tampered_signed_prekey_bundle_without_creating_session
     .expect("construct syntactically valid tampered bundle");
 
     let mut alice =
-        LibsignalSessionBackend::new(alice_identity, 0x7101).expect("initialize alice backend");
+        LibsignalSessionBackend::new(alice_identity, 0x2101).expect("initialize alice backend");
 
     let rejected = alice
         .process_remote_prekey_bundle(&address("bob"), &tampered_bundle, now, &mut alice_rng)
@@ -246,7 +246,7 @@ fn public_backend_rejects_tampered_kyber_prekey_bundle_without_creating_session(
     tampered_kyber_signature[0] ^= 0x01;
 
     let tampered_bundle = PreKeyBundle::new(
-        0x8202,
+        0x3202,
         DeviceId::new(1).expect("valid device id"),
         Some((31u32.into(), pre_key_pair.public_key)),
         32u32.into(),
@@ -260,7 +260,7 @@ fn public_backend_rejects_tampered_kyber_prekey_bundle_without_creating_session(
     .expect("construct syntactically valid tampered Kyber bundle");
 
     let mut alice =
-        LibsignalSessionBackend::new(alice_identity, 0x8101).expect("initialize alice backend");
+        LibsignalSessionBackend::new(alice_identity, 0x3101).expect("initialize alice backend");
 
     let rejected = alice
         .process_remote_prekey_bundle(&address("bob"), &tampered_bundle, now, &mut alice_rng)
@@ -290,9 +290,9 @@ fn generated_desktop_prekeys_are_publishable_and_receive_first_message() {
     let alice_identity = IdentityKeyPair::generate(&mut alice_rng);
     let bob_identity = IdentityKeyPair::generate(&mut bob_rng);
     let mut alice =
-        LibsignalSessionBackend::new(alice_identity, 0xA001).expect("initialize alice backend");
+        LibsignalSessionBackend::new(alice_identity, 0x3A01).expect("initialize alice backend");
     let mut bob =
-        LibsignalSessionBackend::new(bob_identity, 0xB002).expect("initialize bob backend");
+        LibsignalSessionBackend::new(bob_identity, 0x3B02).expect("initialize bob backend");
 
     let published = bob
         .generate_and_store_prekey_bundle(1001, 2, 2001, 3001, 1_700_000_000_000, &mut bob_rng)
@@ -300,7 +300,7 @@ fn generated_desktop_prekeys_are_publishable_and_receive_first_message() {
         .expect("in-memory pre-key generation is synchronous")
         .expect("generate bob publishable pre-keys");
 
-    assert_eq!(published.registration_id, 0xB002);
+    assert_eq!(published.registration_id, 0x3B02);
     assert_eq!(published.one_time_pre_keys.len(), 2);
     assert_eq!(published.signed_pre_key.key_id, 2001);
     assert_eq!(published.kyber_pre_key.key_id, 3001);
