@@ -1,6 +1,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod inbox;
+mod outbox;
 
 use std::{
     fs,
@@ -21,6 +22,7 @@ use enigma_transport::{
 };
 use futures_executor::block_on;
 use inbox::{DurableInboxEntry, EncryptedDesktopInbox};
+use outbox::{DurableOutboundDelivery, EncryptedDesktopOutbox};
 use rand::Rng as _;
 
 pub const ENIGMA_CORE_ABI_VERSION: u32 = 1;
@@ -57,6 +59,7 @@ pub struct EnigmaCoreHandle {
     device_id: Option<String>,
     device_access_token: Option<SecureBytes>,
     desktop_inbox: Option<EncryptedDesktopInbox>,
+    desktop_outbox: Option<EncryptedDesktopOutbox>,
 }
 
 #[no_mangle]
@@ -78,6 +81,7 @@ pub extern "C" fn enigma_core_create() -> *mut EnigmaCoreHandle {
         device_id,
         device_access_token,
         desktop_inbox: None,
+        desktop_outbox: None,
     }))
 }
 
@@ -1074,9 +1078,13 @@ fn default_inbox_journal_path() -> Option<PathBuf> {
     Some(default_desktop_state_dir()?.join("desktop-inbox-journal-v1.enc"))
 }
 
-fn load_or_create_desktop_inbox() -> Result<EncryptedDesktopInbox, ()> {
+fn default_outbox_path() -> Option<PathBuf> {
+    Some(default_desktop_state_dir()?.join("desktop-outbox-v1.enc"))
+}
+
+fn load_or_create_desktop_vault() -> Result<SodiumRecordVault, ()> {
     let key_path = default_inbox_master_key_path().ok_or(())?;
-    let vault = match fs::read(&key_path) {
+    match fs::read(&key_path) {
         Ok(record) => {
             let protected = decode_inbox_master_key_record(&record).ok_or(())?;
             let mut raw = unprotect_inbox_master_key(protected).map_err(|_| ())?;
@@ -1109,13 +1117,22 @@ fn load_or_create_desktop_inbox() -> Result<EncryptedDesktopInbox, ()> {
             }
             SodiumRecordVault::import_key_and_wipe(&mut key).map_err(|_| ())?
         }
-        Err(_) => return Err(()),
-    };
+        Err(_) => Err(()),
+    }
+}
 
+fn load_or_create_desktop_inbox() -> Result<EncryptedDesktopInbox, ()> {
     Ok(EncryptedDesktopInbox::new(
         default_inbox_path().ok_or(())?,
         default_inbox_journal_path().ok_or(())?,
-        vault,
+        load_or_create_desktop_vault()?,
+    ))
+}
+
+fn load_or_create_desktop_outbox() -> Result<EncryptedDesktopOutbox, ()> {
+    Ok(EncryptedDesktopOutbox::new(
+        default_outbox_path().ok_or(())?,
+        load_or_create_desktop_vault()?,
     ))
 }
 
