@@ -1646,11 +1646,17 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
     };
 
     for message in pending {
-        let already_durable = core
-            .desktop_inbox
-            .as_ref()
-            .and_then(|inbox| inbox.contains_remote_message(&message.id).ok())
-            .unwrap_or(false);
+        let already_durable = core.desktop_inbox.as_ref().is_some_and(|inbox| {
+            inbox
+                .contains_remote_message(&message.id)
+                .unwrap_or(false)
+                || inbox
+                    .contains_client_delivery(
+                        &message.sender_device_id,
+                        &message.client_message_id,
+                    )
+                    .unwrap_or(false)
+        });
 
         if !already_durable {
             let (sender_device_id, mut plaintext_bytes) = {
