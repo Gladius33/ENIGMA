@@ -8,10 +8,10 @@ use std::{
 
 use enigma_p2p::{
     coordinator::P2pSessionCoordinator,
-    decode, encode_auth, encode_message, encode_receipt_ack, encode_route,
+    decode, encode_auth, encode_message, encode_receipt, encode_receipt_ack, encode_route,
     engine::{P2pIceCandidate, P2pIceServer, WebRtcP2pEngine, WebRtcP2pEvent},
     signaling::{P2pSignalCommand, P2pSignalingEvent, SignalingClient},
-    DecodedP2pFrame, P2pMessageEnvelope, P2pReceiptAck, P2pReceiptStatus,
+    DecodedP2pFrame, P2pMessageEnvelope, P2pReceiptAck, P2pReceiptEnvelope, P2pReceiptStatus,
 };
 use enigma_signal::{
     session::LibsignalSessionBackend, LibsignalIdentityProofVerifier, SignalAdapter,
@@ -29,6 +29,28 @@ pub(crate) struct P2pDelivery {
     pub route: &'static str,
     pub local_candidate_type: String,
     pub remote_candidate_type: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct P2pIncomingOffer {
+    pub sender_user_id: String,
+    pub bubble_id: String,
+    pub sender_device_id: String,
+    pub session_id: String,
+    pub offer_sdp: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct P2pInboundMessage {
+    pub sender_user_id: String,
+    pub session_id: String,
+    pub bubble_id: String,
+    pub sender_device_id: String,
+    pub recipient_device_id: String,
+    pub client_message_id: String,
+    pub message_type: String,
+    pub ciphertext: String,
+    pub route: &'static str,
 }
 
 pub(crate) struct DesktopP2pManager {
@@ -63,6 +85,341 @@ impl DesktopP2pManager {
             coordinator: P2pSessionCoordinator::default(),
             deferred_signaling: VecDeque::new(),
         })
+    }
+
+    pub(crate) fn take_incoming_offer(&mut self) -> Option<P2pIncomingOffer> {
+        if let Some(index) = self.deferred_signaling.iter().position(|event| {
+            matches!(
+                event,
+                P2pSignalingEvent::Signal {
+                    signal_kind,
+                    ..
+                } if signal_kind == "offer"
+            )
+        }) {
+            let event = self.deferred_signaling.remove(index)?;
+            return incoming_offer_from_event(event);
+        }
+
+        loop {
+            let event = self.signaling.try_next_event()?;
+            if matches!(
+                &event,
+                P2pSignalingEvent::Signal {
+                    signal_kind,
+                    ..
+                } if signal_kind == "offer"
+            ) {
+                return incoming_offer_from_event(event);
+            }
+            if matches!(&event, P2pSignalingEvent::Disconnected) {
+                return None;
+            }
+            if self.deferred_signaling.len() >= MAX_DEFERRED_SIGNAL_EVENTS {
+                self.deferred_signaling.pop_front();
+            }
+            self.deferred_signaling.push_back(event);
+        }
+    }
+
+    pub(crate) fn accept_incoming_until_message(
+        &mut self,
+        backend: &LibsignalSessionBackend,
+        local_device_id: &str,
+        offer: &P2pIncomingOffer,
+        remote_identity_key: &[u8],
+        ice_servers: &[P2pIceServer],
+    ) -> Result<Option<P2pInboundMessage>, ()> {
+        self.coordinator
+            .register_incoming(
+                &offer.session_id,
+                &offer.bubble_id,
+                local_device_id,
+                &offer.sender_device_id,
+            )
+            .map_err(|_| ())?;
+
+        let answer = self
+            .engine
+            .accept_incoming_blocking(
+                &offer.session_id,
+                ice_servers,
+                &offer.offer_sdp,
+            )
+            .map_err(|_| ())?;
+        self.bind_fingerprints(&offer.session_id)?;
+        self.signal_to(
+            &offer.bubble_id,
+            &offer.sender_device_id,
+            &offer.session_id,
+            "answer",
+            answer,
+        )?;
+
+        let deadline = Instant::now() + CONNECT_TIMEOUT;
+        let mut channel_open = false;
+        let mut auth_sent = false;
+        let mut remote_auth_verified = false;
+        let mut local_route_sent = false;
+
+        loop {
+            if Instant::now() >= deadline {
+                self.invalidate(
+                    &offer.session_id,
+                    &offer.bubble_id,
+                    &offer.sender_device_id,
+                );
+                return Ok(None);
+            }
+
+            while let Some(event) = self.engine.try_next_event() {
+                match event {
+                    WebRtcP2pEvent::LocalIceCandidate {
+                        session_id,
+                        candidate,
+                    } if session_id == offer.session_id => {
+                        let payload = serde_json::to_string(&candidate).map_err(|_| ())?;
+                        self.signal_to(
+                            &offer.bubble_id,
+                            &offer.sender_device_id,
+                            &offer.session_id,
+                            "ice",
+                            payload,
+                        )?;
+                    }
+                    WebRtcP2pEvent::IceGatheringComplete { session_id }
+                        if session_id == offer.session_id =>
+                    {
+                        self.signal_to(
+                            &offer.bubble_id,
+                            &offer.sender_device_id,
+                            &offer.session_id,
+                            "ice_complete",
+                            String::new(),
+                        )?;
+                    }
+                    WebRtcP2pEvent::ChannelOpen { session_id }
+                        if session_id == offer.session_id =>
+                    {
+                        channel_open = true;
+                    }
+                    WebRtcP2pEvent::Payload {
+                        session_id,
+                        payload,
+                    } if session_id == offer.session_id => {
+                        match decode(&payload).map_err(|_| ())? {
+                            DecodedP2pFrame::Auth(proof) => {
+                                let challenge = self
+                                    .coordinator
+                                    .remote_auth_challenge(&offer.session_id, &proof)
+                                    .map_err(|_| ())?;
+                                let verifier = LibsignalIdentityProofVerifier;
+                                let verified = verifier
+                                    .verify_identity_proof(
+                                        remote_identity_key,
+                                        &challenge.transcript,
+                                        &challenge.signature,
+                                    )
+                                    .map_err(|_| ())?;
+                                self.coordinator
+                                    .confirm_remote_auth(&offer.session_id, verified)
+                                    .map_err(|_| ())?;
+                                remote_auth_verified = true;
+                            }
+                            DecodedP2pFrame::Route(observation) => {
+                                self.coordinator
+                                    .accept_remote_route(&offer.session_id, observation)
+                                    .map_err(|_| ())?;
+                            }
+                            DecodedP2pFrame::Message(message) => {
+                                let authenticated = self
+                                    .coordinator
+                                    .validate_incoming_message(&offer.session_id, &message)
+                                    .map_err(|_| ())?;
+                                let route = match authenticated.route {
+                                    enigma_p2p::P2pRoute::Direct => "DIRECT",
+                                    enigma_p2p::P2pRoute::Turn => "TURN",
+                                };
+                                return Ok(Some(P2pInboundMessage {
+                                    sender_user_id: offer.sender_user_id.clone(),
+                                    session_id: offer.session_id.clone(),
+                                    bubble_id: message.bubble_id,
+                                    sender_device_id: message.sender_device_id,
+                                    recipient_device_id: message.recipient_device_id,
+                                    client_message_id: message.client_message_id,
+                                    message_type: message.message_type,
+                                    ciphertext: message.ciphertext,
+                                    route,
+                                }));
+                            }
+                            DecodedP2pFrame::Receipt(_)
+                            | DecodedP2pFrame::ReceiptAck(_) => {}
+                        }
+                    }
+                    WebRtcP2pEvent::StateChanged { session_id, state }
+                        if session_id == offer.session_id
+                            && matches!(
+                                state.as_str(),
+                                "failed" | "disconnected" | "closed" | "ended"
+                            ) =>
+                    {
+                        self.invalidate(
+                            &offer.session_id,
+                            &offer.bubble_id,
+                            &offer.sender_device_id,
+                        );
+                        return Ok(None);
+                    }
+                    _ => {}
+                }
+            }
+
+            while let Some(event) = self.next_signaling_event(&offer.session_id) {
+                match event {
+                    P2pSignalingEvent::Signal {
+                        bubble_id,
+                        sender_user_id,
+                        sender_device_id,
+                        session_id,
+                        signal_kind,
+                        payload,
+                    } => {
+                        if bubble_id != offer.bubble_id
+                            || sender_user_id != offer.sender_user_id
+                            || sender_device_id != offer.sender_device_id
+                            || session_id != offer.session_id
+                        {
+                            return Err(());
+                        }
+                        match signal_kind.as_str() {
+                            "ice" => {
+                                let candidate =
+                                    serde_json::from_str::<P2pIceCandidate>(&payload)
+                                        .map_err(|_| ())?;
+                                self.engine
+                                    .add_remote_ice_candidate_blocking(
+                                        &offer.session_id,
+                                        &candidate,
+                                    )
+                                    .map_err(|_| ())?;
+                            }
+                            "ice_complete" => {}
+                            "cancel" => {
+                                self.invalidate(
+                                    &offer.session_id,
+                                    &offer.bubble_id,
+                                    &offer.sender_device_id,
+                                );
+                                return Ok(None);
+                            }
+                            "offer" | "answer" => return Err(()),
+                            _ => return Err(()),
+                        }
+                    }
+                    P2pSignalingEvent::Unavailable { .. } => {}
+                    P2pSignalingEvent::Disconnected => return Ok(None),
+                }
+            }
+
+            if channel_open && !auth_sent {
+                self.send_local_auth(backend, &offer.session_id)?;
+                auth_sent = true;
+            }
+
+            if remote_auth_verified && auth_sent && !local_route_sent {
+                if let Some(route) = self
+                    .engine
+                    .selected_route_blocking(&offer.session_id)
+                    .map_err(|_| ())?
+                {
+                    let observation = self
+                        .coordinator
+                        .set_local_route(&offer.session_id, route)
+                        .map_err(|_| ())?;
+                    let frame = encode_route(&observation).map_err(|_| ())?;
+                    self.engine
+                        .send_text_blocking(&offer.session_id, &frame)
+                        .map_err(|_| ())?;
+                    local_route_sent = true;
+                }
+            }
+
+            thread::sleep(POLL_INTERVAL);
+        }
+    }
+
+    pub(crate) fn acknowledge_incoming_delivery(
+        &mut self,
+        session_id: &str,
+        client_message_id: &str,
+    ) -> Result<(), ()> {
+        let metadata = self
+            .coordinator
+            .metadata(session_id)
+            .map_err(|_| ())?
+            .clone();
+        self.coordinator
+            .authenticated_session(session_id)
+            .map_err(|_| ())?
+            .ok_or(())?;
+
+        let receipt_id = crate::random_uuid_v4()?;
+        let receipt = P2pReceiptEnvelope {
+            receipt_id: receipt_id.clone(),
+            bubble_id: metadata.bubble_id.clone(),
+            sender_device_id: metadata.local_device_id.clone(),
+            recipient_device_id: metadata.remote_device_id.clone(),
+            client_message_id: client_message_id.to_owned(),
+            status: P2pReceiptStatus::Delivered,
+        };
+        let frame = encode_receipt(&receipt).map_err(|_| ())?;
+        self.engine
+            .send_text_blocking(session_id, &frame)
+            .map_err(|_| ())?;
+
+        let deadline = Instant::now() + ACK_TIMEOUT;
+        while Instant::now() < deadline {
+            while let Some(event) = self.engine.try_next_event() {
+                match event {
+                    WebRtcP2pEvent::Payload {
+                        session_id: event_session_id,
+                        payload,
+                    } if event_session_id == session_id => {
+                        if let DecodedP2pFrame::ReceiptAck(ack) =
+                            decode(&payload).map_err(|_| ())?
+                        {
+                            if ack.receipt_id == receipt_id {
+                                self.coordinator
+                                    .validate_receipt_ack(session_id, &ack)
+                                    .map_err(|_| ())?;
+                                self.engine.release_blocking(session_id);
+                                self.coordinator.invalidate(session_id);
+                                return Ok(());
+                            }
+                        }
+                    }
+                    WebRtcP2pEvent::StateChanged {
+                        session_id: event_session_id,
+                        state,
+                    } if event_session_id == session_id
+                        && matches!(
+                            state.as_str(),
+                            "failed" | "disconnected" | "closed" | "ended"
+                        ) =>
+                    {
+                        self.engine.release_blocking(session_id);
+                        self.coordinator.invalidate(session_id);
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+            thread::sleep(POLL_INTERVAL);
+        }
+
+        self.engine.release_blocking(session_id);
+        self.coordinator.invalidate(session_id);
+        Ok(())
     }
 
     pub(crate) fn try_send(
@@ -409,11 +766,28 @@ impl DesktopP2pManager {
         signal_kind: &str,
         payload: String,
     ) -> Result<(), ()> {
+        self.signal_to(
+            request.bubble_id,
+            request.recipient_device_id,
+            request.session_id,
+            signal_kind,
+            payload,
+        )
+    }
+
+    fn signal_to(
+        &self,
+        bubble_id: &str,
+        recipient_device_id: &str,
+        session_id: &str,
+        signal_kind: &str,
+        payload: String,
+    ) -> Result<(), ()> {
         self.signaling
             .send_now(P2pSignalCommand {
-                bubble_id: request.bubble_id.to_owned(),
-                recipient_device_id: request.recipient_device_id.to_owned(),
-                session_id: request.session_id.to_owned(),
+                bubble_id: bubble_id.to_owned(),
+                recipient_device_id: recipient_device_id.to_owned(),
+                session_id: session_id.to_owned(),
                 signal_kind: signal_kind.to_owned(),
                 payload,
             })
@@ -468,6 +842,26 @@ impl DesktopP2pManager {
         });
         self.engine.release_blocking(session_id);
         self.coordinator.invalidate(session_id);
+    }
+}
+
+fn incoming_offer_from_event(event: P2pSignalingEvent) -> Option<P2pIncomingOffer> {
+    match event {
+        P2pSignalingEvent::Signal {
+            bubble_id,
+            sender_user_id,
+            sender_device_id,
+            session_id,
+            signal_kind,
+            payload,
+        } if signal_kind == "offer" => Some(P2pIncomingOffer {
+            sender_user_id,
+            bubble_id,
+            sender_device_id,
+            session_id,
+            offer_sdp: payload,
+        }),
+        _ => None,
     }
 }
 
