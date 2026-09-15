@@ -164,7 +164,9 @@ impl PersistentSignalProtocolStore {
                     value: encode(&identity.serialize()),
                 })
                 .collect(),
-            pre_keys: serialize_id_records(&self.pre_key_store.records, |record| record.serialize())?,
+            pre_keys: serialize_id_records(&self.pre_key_store.records, |record| {
+                record.serialize()
+            })?,
             signed_pre_keys: serialize_id_records(&self.signed_pre_key_store.records, |record| {
                 record.serialize()
             })?,
@@ -245,11 +247,10 @@ impl PersistentSignalProtocolStore {
             }
         }
 
-        store.pre_key_store.records = deserialize_id_records(
-            decoded.pre_keys,
-            PreKeyRecord::deserialize,
-            |record| record.id().map(Into::into),
-        )?;
+        store.pre_key_store.records =
+            deserialize_id_records(decoded.pre_keys, PreKeyRecord::deserialize, |record| {
+                record.id().map(Into::into)
+            })?;
         store.signed_pre_key_store.records = deserialize_id_records(
             decoded.signed_pre_keys,
             SignedPreKeyRecord::deserialize,
@@ -272,8 +273,8 @@ impl PersistentSignalProtocolStore {
             let mut values = Vec::with_capacity(entry.base_keys.len());
             for encoded in entry.base_keys {
                 let bytes = decode(&encoded)?;
-                let public =
-                    PublicKey::deserialize(&bytes).map_err(|_| SignalAdapterError::InvalidBundle)?;
+                let public = PublicKey::deserialize(&bytes)
+                    .map_err(|_| SignalAdapterError::InvalidBundle)?;
                 if values.contains(&public) {
                     return Err(SignalAdapterError::InvalidBundle);
                 }
@@ -292,8 +293,8 @@ impl PersistentSignalProtocolStore {
         for entry in decoded.sessions {
             entry.address.validate()?;
             let bytes = decode(&entry.value)?;
-            let record =
-                SessionRecord::deserialize(&bytes).map_err(|_| SignalAdapterError::InvalidBundle)?;
+            let record = SessionRecord::deserialize(&bytes)
+                .map_err(|_| SignalAdapterError::InvalidBundle)?;
             if store
                 .session_store
                 .records
@@ -482,7 +483,10 @@ impl KyberPreKeyStore for PersistentKyberPreKeyStore {
         signed_id: SignedPreKeyId,
         base_key: &PublicKey,
     ) -> libsignal_protocol::Result<()> {
-        let seen = self.base_keys_seen.entry((kyber_id, signed_id)).or_default();
+        let seen = self
+            .base_keys_seen
+            .entry((kyber_id, signed_id))
+            .or_default();
         if seen.contains(base_key) {
             return Err(SignalProtocolError::InvalidMessage(
                 CiphertextMessageType::PreKey,
@@ -500,7 +504,10 @@ impl SessionStore for PersistentSessionStore {
         &self,
         address: &ProtocolAddress,
     ) -> libsignal_protocol::Result<Option<SessionRecord>> {
-        Ok(self.records.get(&AddressKey::from_address(address)).cloned())
+        Ok(self
+            .records
+            .get(&AddressKey::from_address(address))
+            .cloned())
     }
 
     async fn store_session(
@@ -525,8 +532,7 @@ mod tests {
     fn snapshot_round_trip_preserves_direct_message_state() {
         let mut rng = StdRng::from_seed([0x71; 32]);
         let identity = IdentityKeyPair::generate(&mut rng);
-        let mut store =
-            PersistentSignalProtocolStore::new(identity, 7).expect("persistent store");
+        let mut store = PersistentSignalProtocolStore::new(identity, 7).expect("persistent store");
 
         let pre_pair = KeyPair::generate(&mut rng);
         let pre = PreKeyRecord::new(11_u32.into(), &pre_pair);
@@ -556,8 +562,7 @@ mod tests {
             .expect("signed prekey");
 
         let snapshot = store.export_snapshot().expect("export");
-        let restored =
-            PersistentSignalProtocolStore::import_snapshot(&snapshot).expect("import");
+        let restored = PersistentSignalProtocolStore::import_snapshot(&snapshot).expect("import");
         assert_eq!(restored.registration_id(), 7);
         assert_eq!(restored.identity_public_key(), store.identity_public_key());
         assert_eq!(restored.pre_key_store.records.len(), 1);
