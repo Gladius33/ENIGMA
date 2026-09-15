@@ -3,13 +3,16 @@ use std::time::SystemTime;
 use libsignal_protocol::{
     kem, message_decrypt_prekey, message_decrypt_signal, message_encrypt, process_prekey_bundle,
     CiphertextMessage, CiphertextMessageType, DeviceId, GenericSignedPreKey, IdentityKeyPair,
-    IdentityKeyStore, InMemSignalProtocolStore, KeyPair, KyberPreKeyRecord, KyberPreKeyStore,
+    IdentityKeyStore, KeyPair, KyberPreKeyRecord, KyberPreKeyStore,
     PreKeyBundle, PreKeyRecord, PreKeySignalMessage, PreKeyStore, ProtocolAddress, SignalMessage,
     SignedPreKeyRecord, SignedPreKeyStore, Timestamp,
 };
 use rand::{CryptoRng, Rng};
 
-use crate::SignalAdapterError;
+use crate::{
+    persistent_store::PersistentSignalProtocolStore,
+    SignalAdapterError,
+};
 
 /// Real desktop session backend backed exclusively by the pinned libsignal implementation.
 ///
@@ -17,7 +20,7 @@ use crate::SignalAdapterError;
 /// here. This type owns libsignal's stores and delegates session establishment, encryption and
 /// decryption to libsignal-protocol.
 pub struct LibsignalSessionBackend {
-    store: InMemSignalProtocolStore,
+    store: PersistentSignalProtocolStore,
     identity_public_key: Vec<u8>,
     registration_id: u32,
 }
@@ -50,8 +53,7 @@ impl LibsignalSessionBackend {
         registration_id: u32,
     ) -> Result<Self, SignalAdapterError> {
         let identity_public_key = identity.identity_key().serialize().to_vec();
-        let store = InMemSignalProtocolStore::new(identity, registration_id)
-            .map_err(|_| SignalAdapterError::CryptoFailure)?;
+        let store = PersistentSignalProtocolStore::new(identity, registration_id)?;
         Ok(Self {
             store,
             identity_public_key,
@@ -85,6 +87,21 @@ impl LibsignalSessionBackend {
         let identity = IdentityKeyPair::try_from(serialized_identity)
             .map_err(|_| SignalAdapterError::InvalidBundle)?;
         Self::new(identity, registration_id)
+    }
+
+    pub fn from_serialized_store(snapshot: &[u8]) -> Result<Self, SignalAdapterError> {
+        let store = PersistentSignalProtocolStore::import_snapshot(snapshot)?;
+        let identity_public_key = store.identity_public_key();
+        let registration_id = store.registration_id();
+        Ok(Self {
+            store,
+            identity_public_key,
+            registration_id,
+        })
+    }
+
+    pub fn export_serialized_store(&self) -> Result<Vec<u8>, SignalAdapterError> {
+        self.store.export_snapshot()
     }
 
     /// Generates, signs and stores the public pre-key material a desktop device publishes.
@@ -374,6 +391,51 @@ impl LibsignalSessionBackend {
         .map_err(|_| SignalAdapterError::CryptoFailure)
     }
 
+    pub async fn serialized_session(
+        &self,
+        remote: &ProtocolAddress,
+    ) -> Result<Option<Vec<u8>>, SignalAdapterError> {
+        self.store
+            .session_store
+            .load_session(remote)
+            .await
+            .map_err(|_| SignalAdapterError::CryptoFailure)?
+            .map(|record| {
+                record
+                    .serialize()
+                    .map_err(|_| SignalAdapterError::CryptoFailure)
+            })
+            .transpose()
+    }
+
+    pub async fn restore_serialized_session(
+        &mut self,
+        remote: &ProtocolAddress,
+        serialized: &[u8],
+    ) -> Result<(), SignalAdapterError> {
+        let record =
+            libsignal_protocol::SessionRecord::deserialize(serialized)
+                .map_err(|_| SignalAdapterError::InvalidBundle)?;
+        self.store
+            .session_store
+            .store_session(remote, &record)
+            .await
+            .map_err(|_| SignalAdapterError::CryptoFailure)
+    }
+
+    pub async fn save_remote_identity(
+        &mut self,
+        remote: &ProtocolAddress,
+        identity: &libsignal_protocol::IdentityKey,
+    ) -> Result<(), SignalAdapterError> {
+        self.store
+            .identity_store
+            .save_identity(remote, identity)
+            .await
+            .map(|_| ())
+            .map_err(|_| SignalAdapterError::CryptoFailure)
+    }
+
     #[must_use]
     pub fn identity_public_key(&self) -> &[u8] {
         &self.identity_public_key
@@ -384,14 +446,6 @@ impl LibsignalSessionBackend {
         self.registration_id
     }
 
-    #[must_use]
-    pub fn store(&self) -> &InMemSignalProtocolStore {
-        &self.store
-    }
-
-    pub fn store_mut(&mut self) -> &mut InMemSignalProtocolStore {
-        &mut self.store
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
