@@ -63,6 +63,7 @@ public sealed partial class MainWindow : Window
             MessageComposer.IsEnabled = operationalReady;
             ContactSelector.IsEnabled = operationalReady;
             SendButton.IsEnabled = operationalReady;
+            RefreshButton.IsEnabled = operationalReady;
             DevicesButton.IsEnabled = signalReady;
             if (operationalReady)
             {
@@ -95,6 +96,7 @@ public sealed partial class MainWindow : Window
         MessageComposer.IsEnabled = false;
         ContactSelector.IsEnabled = false;
         SendButton.IsEnabled = false;
+        RefreshButton.IsEnabled = false;
     }
 
     private async void OnManageDevicesClick(object sender, RoutedEventArgs args)
@@ -214,6 +216,7 @@ public sealed partial class MainWindow : Window
                             MessageComposer.IsEnabled = true;
                             ContactSelector.IsEnabled = true;
                             SendButton.IsEnabled = true;
+                            RefreshButton.IsEnabled = true;
                             RefreshContacts();
                             RefreshMessages();
                             dialog.Hide();
@@ -386,6 +389,45 @@ public sealed partial class MainWindow : Window
                 }
 
                 bool outbound = direction == "outbound";
+                string? deliveryStatus =
+                    root.TryGetProperty("delivery_status", out JsonElement statusElement) &&
+                    statusElement.ValueKind == JsonValueKind.String
+                        ? statusElement.GetString()
+                        : null;
+                string statusLabel = deliveryStatus switch
+                {
+                    "read" => "Lu",
+                    "delivered" => "Livré",
+                    "sent" => "Envoyé",
+                    _ => "Synchronisé",
+                };
+
+                var messageContent = new StackPanel
+                {
+                    Spacing = 4,
+                };
+                messageContent.Children.Add(new TextBlock
+                {
+                    Text = body,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = outbound
+                        ? new SolidColorBrush(Microsoft.UI.Colors.White)
+                        : (Brush)Application.Current.Resources["EnigmaTextBrush"],
+                });
+                if (outbound)
+                {
+                    messageContent.Children.Add(new TextBlock
+                    {
+                        Text = statusLabel,
+                        FontSize = 10,
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        Foreground = new SolidColorBrush(Microsoft.UI.Colors.White)
+                        {
+                            Opacity = 0.75,
+                        },
+                    });
+                }
+
                 var bubble = new Border
                 {
                     MaxWidth = 520,
@@ -397,14 +439,7 @@ public sealed partial class MainWindow : Window
                     Background = outbound
                         ? (Brush)Application.Current.Resources["EnigmaPrimaryBrush"]
                         : (Brush)Application.Current.Resources["EnigmaSurfaceBrush"],
-                    Child = new TextBlock
-                    {
-                        Text = body,
-                        TextWrapping = TextWrapping.Wrap,
-                        Foreground = outbound
-                            ? new SolidColorBrush(Microsoft.UI.Colors.White)
-                            : (Brush)Application.Current.Resources["EnigmaTextBrush"],
-                    },
+                    Child = messageContent,
                 };
                 MessagesPanel.Children.Add(bubble);
             }
@@ -426,6 +461,43 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void OnRefreshClick(object sender, RoutedEventArgs args)
+    {
+        if (_core is null || !_core.DeviceSessionReady)
+        {
+            return;
+        }
+
+        RefreshButton.IsEnabled = false;
+        SendButton.IsEnabled = false;
+        MessageComposer.IsEnabled = false;
+        ContactSelector.IsEnabled = false;
+        DevicesButton.IsEnabled = false;
+
+        try
+        {
+            bool outboxFlushed = await Task.Run(() => _core.RetryOutbox());
+            bool synchronized = await Task.Run(() => _core.SyncPending());
+            RefreshContacts();
+            RefreshMessages();
+
+            nuint inboxCount = _core.InboxCount;
+            nuint outboxCount = _core.OutboxCount;
+            CoreDetailText.Text = synchronized && outboxFlushed
+                ? $"Synchronisation à jour • {inboxCount} message(s) local(aux)"
+                : $"Synchronisation partielle • {outboxCount} livraison(s) en attente";
+        }
+        finally
+        {
+            bool ready = _core is not null && _core.DeviceSessionReady;
+            RefreshButton.IsEnabled = ready;
+            SendButton.IsEnabled = ready;
+            MessageComposer.IsEnabled = ready;
+            ContactSelector.IsEnabled = ready;
+            DevicesButton.IsEnabled = _core is not null && _core.SignalReady;
+        }
+    }
+
     private async void OnSendClick(object sender, RoutedEventArgs args)
     {
         if (_core is null ||
@@ -443,6 +515,9 @@ public sealed partial class MainWindow : Window
         }
 
         SendButton.IsEnabled = false;
+        RefreshButton.IsEnabled = false;
+        DevicesButton.IsEnabled = false;
+        ContactSelector.IsEnabled = false;
         MessageComposer.IsEnabled = false;
         bool queued = await Task.Run(() => _core.SendTextToContact(recipientUserId, plaintext));
         nuint pending = _core.OutboxCount;
@@ -461,7 +536,10 @@ public sealed partial class MainWindow : Window
         }
 
         MessageComposer.IsEnabled = true;
+        ContactSelector.IsEnabled = true;
         SendButton.IsEnabled = true;
+        RefreshButton.IsEnabled = true;
+        DevicesButton.IsEnabled = _core.SignalReady;
     }
 
     private void OnClosed(object sender, WindowEventArgs args)
