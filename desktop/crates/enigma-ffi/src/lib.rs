@@ -73,6 +73,7 @@ pub struct EnigmaCoreHandle {
     device_access_token: Option<SecureBytes>,
     desktop_inbox: Option<EncryptedDesktopInbox>,
     desktop_outbox: Option<EncryptedDesktopOutbox>,
+    contacts_json_cache: Option<Vec<u8>>,
 }
 
 #[repr(C)]
@@ -129,6 +130,7 @@ pub extern "C" fn enigma_core_create() -> *mut EnigmaCoreHandle {
         device_access_token,
         desktop_inbox: None,
         desktop_outbox: None,
+        contacts_json_cache: None,
     }))
 }
 
@@ -914,7 +916,13 @@ pub unsafe extern "C" fn enigma_core_contacts_json_len(handle: *mut EnigmaCoreHa
     };
     // SAFETY: caller guarantees exclusive live access for this call.
     let core = unsafe { &mut *handle };
-    contacts_json(core, &client).map_or(0, |value| value.len())
+    let Ok(encoded) = contacts_json(core, &client) else {
+        core.contacts_json_cache = None;
+        return 0;
+    };
+    let length = encoded.len();
+    core.contacts_json_cache = Some(encoded);
+    length
 }
 
 /// Copies the authenticated account contact list as UTF-8 JSON.
@@ -932,15 +940,19 @@ pub unsafe extern "C" fn enigma_core_contacts_json_copy(
     if handle.is_null() || output.is_null() {
         return false;
     }
-    let Some(client) = pairing_client() else {
-        return false;
-    };
     // SAFETY: caller guarantees exclusive live access for this call.
     let core = unsafe { &mut *handle };
-    let Ok(encoded) = contacts_json(core, &client) else {
+    let Some(encoded) = core.contacts_json_cache.as_ref() else {
         return false;
     };
-    copy_pairing_bytes(&encoded, output, output_len)
+    if encoded.len() != output_len {
+        return false;
+    }
+    let copied = copy_pairing_bytes(encoded, output, output_len);
+    if copied {
+        core.contacts_json_cache = None;
+    }
+    copied
 }
 
 /// Sends text to one saved contact using the account MAIN_GLOBAL bubble.
