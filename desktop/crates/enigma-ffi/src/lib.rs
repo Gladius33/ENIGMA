@@ -1106,7 +1106,10 @@ fn load_or_create_desktop_inbox() -> Result<EncryptedDesktopInbox, ()> {
                     return Err(());
                 }
             };
-            let record = encode_inbox_master_key_record(&protected).ok_or(())?;
+            let Some(record) = encode_inbox_master_key_record(&protected) else {
+                key.fill(0);
+                return Err(());
+            };
             if persist_protected_record(&key_path, &record).is_err() {
                 key.fill(0);
                 return Err(());
