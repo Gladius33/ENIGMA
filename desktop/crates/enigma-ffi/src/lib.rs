@@ -10,15 +10,22 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, STANDARD_NO_PAD},
+    Engine as _,
+};
 use enigma_platform::{PlatformKeyError, PlatformKeyProtector};
 use enigma_runtime_core::{CoreRuntime, PairingBootstrap, DEFAULT_PAIRING_TTL_MS};
-use enigma_signal::session::LibsignalSessionBackend;
+use enigma_signal::session::{
+    LibsignalSessionBackend, RemotePreKeyBundleMaterial, RemotePublicPreKey,
+    RemoteSignedPreKey as SignalRemoteSignedPreKey,
+};
 use enigma_sodium::{random_public_bytes, SecureBytes};
 use enigma_storage::SodiumRecordVault;
 use enigma_transport::{
-    PairingCandidatePublish, PairingClaimState, PairingRendezvousClient, PublicKeyUpload,
-    PublicOneTimePreKey, PublicSignedPreKey,
+    ClaimedRemoteDeviceKeyBundle, PairingCandidatePublish, PairingClaimState,
+    PairingRendezvousClient, PublicKeyUpload, PublicOneTimePreKey, PublicSignedPreKey,
+    RelayMessageSend, RemoteDeviceKeyBundle,
 };
 use futures_executor::block_on;
 use inbox::{DurableInboxEntry, EncryptedDesktopInbox};
@@ -37,6 +44,9 @@ const DEVICE_SESSION_RECORD_MAGIC: &[u8] = b"ENIGMA-DEVICE-SESSION\0v1\0";
 const V1_PROTOCOL_DEVICE_ID: u32 = 1;
 const DESKTOP_PREKEY_UPLOAD_COUNT: u32 = 50;
 const INBOX_MASTER_KEY_BYTES: usize = 32;
+const MAX_OUTBOUND_TEXT_BYTES: usize = 2 * 1024 * 1024;
+const MAX_CONTACT_PUBLIC_ID_BYTES: usize = 128;
+const MAX_CONTACT_DISPLAY_NAME_BYTES: usize = 160;
 const PAIRING_CLAIM_ERROR: u32 = 0;
 const PAIRING_CLAIM_PENDING: u32 = 1;
 const PAIRING_CLAIMED: u32 = 2;
@@ -60,6 +70,40 @@ pub struct EnigmaCoreHandle {
     device_access_token: Option<SecureBytes>,
     desktop_inbox: Option<EncryptedDesktopInbox>,
     desktop_outbox: Option<EncryptedDesktopOutbox>,
+}
+
+#[repr(C)]
+pub struct EnigmaSendTextRequest {
+    pub recipient_user_id: *const u8,
+    pub recipient_user_id_len: usize,
+    pub recipient_public_id: *const u8,
+    pub recipient_public_id_len: usize,
+    pub recipient_display_name: *const u8,
+    pub recipient_display_name_len: usize,
+    pub bubble_id: *const u8,
+    pub bubble_id_len: usize,
+    pub plaintext: *const u8,
+    pub plaintext_len: usize,
+}
+
+#[derive(serde::Serialize)]
+struct TextPayloadDto<'a> {
+    version: u16,
+    body: &'a str,
+    attachments: Vec<()>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SenderSyncDto<'a> {
+    version: u16,
+    contact_user_id: &'a str,
+    contact_public_id: &'a str,
+    contact_display_name: &'a str,
+    bubble_id: &'a str,
+    client_message_id: &'a str,
+    original_created_at: i64,
+    encoded_message_payload: &'a str,
 }
 
 #[no_mangle]
