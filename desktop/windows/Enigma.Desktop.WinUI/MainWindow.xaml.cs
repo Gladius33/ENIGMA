@@ -1,6 +1,10 @@
 using System;
+using System.Text;
 using Enigma.Desktop.Interop;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.Storage.Streams;
 
 namespace Enigma.Desktop.WinUI;
 
@@ -62,6 +66,99 @@ public sealed partial class MainWindow : Window
         CoreDetailText.Text = detail;
         MessageComposer.IsEnabled = false;
         SendButton.IsEnabled = false;
+    }
+
+    private async void OnManageDevicesClick(object sender, RoutedEventArgs args)
+    {
+        if (_core is null || !_core.SignalReady)
+        {
+            return;
+        }
+
+        EnigmaPairingBootstrap? pairing = _core.StartPairing();
+        if (pairing is null)
+        {
+            SetCoreUnavailable("Création de la session d’appairage impossible");
+            return;
+        }
+
+        try
+        {
+            byte[] svgBytes = Encoding.UTF8.GetBytes(pairing.Svg);
+            using var stream = new InMemoryRandomAccessStream();
+            using (var writer = new DataWriter(stream))
+            {
+                writer.WriteBytes(svgBytes);
+                await writer.StoreAsync();
+                writer.DetachStream();
+            }
+            stream.Seek(0);
+
+            var svgSource = new SvgImageSource();
+            SvgImageSourceLoadStatus loadStatus = await svgSource.SetSourceAsync(stream);
+            if (loadStatus != SvgImageSourceLoadStatus.Success)
+            {
+                throw new InvalidOperationException("Le QR d’appairage n’a pas pu être rendu");
+            }
+
+            DateTimeOffset expiresAt = DateTimeOffset
+                .FromUnixTimeMilliseconds(checked((long)pairing.ExpiresAtUnixMs))
+                .ToLocalTime();
+
+            var panel = new StackPanel
+            {
+                Spacing = 12,
+                MaxWidth = 420,
+            };
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Scannez ce code depuis ENIGMA sur votre appareil Android autorisé.",
+                TextWrapping = TextWrapping.Wrap,
+            });
+            panel.Children.Add(new Image
+            {
+                Width = 320,
+                Height = 320,
+                Source = svgSource,
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"Expire à {expiresAt:HH:mm:ss}",
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["EnigmaMutedTextBrush"],
+            });
+            panel.Children.Add(new TextBox
+            {
+                Header = "URI d’appairage",
+                Text = pairing.Uri,
+                IsReadOnly = true,
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = DevicesButton.XamlRoot,
+                Title = "Lier cet ordinateur",
+                Content = panel,
+                CloseButtonText = "Fermer",
+                DefaultButton = ContentDialogButton.Close,
+            };
+            await dialog.ShowAsync();
+        }
+        catch (InvalidOperationException)
+        {
+            var fallback = new ContentDialog
+            {
+                XamlRoot = DevicesButton.XamlRoot,
+                Title = "Appairage ENIGMA",
+                Content = pairing.Uri,
+                CloseButtonText = "Fermer",
+            };
+            await fallback.ShowAsync();
+        }
+        finally
+        {
+            _core.CancelPairing();
+        }
     }
 
     private void OnClosed(object sender, WindowEventArgs args)
