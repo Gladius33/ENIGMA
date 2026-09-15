@@ -1,5 +1,9 @@
 #include <QApplication>
+#include <QComboBox>
 #include <QDateTime>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QDialog>
 #include <QFont>
 #include <QFrame>
@@ -181,6 +185,67 @@ int main(int argc, char* argv[]) {
             ? QStringLiteral("Le cœur Rust/libsignal est prêt.")
             : coreDetail);
 
+    auto* contactSelector = new QComboBox(surface);
+    contactSelector->setAccessibleName(QStringLiteral("Choisir un contact"));
+    contactSelector->setEnabled(coreReady);
+
+    auto* messageComposer = new QLineEdit(surface);
+    messageComposer->setPlaceholderText(QStringLiteral("Message"));
+    messageComposer->setAccessibleName(QStringLiteral("Composer un message"));
+    messageComposer->setEnabled(coreReady);
+
+    auto* sendMessage = new QPushButton(QStringLiteral("Envoyer"), surface);
+    sendMessage->setAccessibleName(QStringLiteral("Envoyer le message"));
+    sendMessage->setEnabled(coreReady);
+
+    if (coreReady && core) {
+        const QByteArray contactsJson = QByteArray::fromStdString(core->contactsJson());
+        const QJsonDocument contactsDocument = QJsonDocument::fromJson(contactsJson);
+        if (contactsDocument.isArray()) {
+            for (const QJsonValue& value : contactsDocument.array()) {
+                const QJsonObject contact = value.toObject();
+                const QString userId = contact.value(QStringLiteral("user_id")).toString();
+                const QString publicId = contact.value(QStringLiteral("public_id")).toString();
+                if (!userId.isEmpty() && !publicId.isEmpty()) {
+                    contactSelector->addItem(publicId, userId);
+                }
+            }
+        }
+    }
+
+    QObject::connect(
+        sendMessage,
+        &QPushButton::clicked,
+        [&core, contactSelector, messageComposer, detail, sendMessage]() {
+            if (!core || contactSelector->currentIndex() < 0) return;
+            const QString plaintext = messageComposer->text().trimmed();
+            if (plaintext.isEmpty()) return;
+
+            const QString userId = contactSelector->currentData().toString();
+            sendMessage->setEnabled(false);
+            messageComposer->setEnabled(false);
+            const bool queued = core->sendTextToContact(
+                userId.toStdString(),
+                plaintext.toStdString());
+            const std::size_t pending = core->outboxCount();
+
+            if (queued) {
+                messageComposer->clear();
+                detail->setText(
+                    pending == 0
+                        ? QStringLiteral(
+                              "Message chiffré et remis à tous les appareils disponibles.")
+                        : QStringLiteral(
+                              "Message chiffré • %1 livraison(s) durablement en attente.")
+                              .arg(static_cast<qulonglong>(pending)));
+            } else {
+                detail->setText(
+                    QStringLiteral("Échec de la mise en file chiffrée du message."));
+            }
+            messageComposer->setEnabled(true);
+            sendMessage->setEnabled(true);
+        });
+
     QObject::connect(pairDevice, &QPushButton::clicked, [&window, &core, status]() {
         if (!core || !core->signalReady() || !core->startPairing()) return;
 
@@ -297,6 +362,13 @@ int main(int argc, char* argv[]) {
     content->addSpacing(enigma::design::kSpacingSm);
     content->addWidget(pairDevice, 0, Qt::AlignLeft);
     content->addWidget(openMessages, 0, Qt::AlignLeft);
+
+    auto* composerRow = new QHBoxLayout();
+    composerRow->setSpacing(enigma::design::kSpacingSm);
+    composerRow->addWidget(contactSelector, 1);
+    composerRow->addWidget(messageComposer, 3);
+    composerRow->addWidget(sendMessage, 0);
+    content->addLayout(composerRow);
     content->addStretch();
 
     root->addWidget(surface, 1);
