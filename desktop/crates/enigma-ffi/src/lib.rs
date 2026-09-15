@@ -440,6 +440,128 @@ fn normalize_inbound_payload(
     })
 }
 
+struct InboundEncryptedDelivery<'a> {
+    remote_message_id: &'a str,
+    bubble_id: &'a str,
+    sender_device_id: &'a str,
+    sender_user_id: &'a str,
+    sender_public_id: &'a str,
+    recipient_device_id: &'a str,
+    client_message_id: &'a str,
+    message_type: &'a str,
+    ciphertext: &'a str,
+    created_at: &'a str,
+    expires_at: &'a str,
+}
+
+fn commit_inbound_encrypted_delivery(
+    core: &mut EnigmaCoreHandle,
+    own_user_id: &str,
+    verified_sibling_ids: &HashSet<String>,
+    delivery: &InboundEncryptedDelivery<'_>,
+) -> Result<bool, ()> {
+    let already_durable = core.desktop_inbox.as_ref().ok_or(())?.contains_remote_message(
+        delivery.remote_message_id,
+    )? || core
+        .desktop_inbox
+        .as_ref()
+        .ok_or(())?
+        .contains_client_delivery(delivery.sender_device_id, delivery.client_message_id)?;
+    if already_durable {
+        return Ok(false);
+    }
+
+    let mut working_backend = core.signal_backend.clone().ok_or(())?;
+    let (sender_device_id, mut plaintext_bytes) = {
+        let mut rng = rand::rng();
+        block_on(working_backend.decrypt_wire(
+            delivery.ciphertext,
+            delivery.recipient_device_id,
+            V1_PROTOCOL_DEVICE_ID,
+            &mut rng,
+        ))
+        .map_err(|_| ())?
+    };
+    if sender_device_id != delivery.sender_device_id {
+        plaintext_bytes.fill(0);
+        return Err(());
+    }
+    let plaintext = match std::str::from_utf8(&plaintext_bytes) {
+        Ok(value) if !value.is_empty() => value.to_owned(),
+        Ok(_) | Err(_) => {
+            plaintext_bytes.fill(0);
+            return Err(());
+        }
+    };
+    plaintext_bytes.fill(0);
+
+    let from_verified_sibling = delivery.sender_user_id == own_user_id
+        && verified_sibling_ids.contains(delivery.sender_device_id);
+    if delivery.sender_user_id == own_user_id && !from_verified_sibling {
+        return Err(());
+    }
+    let normalized = normalize_inbound_payload(
+        plaintext,
+        delivery.message_type,
+        delivery.bubble_id,
+        delivery.client_message_id,
+        delivery.sender_user_id,
+        delivery.sender_public_id,
+        own_user_id,
+        from_verified_sibling,
+    )?;
+
+    let entry = DurableInboxEntry {
+        remote_message_id: delivery.remote_message_id.to_owned(),
+        bubble_id: delivery.bubble_id.to_owned(),
+        sender_device_id: delivery.sender_device_id.to_owned(),
+        sender_user_id: delivery.sender_user_id.to_owned(),
+        sender_public_id: delivery.sender_public_id.to_owned(),
+        recipient_device_id: delivery.recipient_device_id.to_owned(),
+        client_message_id: delivery.client_message_id.to_owned(),
+        message_type: normalized.message_type,
+        plaintext: normalized.plaintext,
+        created_at: delivery.created_at.to_owned(),
+        expires_at: delivery.expires_at.to_owned(),
+        direction: normalized.direction.to_owned(),
+        contact_user_id: Some(normalized.contact_user_id),
+        contact_public_id: Some(normalized.contact_public_id),
+        contact_display_name: Some(normalized.contact_display_name),
+        original_created_at_unix_ms: normalized.original_created_at_unix_ms,
+        delivery_status: if normalized.direction == "inbound" {
+            Some("delivered".to_owned())
+        } else {
+            None
+        },
+        delivery_updated_at: None,
+        delivery_recipient_device_ids: Vec::new(),
+    };
+
+    let mut snapshot = working_backend.export_serialized_store().map_err(|_| ())?;
+    let journal_written = core
+        .desktop_inbox
+        .as_ref()
+        .ok_or(())?
+        .write_journal(&entry, &snapshot)
+        .is_ok();
+    snapshot.fill(0);
+    if !journal_written {
+        return Err(());
+    }
+    if persist_default_signal_store(&working_backend).is_err() {
+        return Err(());
+    }
+    if core.desktop_inbox.as_ref().ok_or(())?.append(entry).is_err() {
+        return Err(());
+    }
+
+    core.signal_backend = Some(working_backend);
+    if let Some(inbox) = core.desktop_inbox.as_ref() {
+        let _ = inbox.clear_journal();
+    }
+    Ok(true)
+}
+
 fn decode_signal_key(value: &str) -> Result<Vec<u8>, ()> {
     if value.is_empty() || value.len() > 16 * 1024 {
         return Err(());
@@ -1672,112 +1794,28 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
         });
 
         if !already_durable {
-            let (sender_device_id, mut plaintext_bytes) = {
-                let Some(signal_backend) = core.signal_backend.as_mut() else {
-                    return false;
-                };
-                let mut rng = rand::rng();
-                match block_on(signal_backend.decrypt_wire(
-                    &message.ciphertext,
-                    &device_id,
-                    V1_PROTOCOL_DEVICE_ID,
-                    &mut rng,
-                )) {
-                    Ok(value) => value,
-                    Err(_) => return false,
-                }
+            let delivery = InboundEncryptedDelivery {
+                remote_message_id: &message.id,
+                bubble_id: &message.bubble_id,
+                sender_device_id: &message.sender_device_id,
+                sender_user_id: &message.sender_user_id,
+                sender_public_id: &message.sender_public_id,
+                recipient_device_id: &message.recipient_device_id,
+                client_message_id: &message.client_message_id,
+                message_type: &message.message_type,
+                ciphertext: &message.ciphertext,
+                created_at: &message.created_at,
+                expires_at: &message.expires_at,
             };
-            if sender_device_id != message.sender_device_id {
-                plaintext_bytes.fill(0);
-                return false;
-            }
-            let plaintext = match std::str::from_utf8(&plaintext_bytes) {
-                Ok(value) if !value.is_empty() => value.to_owned(),
-                Ok(_) | Err(_) => {
-                    plaintext_bytes.fill(0);
-                    return false;
-                }
-            };
-            plaintext_bytes.fill(0);
-
-            let from_verified_sibling = message.sender_user_id == own_user_id
-                && verified_sibling_ids.contains(&message.sender_device_id);
-            if message.sender_user_id == own_user_id && !from_verified_sibling {
-                return false;
-            }
-            let normalized = match normalize_inbound_payload(
-                plaintext,
-                &message.message_type,
-                &message.bubble_id,
-                &message.client_message_id,
-                &message.sender_user_id,
-                &message.sender_public_id,
+            if commit_inbound_encrypted_delivery(
+                core,
                 &own_user_id,
-                from_verified_sibling,
-            ) {
-                Ok(value) => value,
-                Err(()) => return false,
-            };
-
-            let entry = DurableInboxEntry {
-                remote_message_id: message.id.clone(),
-                bubble_id: message.bubble_id,
-                sender_device_id: message.sender_device_id,
-                sender_user_id: message.sender_user_id,
-                sender_public_id: message.sender_public_id,
-                recipient_device_id: message.recipient_device_id,
-                client_message_id: message.client_message_id,
-                message_type: normalized.message_type,
-                plaintext: normalized.plaintext,
-                created_at: message.created_at,
-                expires_at: message.expires_at,
-                direction: normalized.direction.to_owned(),
-                contact_user_id: Some(normalized.contact_user_id),
-                contact_public_id: Some(normalized.contact_public_id),
-                contact_display_name: Some(normalized.contact_display_name),
-                original_created_at_unix_ms: normalized.original_created_at_unix_ms,
-                delivery_status: if normalized.direction == "inbound" {
-                    Some("delivered".to_owned())
-                } else {
-                    None
-                },
-                delivery_updated_at: None,
-                delivery_recipient_device_ids: Vec::new(),
-            };
-
-            let mut snapshot = match core
-                .signal_backend
-                .as_ref()
-                .and_then(|backend| backend.export_serialized_store().ok())
+                &verified_sibling_ids,
+                &delivery,
+            )
+            .is_err()
             {
-                Some(snapshot) => snapshot,
-                None => return false,
-            };
-            let journal_written = core
-                .desktop_inbox
-                .as_ref()
-                .is_some_and(|inbox| inbox.write_journal(&entry, &snapshot).is_ok());
-            snapshot.fill(0);
-            if !journal_written {
                 return false;
-            }
-
-            let signal_persisted = core
-                .signal_backend
-                .as_ref()
-                .is_some_and(|backend| persist_default_signal_store(backend).is_ok());
-            if !signal_persisted {
-                return false;
-            }
-            let inbox_persisted = core
-                .desktop_inbox
-                .as_ref()
-                .is_some_and(|inbox| inbox.append(entry).is_ok());
-            if !inbox_persisted {
-                return false;
-            }
-            if let Some(inbox) = core.desktop_inbox.as_ref() {
-                let _ = inbox.clear_journal();
             }
         }
 
