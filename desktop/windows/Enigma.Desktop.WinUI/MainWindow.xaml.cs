@@ -399,6 +399,7 @@ public sealed partial class MainWindow : Window
                     "read" => "Lu",
                     "delivered" => "Livré",
                     "sent" => "Envoyé",
+                    "queued" => "En attente",
                     _ => "Synchronisé",
                 };
 
