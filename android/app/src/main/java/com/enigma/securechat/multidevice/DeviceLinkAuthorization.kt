@@ -27,6 +27,21 @@ data class AuthorizedDesktopLink(
     val authorizerSignature: String,
 )
 
+data class ParsedDeviceAuthorization(
+    val accountId: String,
+    val newDeviceId: String,
+    val authorizingDeviceId: String,
+    val pairingSessionId: String,
+    val platform: String,
+    val protocolVersion: Int,
+    val minSupportedVersion: Int,
+    val capabilities: Long,
+    val issuedAtUnixMs: Long,
+    val targetIdentityKey: String,
+    val candidateCommitment: String,
+    val authorizerIdentityKey: String,
+)
+
 object DeviceLinkAuthorization {
     const val PROTOCOL_VERSION = 1
     const val MIN_SUPPORTED_VERSION = 1
@@ -117,6 +132,58 @@ object DeviceLinkAuthorization {
             append("candidate_commitment=").append(candidateCommitment).append('\n')
             append("authorizer_identity_key=").append(authorizerIdentityKey).append('\n')
         }
+    }
+
+    fun parseCanonicalPayload(value: String): ParsedDeviceAuthorization {
+        require(value.endsWith('\n')) { "Authorization transcript must end with a newline" }
+        val lines = value.removeSuffix("\n").split('\n')
+        require(lines.size == 13 && lines.first() == "ENIGMA_DEVICE_LINK_V1") {
+            "Invalid authorization transcript shape"
+        }
+        val expectedKeys = listOf(
+            "account_id",
+            "new_device_id",
+            "authorizing_device_id",
+            "pairing_session_id",
+            "platform",
+            "protocol_version",
+            "min_supported_version",
+            "capabilities",
+            "issued_at_unix_ms",
+            "target_identity_key",
+            "candidate_commitment",
+            "authorizer_identity_key",
+        )
+        val values = expectedKeys.mapIndexed { index, key ->
+            val line = lines[index + 1]
+            val prefix = "$key="
+            require(line.startsWith(prefix)) { "Authorization transcript field order mismatch" }
+            line.removePrefix(prefix).also { fieldValue ->
+                require(fieldValue.isNotBlank()) { "Authorization transcript field is empty" }
+            }
+        }
+        val parsed = ParsedDeviceAuthorization(
+            accountId = canonicalUuid(values[0]),
+            newDeviceId = canonicalUuid(values[1]),
+            authorizingDeviceId = canonicalUuid(values[2]),
+            pairingSessionId = canonicalUuid(values[3]),
+            platform = values[4],
+            protocolVersion = values[5].toInt(),
+            minSupportedVersion = values[6].toInt(),
+            capabilities = values[7].toLong(),
+            issuedAtUnixMs = values[8].toLong(),
+            targetIdentityKey = values[9],
+            candidateCommitment = values[10],
+            authorizerIdentityKey = values[11],
+        )
+        require(parsed.platform == "windows" || parsed.platform == "linux") {
+            "Invalid authorized platform"
+        }
+        require(parsed.protocolVersion == PROTOCOL_VERSION)
+        require(parsed.minSupportedVersion in MIN_SUPPORTED_VERSION..PROTOCOL_VERSION)
+        require(parsed.capabilities and CAPABILITY_MULTI_DEVICE != 0L)
+        require(parsed.issuedAtUnixMs > 0L)
+        return parsed
     }
 
     fun candidateCommitment(candidate: DesktopLinkCandidate): String {
