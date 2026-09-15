@@ -501,7 +501,8 @@ public sealed partial class MainWindow : Window
 
     private async void OnRefreshClick(object sender, RoutedEventArgs args)
     {
-        if (_core is null || !_core.DeviceSessionReady)
+        EnigmaCoreClient? core = _core;
+        if (core is null || !core.DeviceSessionReady)
         {
             return;
         }
@@ -514,25 +515,25 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            bool outboxFlushed = await Task.Run(() => _core.RetryOutbox());
-            bool synchronized = await Task.Run(() => _core.SyncPending());
+            bool outboxFlushed = await Task.Run(() => core.RetryOutbox());
+            bool synchronized = await Task.Run(() => core.SyncPending());
             RefreshContacts();
             RefreshMessages();
 
-            nuint inboxCount = _core.InboxCount;
-            nuint outboxCount = _core.OutboxCount;
+            nuint inboxCount = core.InboxCount;
+            nuint outboxCount = core.OutboxCount;
             CoreDetailText.Text = synchronized && outboxFlushed
                 ? $"Synchronisation à jour • {inboxCount} message(s) local(aux)"
                 : $"Synchronisation partielle • {outboxCount} livraison(s) en attente";
         }
         finally
         {
-            bool ready = _core is not null && _core.DeviceSessionReady;
+            bool ready = core.DeviceSessionReady;
             RefreshButton.IsEnabled = ready;
             SendButton.IsEnabled = ready;
             MessageComposer.IsEnabled = ready;
             ContactSelector.IsEnabled = ready;
-            DevicesButton.IsEnabled = _core is not null && _core.SignalReady;
+            DevicesButton.IsEnabled = core.SignalReady;
         }
     }
 
