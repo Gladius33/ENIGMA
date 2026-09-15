@@ -172,7 +172,9 @@ class MessagesRepository(
                 .distinctBy { it.deviceId }
                 .filter { it.deviceId != senderDeviceId }
             for (sibling in siblings) {
-                val proof = sibling.authorization ?: continue
+                if (sibling.authorization == null) {
+                    continue
+                }
                 require(
                     verifySiblingAuthorization(
                         accountId = ownSession.userId,
