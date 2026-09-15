@@ -166,7 +166,16 @@ internal sealed class EnigmaCoreHandle : SafeHandle
 
     public override bool IsInvalid => handle == IntPtr.Zero;
 
-    internal bool IsReady => EnigmaCoreNative.IsReady(handle);
+    internal bool IsReady
+    {
+        get
+        {
+            lock (_nativeGate)
+            {
+                return EnigmaCoreNative.IsReady(handle);
+            }
+        }
+    }
 
     internal bool SignalIsReady
     {
@@ -179,10 +188,25 @@ internal sealed class EnigmaCoreHandle : SafeHandle
         }
     }
 
-    internal bool EnsureDefaultSignalIdentity() =>
-        EnigmaCoreNative.SignalLoadOrCreateDefault(handle);
+    internal bool EnsureDefaultSignalIdentity()
+    {
+        lock (_nativeGate)
+        {
+            return EnigmaCoreNative.SignalLoadOrCreateDefault(handle);
+        }
+    }
 
     internal unsafe bool InitializeProtectedSignalIdentity(
+        ReadOnlySpan<byte> protectedIdentity,
+        uint registrationId)
+    {
+        lock (_nativeGate)
+        {
+            return InitializeProtectedSignalIdentityLocked(protectedIdentity, registrationId);
+        }
+    }
+
+    private unsafe bool InitializeProtectedSignalIdentityLocked(
         ReadOnlySpan<byte> protectedIdentity,
         uint registrationId)
     {
@@ -201,11 +225,29 @@ internal sealed class EnigmaCoreHandle : SafeHandle
         }
     }
 
-    internal bool StartPairing() => EnigmaCoreNative.PairingStart(handle);
+    internal bool StartPairing()
+    {
+        lock (_nativeGate)
+        {
+            return EnigmaCoreNative.PairingStart(handle);
+        }
+    }
 
-    internal bool PublishPairing() => EnigmaCoreNative.PairingPublish(handle);
+    internal bool PublishPairing()
+    {
+        lock (_nativeGate)
+        {
+            return EnigmaCoreNative.PairingPublish(handle);
+        }
+    }
 
-    internal uint ClaimPairing() => EnigmaCoreNative.PairingClaim(handle);
+    internal uint ClaimPairing()
+    {
+        lock (_nativeGate)
+        {
+            return EnigmaCoreNative.PairingClaim(handle);
+        }
+    }
 
     internal bool DeviceSessionReady
     {
@@ -386,9 +428,23 @@ internal sealed class EnigmaCoreHandle : SafeHandle
         return Encoding.UTF8.GetString(bytes);
     }
 
-    internal void CancelPairing() => EnigmaCoreNative.PairingCancel(handle);
+    internal void CancelPairing()
+    {
+        lock (_nativeGate)
+        {
+            EnigmaCoreNative.PairingCancel(handle);
+        }
+    }
 
     internal unsafe string ReadPairingUri()
+    {
+        lock (_nativeGate)
+        {
+            return ReadPairingUriLocked();
+        }
+    }
+
+    private unsafe string ReadPairingUriLocked()
     {
         nuint length = EnigmaCoreNative.PairingUriLength(handle);
         if (length == 0 || length > int.MaxValue)
@@ -409,6 +465,14 @@ internal sealed class EnigmaCoreHandle : SafeHandle
 
     internal unsafe string ReadPairingSvg()
     {
+        lock (_nativeGate)
+        {
+            return ReadPairingSvgLocked();
+        }
+    }
+
+    private unsafe string ReadPairingSvgLocked()
+    {
         nuint length = EnigmaCoreNative.PairingSvgLength(handle);
         if (length == 0 || length > int.MaxValue)
         {
@@ -426,13 +490,23 @@ internal sealed class EnigmaCoreHandle : SafeHandle
         return Encoding.UTF8.GetString(bytes);
     }
 
-    internal ulong PairingExpiresAtUnixMs => EnigmaCoreNative.PairingExpiresAtUnixMs(handle);
+    internal ulong PairingExpiresAtUnixMs
+    {
+        get
+        {
+            lock (_nativeGate)
+            {
+                return EnigmaCoreNative.PairingExpiresAtUnixMs(handle);
+            }
+        }
+    }
 
     protected override bool ReleaseHandle()
     {
         lock (_nativeGate)
         {
             EnigmaCoreNative.Destroy(handle);
+            handle = IntPtr.Zero;
             return true;
         }
     }
