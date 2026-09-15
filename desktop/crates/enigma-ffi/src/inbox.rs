@@ -203,7 +203,7 @@ fn default_direction() -> String {
     "inbound".to_owned()
 }
 
-fn validate_entry(entry: &DurableInboxEntry) -> Result<(), ()> {
+pub(crate) fn validate_entry(entry: &DurableInboxEntry) -> Result<(), ()> {
     validate_uuid(&entry.remote_message_id)?;
     validate_uuid(&entry.bubble_id)?;
     validate_uuid(&entry.sender_device_id)?;
