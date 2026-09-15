@@ -44,6 +44,8 @@ pub(crate) struct DurableInboxEntry {
     pub delivery_status: Option<String>,
     #[serde(default)]
     pub delivery_updated_at: Option<String>,
+    #[serde(default)]
+    pub delivery_recipient_device_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -92,15 +94,16 @@ impl EncryptedDesktopInbox {
 
     pub(crate) fn apply_outbound_receipts(
         &self,
-        receipts: &[(String, String, String, String)],
+        receipts: &[(String, String, String, String, String)],
     ) -> Result<bool, ()> {
         if receipts.len() > 500 {
             return Err(());
         }
 
-        for (bubble_id, client_message_id, status, delivered_at) in receipts {
+        for (bubble_id, client_message_id, recipient_device_id, status, delivered_at) in receipts {
             validate_uuid(bubble_id)?;
             validate_uuid(client_message_id)?;
+            validate_uuid(recipient_device_id)?;
             if !matches!(status.as_str(), "delivered" | "read")
                 || delivered_at.is_empty()
                 || delivered_at.len() > 128
@@ -111,19 +114,58 @@ impl EncryptedDesktopInbox {
 
         let mut entries = self.read_entries()?;
         let mut changed = false;
-        for (bubble_id, client_message_id, status, delivered_at) in receipts {
+        for (bubble_id, client_message_id, recipient_device_id, status, delivered_at) in receipts {
             for entry in entries.iter_mut().filter(|entry| {
                 entry.direction == "outbound"
-                    && entry.bubble_id == *bubble_id
-                    && entry.client_message_id == *client_message_id
+                    && entry.bubble_id == bubble_id.as_str()
+                    && entry.client_message_id == client_message_id.as_str()
+                    && entry
+                        .delivery_recipient_device_ids
+                        .iter()
+                        .any(|device_id| device_id == recipient_device_id)
             }) {
                 let current_rank = delivery_status_rank(entry.delivery_status.as_deref());
-                let next_rank = delivery_status_rank(Some(status));
+                let next_rank = delivery_status_rank(Some(status.as_str()));
                 if next_rank > current_rank {
                     entry.delivery_status = Some(status.clone());
                     entry.delivery_updated_at = Some(delivered_at.clone());
                     changed = true;
                 }
+            }
+        }
+
+        if changed {
+            self.write_entries(&entries)?;
+        }
+        Ok(changed)
+    }
+
+    pub(crate) fn mark_outbound_relay_sent(
+        &self,
+        bubble_id: &str,
+        client_message_id: &str,
+        recipient_device_id: &str,
+    ) -> Result<bool, ()> {
+        validate_uuid(bubble_id)?;
+        validate_uuid(client_message_id)?;
+        validate_uuid(recipient_device_id)?;
+
+        let mut entries = self.read_entries()?;
+        let mut changed = false;
+        for entry in entries.iter_mut().filter(|entry| {
+            entry.direction == "outbound"
+                && entry.bubble_id == bubble_id
+                && entry.client_message_id == client_message_id
+                && entry
+                    .delivery_recipient_device_ids
+                    .iter()
+                    .any(|device_id| device_id == recipient_device_id)
+        }) {
+            if delivery_status_rank(entry.delivery_status.as_deref())
+                < delivery_status_rank(Some("sent"))
+            {
+                entry.delivery_status = Some("sent".to_owned());
+                changed = true;
             }
         }
 
@@ -296,10 +338,23 @@ pub(crate) fn validate_entry(entry: &DurableInboxEntry) -> Result<(), ()> {
     {
         return Err(());
     }
+    if entry.delivery_recipient_device_ids.len() > 256 {
+        return Err(());
+    }
+    let mut delivery_devices = entry.delivery_recipient_device_ids.clone();
+    delivery_devices.sort_unstable();
+    if delivery_devices.windows(2).any(|pair| pair[0] == pair[1])
+        || delivery_devices
+            .iter()
+            .any(|device_id| validate_uuid(device_id).is_err())
+    {
+        return Err(());
+    }
+
     if entry
         .delivery_status
         .as_deref()
-        .is_some_and(|status| !matches!(status, "sent" | "delivered" | "read"))
+        .is_some_and(|status| !matches!(status, "queued" | "sent" | "delivered" | "read"))
         || entry
             .delivery_updated_at
             .as_ref()
@@ -312,9 +367,10 @@ pub(crate) fn validate_entry(entry: &DurableInboxEntry) -> Result<(), ()> {
 
 fn delivery_status_rank(status: Option<&str>) -> u8 {
     match status {
-        Some("read") => 3,
-        Some("delivered") => 2,
-        Some("sent") => 1,
+        Some("read") => 4,
+        Some("delivered") => 3,
+        Some("sent") => 2,
+        Some("queued") => 1,
         _ => 0,
     }
 }
@@ -360,9 +416,13 @@ mod tests {
     #[test]
     fn delivery_status_is_monotonic() {
         assert_eq!(delivery_status_rank(None), 0);
-        assert_eq!(delivery_status_rank(Some("sent")), 1);
-        assert_eq!(delivery_status_rank(Some("delivered")), 2);
-        assert_eq!(delivery_status_rank(Some("read")), 3);
+        assert_eq!(delivery_status_rank(Some("queued")), 1);
+        assert_eq!(delivery_status_rank(Some("sent")), 2);
+        assert_eq!(delivery_status_rank(Some("delivered")), 3);
+        assert_eq!(delivery_status_rank(Some("read")), 4);
+        assert!(
+            delivery_status_rank(Some("sent")) > delivery_status_rank(Some("queued"))
+        );
         assert!(
             delivery_status_rank(Some("delivered")) > delivery_status_rank(Some("sent"))
         );
@@ -390,6 +450,7 @@ mod tests {
             original_created_at_unix_ms: None,
             delivery_status: Some("delivered".into()),
             delivery_updated_at: Some("2026-09-15T12:00:00Z".into()),
+            delivery_recipient_device_ids: Vec::new(),
         };
         assert_eq!(validate_entry(&entry), Ok(()));
         assert!(validate_entry(&DurableInboxEntry {
