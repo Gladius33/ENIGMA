@@ -67,7 +67,8 @@ int main(int argc, char* argv[]) {
     try {
         core = std::make_unique<enigma::Core>();
         const bool runtimeReady = core->ready();
-        const bool signalReady = runtimeReady && core->signalReady();
+        const bool signalReady = runtimeReady
+            && (core->signalReady() || core->ensureDefaultSignalIdentity());
         coreReady = signalReady;
         if (signalReady) {
             coreStatus = QStringLiteral("Cœur sécurisé prêt");
@@ -141,7 +142,7 @@ int main(int argc, char* argv[]) {
 
     auto* openMessages = new QPushButton(QStringLiteral("Ouvrir les messages"), surface);
     openMessages->setAccessibleName(QStringLiteral("Ouvrir les messages"));
-    openMessages->setEnabled(false);
+    openMessages->setEnabled(coreReady);
     openMessages->setToolTip(
         coreReady
             ? QStringLiteral("Le cœur Rust/libsignal est prêt.")
