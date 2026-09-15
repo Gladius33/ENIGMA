@@ -93,6 +93,19 @@ pub struct SignalingClient {
 }
 
 impl SignalingClient {
+    pub fn connect_blocking(
+        base_url: &str,
+        device_id: &str,
+        access_token: &[u8],
+    ) -> Result<Self, P2pSignalingError> {
+        let runtime = default_runtime().ok_or(P2pSignalingError::RuntimeUnavailable)?;
+        let mut result = None;
+        runtime.block_on(Box::pin(async {
+            result = Some(Self::connect(base_url, device_id, access_token).await);
+        }));
+        result.ok_or(P2pSignalingError::RuntimeUnavailable)?
+    }
+
     pub async fn connect(
         base_url: &str,
         device_id: &str,
@@ -189,6 +202,13 @@ impl SignalingClient {
             outgoing,
             incoming: Mutex::new(incoming),
         })
+    }
+
+    pub fn send_now(&self, command: P2pSignalCommand) -> Result<(), P2pSignalingError> {
+        validate_command(&command)?;
+        self.outgoing
+            .try_send(command)
+            .map_err(|_| P2pSignalingError::QueueClosed)
     }
 
     pub async fn send(&self, command: P2pSignalCommand) -> Result<(), P2pSignalingError> {
