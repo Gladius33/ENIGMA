@@ -96,6 +96,25 @@ jobs:
             throw "WinUI output does not contain enigma_core.dll"
           }
           Write-Host "Packaged native core: $($dll.FullName)"
+      - name: Publish self-contained Windows client
+        shell: pwsh
+        run: |
+          dotnet publish windows/Enigma.Desktop.WinUI/Enigma.Desktop.WinUI.csproj --configuration Release --runtime win-x64 --self-contained true -p:WindowsAppSDKSelfContained=true -p:EnigmaCoreNativePath="$env:GITHUB_WORKSPACE\desktop\target\release\enigma_core.dll" --output windows/Enigma.Desktop.WinUI/artifacts/win-x64 --nologo
+      - name: Validate Windows distributable
+        shell: pwsh
+        run: |
+          $root = "windows/Enigma.Desktop.WinUI/artifacts/win-x64"
+          if (-not (Test-Path "$root/Enigma.Desktop.WinUI.exe")) { throw "Windows publish output is missing the ENIGMA executable" }
+          if (-not (Test-Path "$root/enigma_core.dll")) { throw "Windows publish output is missing enigma_core.dll" }
+          if (-not (Test-Path "$root/Assets/enigma_logo.png")) { throw "Windows publish output is missing the canonical Android ENIGMA logo" }
+          Compress-Archive -Path "$root/*" -DestinationPath "windows/Enigma.Desktop.WinUI/artifacts/ENIGMA-1.0.0-win-x64.zip" -Force
+          if (-not (Test-Path "windows/Enigma.Desktop.WinUI/artifacts/ENIGMA-1.0.0-win-x64.zip")) { throw "Windows distributable archive was not created" }
+      - name: Upload Windows distributable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ENIGMA-1.0.0-win-x64
+          path: desktop/windows/Enigma.Desktop.WinUI/artifacts/ENIGMA-1.0.0-win-x64.zip
+          if-no-files-found: error
 
   linux-abi-consumer:
     name: linux-qt6-consumer
@@ -126,6 +145,27 @@ jobs:
         run: cmake -S linux -B linux/build -DCMAKE_BUILD_TYPE=Release -DENIGMA_CORE_LIBRARY="${GITHUB_WORKSPACE}/desktop/target/release/libenigma_core.so"
       - name: Build Qt 6 C++ consumer
         run: cmake --build linux/build --config Release --parallel 2
+      - name: Build Debian package
+        run: cmake --build linux/build --target package --config Release
+      - name: Validate Debian package layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="$(find linux/build -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$package"
+          dpkg-deb --info "$package"
+          stage="$(mktemp -d)"
+          dpkg-deb --extract "$package" "$stage"
+          test -x "$stage/usr/bin/enigma_linux_desktop"
+          test -f "$stage/usr/lib/enigma/libenigma_core.so"
+          test -f "$stage/usr/share/applications/enigma.desktop"
+          test -f "$stage/usr/share/icons/hicolor/512x512/apps/enigma.png"
+      - name: Upload Debian distributable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ENIGMA-1.0.0-linux-amd64-deb
+          path: desktop/linux/build/*.deb
+          if-no-files-found: error
 
 
   android-rust-signal-interop:
