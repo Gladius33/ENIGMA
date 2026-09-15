@@ -247,17 +247,17 @@ async fn certified_desktop_linking_is_bound_replay_safe_and_revocable() {
         "/v1/devices/link/authorize",
         Some(android_token),
         Some(json!({
-            "device_id": Uuid::new_v4(),
-            "display_name": "Replay desktop",
-            "platform": "linux",
+            "device_id": desktop_id,
+            "display_name": "Windows desktop",
+            "platform": "windows",
             "pairing_session_id": pairing_session_id,
             "protocol_version": 1,
             "min_supported_version": 1,
             "capabilities": 127,
-            "issued_at_unix_ms": Utc::now().timestamp_millis(),
-            "target_identity_key": key_material("linux-replay-identity-key-0001"),
+            "issued_at_unix_ms": issued_at_unix_ms,
+            "target_identity_key": desktop_identity,
             "candidate_commitment": candidate_commitment,
-            "authorizer_signature": key_material("android-replay-signature-0001")
+            "authorizer_signature": authorizer_signature
         })),
     )
     .await;
