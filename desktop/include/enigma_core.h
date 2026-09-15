@@ -10,6 +10,20 @@ extern "C" {
 #endif
 
 typedef struct EnigmaCoreHandle EnigmaCoreHandle;
+
+typedef struct EnigmaSendTextRequest {
+    const uint8_t *recipient_user_id;
+    size_t recipient_user_id_len;
+    const uint8_t *recipient_public_id;
+    size_t recipient_public_id_len;
+    const uint8_t *recipient_display_name;
+    size_t recipient_display_name_len;
+    const uint8_t *bubble_id;
+    size_t bubble_id_len;
+    const uint8_t *plaintext;
+    size_t plaintext_len;
+} EnigmaSendTextRequest;
+
 #define ENIGMA_CORE_ABI_VERSION 1u
 
 uint32_t enigma_core_abi_version(void);
@@ -52,6 +66,18 @@ bool enigma_core_device_initialize(EnigmaCoreHandle *handle);
  * crash-safe encrypted local commit before acknowledging delivery.
  */
 bool enigma_core_sync_pending(EnigmaCoreHandle *handle);
+
+/*
+ * A true return value means the multi-device ciphertext fanout and advanced
+ * libsignal state are durably queued locally. Network delivery may complete
+ * later through retry_outbox without re-encrypting the message.
+ */
+bool enigma_core_send_text(
+    EnigmaCoreHandle *handle,
+    const EnigmaSendTextRequest *request);
+bool enigma_core_retry_outbox(EnigmaCoreHandle *handle);
+size_t enigma_core_outbox_count(const EnigmaCoreHandle *handle);
+
 size_t enigma_core_inbox_count(const EnigmaCoreHandle *handle);
 size_t enigma_core_inbox_entry_json_len(
     const EnigmaCoreHandle *handle,
