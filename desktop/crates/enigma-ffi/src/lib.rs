@@ -369,16 +369,26 @@ fn decode_message_payload(value: &str, expected_bubble_id: &str) -> Result<Strin
     })
 }
 
+struct InboundSenderContext<'a> {
+    sender_user_id: &'a str,
+    sender_public_id: &'a str,
+    own_user_id: &'a str,
+    from_verified_sibling: bool,
+}
+
 fn normalize_inbound_payload(
     plaintext: String,
     message_type: &str,
     message_bubble_id: &str,
     message_client_message_id: &str,
-    sender_user_id: &str,
-    sender_public_id: &str,
-    own_user_id: &str,
-    from_verified_sibling: bool,
+    sender: InboundSenderContext<'_>,
 ) -> Result<NormalizedInboundPayload, ()> {
+    let InboundSenderContext {
+        sender_user_id,
+        sender_public_id,
+        own_user_id,
+        from_verified_sibling,
+    } = sender;
     if from_verified_sibling {
         if sender_user_id != own_user_id
             || message_type != "opaque"
@@ -502,10 +512,12 @@ fn commit_inbound_encrypted_delivery(
         delivery.message_type,
         delivery.bubble_id,
         delivery.client_message_id,
-        delivery.sender_user_id,
-        delivery.sender_public_id,
-        own_user_id,
-        from_verified_sibling,
+        InboundSenderContext {
+            sender_user_id: delivery.sender_user_id,
+            sender_public_id: delivery.sender_public_id,
+            own_user_id,
+            from_verified_sibling,
+        },
     )?;
 
     let entry = DurableInboxEntry {
@@ -1024,19 +1036,19 @@ fn flush_desktop_outbox(
         ) {
             if let Ok(remote_identity_key) = decode_signal_key(identity_key) {
                 if let Ok(session_id) = random_uuid_v4() {
+                    let request = p2p::P2pSendRequest {
+                        session_id: &session_id,
+                        bubble_id: &delivery.bubble_id,
+                        sender_device_id: &delivery.sender_device_id,
+                        recipient_device_id: &delivery.recipient_device_id,
+                        client_message_id: &delivery.client_message_id,
+                        message_type: &delivery.message_type,
+                        ciphertext: &delivery.ciphertext,
+                        remote_identity_key: &remote_identity_key,
+                        ice_servers: &ice_servers,
+                    };
                     delivered_p2p = manager
-                        .try_send(
-                            backend,
-                            &session_id,
-                            &delivery.bubble_id,
-                            &delivery.sender_device_id,
-                            &delivery.recipient_device_id,
-                            &delivery.client_message_id,
-                            &delivery.message_type,
-                            &delivery.ciphertext,
-                            &remote_identity_key,
-                            &ice_servers,
-                        )
+                        .try_send(backend, &request)
                         .is_ok_and(|delivered| delivered);
                 }
             }
@@ -2455,14 +2467,14 @@ fn default_desktop_state_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"))?;
-        return Some(PathBuf::from(base).join("ENIGMA"));
+        Some(PathBuf::from(base).join("ENIGMA"))
     }
     #[cfg(target_os = "linux")]
     {
         let base = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-        return Some(base.join("ENIGMA"));
+        Some(base.join("ENIGMA"))
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
@@ -2895,10 +2907,12 @@ mod tests {
             "text",
             bubble_id,
             "33333333-3333-4333-8333-333333333333",
-            "11111111-1111-4111-8111-111111111111",
-            "alice",
-            "44444444-4444-4444-8444-444444444444",
-            false,
+        InboundSenderContext {
+            sender_user_id:     "11111111-1111-4111-8111-111111111111",
+            sender_public_id:     "alice",
+            own_user_id:     "44444444-4444-4444-8444-444444444444",
+            from_verified_sibling:     false,
+        },
         )
         .expect("valid inbound payload");
         assert_eq!(normalized.direction, "inbound");
@@ -2911,10 +2925,12 @@ mod tests {
             "text",
             bubble_id,
             "33333333-3333-4333-8333-333333333333",
-            "11111111-1111-4111-8111-111111111111",
-            "alice",
-            "44444444-4444-4444-8444-444444444444",
-            false,
+        InboundSenderContext {
+            sender_user_id:     "11111111-1111-4111-8111-111111111111",
+            sender_public_id:     "alice",
+            own_user_id:     "44444444-4444-4444-8444-444444444444",
+            from_verified_sibling:     false,
+        },
         )
         .is_err());
     }
@@ -2942,10 +2958,12 @@ mod tests {
             "opaque",
             bubble_id,
             client_message_id,
-            own_user_id,
-            "me",
-            own_user_id,
-            true,
+        InboundSenderContext {
+            sender_user_id:     own_user_id,
+            sender_public_id:     "me",
+            own_user_id:     own_user_id,
+            from_verified_sibling:     true,
+        },
         )
         .expect("verified sender sync");
         assert_eq!(normalized.direction, "outbound");
@@ -2964,10 +2982,12 @@ mod tests {
             "opaque",
             bubble_id,
             client_message_id,
-            own_user_id,
-            "me",
-            own_user_id,
-            false,
+        InboundSenderContext {
+            sender_user_id:     own_user_id,
+            sender_public_id:     "me",
+            own_user_id:     own_user_id,
+            from_verified_sibling:     false,
+        },
         )
         .is_err());
     }
