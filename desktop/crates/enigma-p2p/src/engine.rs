@@ -1,18 +1,25 @@
 use std::{
     collections::HashMap,
     sync::{mpsc, Arc, Mutex},
+    time::Instant,
 };
 
 use async_trait::async_trait;
+use rtc::{
+    peer_connection::transport::RTCIceCandidateType,
+    statistics::report::RTCStatsReportEntry,
+};
 use webrtc::{
     data_channel::{DataChannel, DataChannelEvent},
     peer_connection::{
         PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler,
         RTCConfigurationBuilder, RTCIceCandidateInit, RTCIceGatheringState, RTCIceServer,
-        RTCPeerConnectionIceEvent, RTCPeerConnectionState, RTCSessionDescription,
+        RTCPeerConnectionIceEvent, RTCPeerConnectionState, RTCSessionDescription, StatsSelector,
     },
     runtime::{default_runtime, Runtime},
 };
+
+use crate::P2pRoute;
 
 const DATA_CHANNEL_LABEL: &str = "enigma-p2p-v1";
 const MAX_SIGNAL_SDP_BYTES: usize = 128 * 1024;
@@ -30,6 +37,13 @@ pub struct P2pIceCandidate {
     pub sdp_mid: Option<String>,
     pub sdp_mline_index: u16,
     pub candidate: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct P2pSelectedRoute {
+    pub route: P2pRoute,
+    pub local_candidate_type: String,
+    pub remote_candidate_type: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -322,6 +336,73 @@ impl WebRtcP2pEngine {
             .map_err(|_| WebRtcP2pError::WebRtcFailure)
     }
 
+    pub async fn selected_route(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<P2pSelectedRoute>, WebRtcP2pError> {
+        let session = self
+            .sessions
+            .get(session_id)
+            .ok_or(WebRtcP2pError::SessionMissing)?;
+        let report = session
+            .peer_connection
+            .get_stats(Instant::now(), StatsSelector::None)
+            .await;
+
+        let selected_pair_id = report
+            .transport()
+            .map(|transport| transport.selected_candidate_pair_id.as_str())
+            .filter(|value| !value.is_empty());
+
+        let pair = selected_pair_id
+            .and_then(|id| report.get(id))
+            .and_then(|entry| match entry {
+                RTCStatsReportEntry::IceCandidatePair(pair) => Some(pair),
+                _ => None,
+            })
+            .or_else(|| report.candidate_pairs().find(|pair| pair.nominated));
+
+        let Some(pair) = pair else {
+            return Ok(None);
+        };
+
+        let local = report
+            .get(&pair.local_candidate_id)
+            .and_then(|entry| match entry {
+                RTCStatsReportEntry::LocalCandidate(candidate) => Some(candidate),
+                _ => None,
+            });
+        let remote = report
+            .get(&pair.remote_candidate_id)
+            .and_then(|entry| match entry {
+                RTCStatsReportEntry::RemoteCandidate(candidate) => Some(candidate),
+                _ => None,
+            });
+        let (Some(local), Some(remote)) = (local, remote) else {
+            return Ok(None);
+        };
+
+        let local_type = local.candidate_type;
+        let remote_type = remote.candidate_type;
+        if matches!(local_type, RTCIceCandidateType::Unspecified)
+            || matches!(remote_type, RTCIceCandidateType::Unspecified)
+        {
+            return Ok(None);
+        }
+
+        Ok(Some(P2pSelectedRoute {
+            route: if matches!(local_type, RTCIceCandidateType::Relay)
+                || matches!(remote_type, RTCIceCandidateType::Relay)
+            {
+                P2pRoute::Turn
+            } else {
+                P2pRoute::Direct
+            },
+            local_candidate_type: local_type.to_string(),
+            remote_candidate_type: remote_type.to_string(),
+        }))
+    }
+
     pub fn local_dtls_fingerprint(&self, session_id: &str) -> Option<&str> {
         self.sessions
             .get(session_id)?
@@ -490,6 +571,31 @@ fn extract_dtls_fingerprint(sdp: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relay_candidate_forces_turn_route() {
+        fn route(local: RTCIceCandidateType, remote: RTCIceCandidateType) -> P2pRoute {
+            if matches!(local, RTCIceCandidateType::Relay)
+                || matches!(remote, RTCIceCandidateType::Relay)
+            {
+                P2pRoute::Turn
+            } else {
+                P2pRoute::Direct
+            }
+        }
+        assert_eq!(
+            route(RTCIceCandidateType::Host, RTCIceCandidateType::Srflx),
+            P2pRoute::Direct
+        );
+        assert_eq!(
+            route(RTCIceCandidateType::Relay, RTCIceCandidateType::Host),
+            P2pRoute::Turn
+        );
+        assert_eq!(
+            route(RTCIceCandidateType::Prflx, RTCIceCandidateType::Relay),
+            P2pRoute::Turn
+        );
+    }
 
     #[test]
     fn dtls_fingerprint_normalizes_like_android() {
