@@ -354,6 +354,32 @@ impl LibsignalSessionBackend {
         .map_err(|_| SignalAdapterError::CryptoFailure)
     }
 
+    pub async fn remote_identity_matches(
+        &self,
+        remote_device_id: &str,
+        protocol_device_id: u32,
+        serialized_identity: &[u8],
+    ) -> Result<bool, SignalAdapterError> {
+        if remote_device_id.is_empty()
+            || !(1..=127).contains(&protocol_device_id)
+            || serialized_identity.is_empty()
+        {
+            return Err(SignalAdapterError::InvalidBundle);
+        }
+        let protocol_device_id = DeviceId::try_from(protocol_device_id)
+            .map_err(|_| SignalAdapterError::InvalidBundle)?;
+        let remote = ProtocolAddress::new(remote_device_id.to_owned(), protocol_device_id);
+        let expected = libsignal_protocol::IdentityKey::decode(serialized_identity)
+            .map_err(|_| SignalAdapterError::InvalidBundle)?;
+        Ok(self
+            .store
+            .identity_store
+            .get_identity(&remote)
+            .await
+            .map_err(|_| SignalAdapterError::CryptoFailure)?
+            .is_none_or(|known| known == expected))
+    }
+
     pub async fn has_session_for(
         &self,
         remote_device_id: &str,
