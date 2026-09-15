@@ -78,6 +78,18 @@ bool enigma_core_send_text(
 bool enigma_core_retry_outbox(EnigmaCoreHandle *handle);
 size_t enigma_core_outbox_count(const EnigmaCoreHandle *handle);
 
+size_t enigma_core_contacts_json_len(EnigmaCoreHandle *handle);
+bool enigma_core_contacts_json_copy(
+    EnigmaCoreHandle *handle,
+    uint8_t *output,
+    size_t output_len);
+bool enigma_core_send_text_to_contact(
+    EnigmaCoreHandle *handle,
+    const uint8_t *recipient_user_id,
+    size_t recipient_user_id_len,
+    const uint8_t *plaintext,
+    size_t plaintext_len);
+
 size_t enigma_core_inbox_count(const EnigmaCoreHandle *handle);
 size_t enigma_core_inbox_entry_json_len(
     const EnigmaCoreHandle *handle,
