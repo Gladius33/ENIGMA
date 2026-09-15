@@ -739,45 +739,55 @@ fn discover_devices_for(
         .map_err(|_| ())
 }
 
+struct OutboundDeliveryContext<'a> {
+    sender_device_id: &'a str,
+    recipient_user_id: &'a str,
+    bubble_id: &'a str,
+    client_message_id: &'a str,
+    message_type: &'a str,
+    plaintext: &'a str,
+    sender_sync: bool,
+    now: SystemTime,
+}
+
 fn prepare_outbound_delivery(
     backend: &mut LibsignalSessionBackend,
     client: &PairingRendezvousClient,
     token: &mut SecureBytes,
-    sender_device_id: &str,
-    recipient_user_id: &str,
     recipient: &RemoteDeviceKeyBundle,
-    bubble_id: &str,
-    client_message_id: &str,
-    message_type: &str,
-    plaintext: &str,
-    sender_sync: bool,
-    now: SystemTime,
+    context: &OutboundDeliveryContext<'_>,
 ) -> Result<DurableOutboundDelivery, ()> {
-    if recipient.device_id == sender_device_id {
+    if recipient.device_id == context.sender_device_id {
         return Err(());
     }
-    let protocol_device_id =
-        prepare_remote_session(backend, client, token, recipient_user_id, recipient, now)?;
+    let protocol_device_id = prepare_remote_session(
+        backend,
+        client,
+        token,
+        context.recipient_user_id,
+        recipient,
+        context.now,
+    )?;
     let mut rng = rand::rng();
     let ciphertext = block_on(backend.encrypt_wire_for_device(
-        sender_device_id,
+        context.sender_device_id,
         V1_PROTOCOL_DEVICE_ID,
         &recipient.device_id,
         protocol_device_id,
-        plaintext.as_bytes(),
-        now,
+        context.plaintext.as_bytes(),
+        context.now,
         &mut rng,
     ))
     .map_err(|_| ())?;
 
     Ok(DurableOutboundDelivery {
-        bubble_id: bubble_id.to_owned(),
-        sender_device_id: sender_device_id.to_owned(),
+        bubble_id: context.bubble_id.to_owned(),
+        sender_device_id: context.sender_device_id.to_owned(),
         recipient_device_id: recipient.device_id.clone(),
-        client_message_id: client_message_id.to_owned(),
-        message_type: message_type.to_owned(),
+        client_message_id: context.client_message_id.to_owned(),
+        message_type: context.message_type.to_owned(),
         ciphertext,
-        sender_sync,
+        sender_sync: context.sender_sync,
     })
 }
 
@@ -927,19 +937,22 @@ pub unsafe extern "C" fn enigma_core_send_text(
             let Some(token) = core.device_access_token.as_mut() else {
                 return false;
             };
+            let context = OutboundDeliveryContext {
+                sender_device_id: &sender_device_id,
+                recipient_user_id: &recipient_user_id,
+                bubble_id: &bubble_id,
+                client_message_id: &client_message_id,
+                message_type: "text",
+                plaintext: &encoded_payload,
+                sender_sync: false,
+                now,
+            };
             prepare_outbound_delivery(
                 &mut working_backend,
                 &client,
                 token,
-                &sender_device_id,
-                &recipient_user_id,
                 recipient,
-                &bubble_id,
-                &client_message_id,
-                "text",
-                &encoded_payload,
-                false,
-                now,
+                &context,
             )
         };
         match delivery {
@@ -956,19 +969,22 @@ pub unsafe extern "C" fn enigma_core_send_text(
             let Some(token) = core.device_access_token.as_mut() else {
                 return false;
             };
+            let context = OutboundDeliveryContext {
+                sender_device_id: &sender_device_id,
+                recipient_user_id: &own_user_id,
+                bubble_id: &bubble_id,
+                client_message_id: &client_message_id,
+                message_type: "opaque",
+                plaintext: &sender_sync_payload,
+                sender_sync: true,
+                now,
+            };
             prepare_outbound_delivery(
                 &mut working_backend,
                 &client,
                 token,
-                &sender_device_id,
-                &own_user_id,
                 sibling,
-                &bubble_id,
-                &client_message_id,
-                "opaque",
-                &sender_sync_payload,
-                true,
-                now,
+                &context,
             )
         };
         match delivery {
