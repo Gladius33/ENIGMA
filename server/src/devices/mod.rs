@@ -332,8 +332,24 @@ async fn create_pairing_candidate(
 
 async fn get_pairing_candidate(
     axum::extract::State(state): axum::extract::State<AppState>,
+    auth: AuthUser,
     Path(pairing_session_id): Path<Uuid>,
 ) -> Result<Json<PairingCandidateResponse>, AppError> {
+    auth.require_device_token()?;
+    let device_id = auth.require_device_id()?;
+    let platform: Option<String> = sqlx::query_scalar(
+        "SELECT platform
+         FROM devices
+         WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(device_id)
+    .bind(auth.user_id)
+    .fetch_optional(&state.pg)
+    .await?;
+    if platform.as_deref() != Some("android") {
+        return Err(AppError::Forbidden);
+    }
+
     let row = sqlx::query_as::<_, PairingRendezvousRow>(
         "SELECT pairing_session_id, device_id, display_name, platform,
                 protocol_version, min_supported_version, capabilities,
@@ -752,7 +768,7 @@ fn validate_link_request(
             "UNSUPPORTED_MULTIDEVICE_PROTOCOL_VERSION".into(),
         ));
     }
-    if payload.capabilities < 0 {
+    if payload.capabilities < 0 || payload.capabilities & (1_i64 << 2) == 0 {
         return Err(AppError::BadRequest("INVALID_DEVICE_CAPABILITIES".into()));
     }
     validation::base64_field(
@@ -760,6 +776,12 @@ fn validate_link_request(
         &payload.target_identity_key,
         16,
         8192,
+    )?;
+    validation::base64_field(
+        "candidate_commitment",
+        &payload.candidate_commitment,
+        32,
+        32,
     )?;
     validation::base64_field(
         "authorizer_signature",
