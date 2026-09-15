@@ -12,6 +12,7 @@ import com.enigma.securechat.network.ChatApiService
 import com.enigma.securechat.network.dto.AuthorizeLinkedDesktopRequestDto
 import com.enigma.securechat.network.dto.DeviceRegisterRequestDto
 import com.enigma.securechat.network.dto.FcmTokenRequestDto
+import com.enigma.securechat.qr.PairDeviceQrPayload
 import com.enigma.securechat.storage.DeviceStore
 import com.enigma.securechat.storage.SecureSessionStore
 import java.util.Base64
@@ -53,6 +54,56 @@ class DeviceRepository(
     )
 
 
+    suspend fun resolvePairingCandidate(
+        qr: PairDeviceQrPayload,
+    ): AppResult<DesktopLinkCandidate> = runCatching {
+        val response = api.pairingCandidate(qr.pairing_session_id)
+        require(response.pairingSessionId == qr.pairing_session_id) {
+            "Server returned a different pairing session"
+        }
+        require(response.candidateCommitment == qr.candidate_commitment) {
+            "Pairing commitment differs from the scanned QR"
+        }
+        require(response.expiresAtUnixMs == qr.expires_at_unix_ms) {
+            "Pairing expiry differs from the scanned QR"
+        }
+        require(response.pairingPublicKey == qr.pairing_public_key) {
+            "Pairing public key differs from the scanned QR"
+        }
+        val candidate = DesktopLinkCandidate(
+            deviceId = response.deviceId,
+            displayName = response.displayName,
+            platform = response.platform,
+            pairingSessionId = response.pairingSessionId,
+            protocolVersion = response.protocolVersion,
+            minSupportedVersion = response.minSupportedVersion,
+            capabilities = response.capabilities,
+            expiresAtUnixMs = response.expiresAtUnixMs,
+            pairingPublicKey = response.pairingPublicKey,
+            targetIdentityKey = response.targetIdentityKey,
+            claimSecretHash = response.claimSecretHash,
+            candidateCommitment = response.candidateCommitment,
+        )
+        val authorizingDeviceId = requireNotNull(deviceStore.deviceId()) {
+            "Android device is not registered"
+        }
+        DeviceLinkAuthorization.validateCandidate(candidate, authorizingDeviceId)
+        require(DeviceLinkAuthorization.candidateCommitment(candidate) == qr.candidate_commitment) {
+            "Pairing candidate commitment verification failed"
+        }
+        candidate
+    }.fold(
+        onSuccess = { AppResult.Ok(it) },
+        onFailure = {
+            AppResult.Err(
+                UserVisibleError(
+                    message = "Appairage du poste invalide",
+                    errorCode = "DESKTOP_PAIRING_CANDIDATE_INVALID",
+                ),
+            )
+        },
+    )
+
     suspend fun authorizeLinkedDesktop(
         candidate: DesktopLinkCandidate,
         issuedAtUnixMs: Long = System.currentTimeMillis(),
@@ -77,6 +128,7 @@ class DeviceRepository(
             capabilities = candidate.capabilities,
             issuedAtUnixMs = issuedAtUnixMs,
             targetIdentityKey = candidate.targetIdentityKey,
+            candidateCommitment = candidate.candidateCommitment,
             authorizerIdentityKey = authorizerIdentityKey,
         )
         val signatureBytes = cryptoEngine.signIdentityProof(
@@ -99,6 +151,7 @@ class DeviceRepository(
                 capabilities = candidate.capabilities,
                 issuedAtUnixMs = issuedAtUnixMs,
                 targetIdentityKey = candidate.targetIdentityKey,
+                candidateCommitment = candidate.candidateCommitment,
                 authorizerSignature = signature,
             ),
         )
@@ -119,11 +172,13 @@ class DeviceRepository(
             "Server altered the device authorization signature"
         }
 
+        require(response.status == "authorized") {
+            "Server did not confirm desktop authorization"
+        }
         AuthorizedDesktopLink(
             deviceId = response.device.id,
             displayName = response.device.displayName,
             platform = response.device.platform,
-            accessToken = response.accessToken,
             canonicalPayload = proof.canonicalPayload,
             authorizerSignature = proof.authorizerSignature,
         )
