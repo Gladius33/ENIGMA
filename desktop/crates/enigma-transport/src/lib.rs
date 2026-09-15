@@ -204,6 +204,21 @@ struct PendingRelayMessagesResponse {
 }
 
 #[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq)]
+pub struct SentRelayReceipt {
+    pub message_id: String,
+    pub bubble_id: String,
+    pub client_message_id: String,
+    pub recipient_device_id: String,
+    pub status: String,
+    pub delivered_at: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SentRelayReceiptsResponse {
+    receipts: Vec<SentRelayReceipt>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq)]
 pub struct DeviceAuthorizationProof {
     pub authorizing_device_id: String,
     pub canonical_payload: String,
@@ -699,6 +714,52 @@ impl PairingRendezvousClient {
             return Err(PairingRendezvousError::InvalidResponse);
         }
         Ok(body.messages)
+    }
+
+    pub fn sent_receipts(
+        &self,
+        access_token: &[u8],
+        device_id: &str,
+    ) -> Result<Vec<SentRelayReceipt>, PairingRendezvousError> {
+        if !is_canonical_uuid(device_id) {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        let mut endpoint = self
+            .base_url
+            .join("v1/messages/receipts")
+            .map_err(|_| PairingRendezvousError::InvalidEndpoint)?;
+        endpoint
+            .query_pairs_mut()
+            .append_pair("device_id", device_id);
+
+        let header = bearer_header(access_token)?;
+        let response = self
+            .client
+            .get(endpoint)
+            .header(reqwest::header::AUTHORIZATION, header)
+            .send()
+            .map_err(|_| PairingRendezvousError::Transport)?;
+        if !response.status().is_success() {
+            return Err(PairingRendezvousError::Rejected(response.status().as_u16()));
+        }
+
+        let body = response
+            .json::<SentRelayReceiptsResponse>()
+            .map_err(|_| PairingRendezvousError::InvalidResponse)?;
+        if body.receipts.len() > 500
+            || body.receipts.iter().any(|receipt| {
+                !is_canonical_uuid(&receipt.message_id)
+                    || !is_canonical_uuid(&receipt.bubble_id)
+                    || !is_canonical_uuid(&receipt.client_message_id)
+                    || !is_canonical_uuid(&receipt.recipient_device_id)
+                    || !matches!(receipt.status.as_str(), "delivered" | "read")
+                    || receipt.delivered_at.is_empty()
+                    || receipt.delivered_at.len() > 128
+            })
+        {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        Ok(body.receipts)
     }
 
     pub fn acknowledge_message(
