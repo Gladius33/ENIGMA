@@ -93,6 +93,39 @@ public:
             && enigma_core_sync_pending(handle_);
     }
 
+    [[nodiscard]] bool retryOutbox() noexcept {
+        return handle_ != nullptr
+            && signalReady()
+            && deviceSessionReady()
+            && enigma_core_retry_outbox(handle_);
+    }
+
+    [[nodiscard]] bool sendText(
+        const std::string& recipientUserId,
+        const std::string& recipientPublicId,
+        const std::string& recipientDisplayName,
+        const std::string& bubbleId,
+        const std::string& plaintext) noexcept {
+        if (handle_ == nullptr || !signalReady() || !deviceSessionReady()) return false;
+        const EnigmaSendTextRequest request{
+            reinterpret_cast<const std::uint8_t*>(recipientUserId.data()),
+            recipientUserId.size(),
+            reinterpret_cast<const std::uint8_t*>(recipientPublicId.data()),
+            recipientPublicId.size(),
+            reinterpret_cast<const std::uint8_t*>(recipientDisplayName.data()),
+            recipientDisplayName.size(),
+            reinterpret_cast<const std::uint8_t*>(bubbleId.data()),
+            bubbleId.size(),
+            reinterpret_cast<const std::uint8_t*>(plaintext.data()),
+            plaintext.size(),
+        };
+        return enigma_core_send_text(handle_, &request);
+    }
+
+    [[nodiscard]] std::size_t outboxCount() const noexcept {
+        return handle_ == nullptr ? 0 : enigma_core_outbox_count(handle_);
+    }
+
     [[nodiscard]] std::size_t inboxCount() const noexcept {
         return handle_ == nullptr ? 0 : enigma_core_inbox_count(handle_);
     }
