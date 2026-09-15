@@ -136,7 +136,7 @@ jobs:
       - name: Verify protoc
         run: protoc --version
       - name: Install Qt 6 development packages
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends qt6-base-dev
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends qt6-base-dev qt6-svg-dev
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.94.1 --profile minimal
       - name: Build Rust ABI library
