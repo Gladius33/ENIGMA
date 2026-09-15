@@ -2,7 +2,10 @@
 
 pub mod session;
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, STANDARD_NO_PAD},
+    Engine as _,
+};
 use enigma_protocol::CanonicalDeviceAuthorization;
 use libsignal_protocol::IdentityKey;
 
@@ -38,6 +41,100 @@ pub enum SignalAdapterError {
     SessionUnavailable,
     CryptoFailure,
     InvalidDeviceAuthorizationProof,
+    InvalidWireEnvelope,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParsedSignalWireEnvelope {
+    pub sender_device_id: String,
+    pub sender_protocol_device_id: u32,
+    pub recipient_device_id: String,
+    pub recipient_protocol_device_id: u32,
+    pub message_type: session::SessionMessageType,
+    pub ciphertext: Vec<u8>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SignalWireEnvelopeDto {
+    version: u16,
+    algorithm: String,
+    message_type: String,
+    sender_device_id: String,
+    sender_protocol_device_id: u32,
+    recipient_device_id: String,
+    recipient_protocol_device_id: u32,
+    ciphertext: String,
+}
+
+pub fn parse_signal_wire_envelope(
+    value: &str,
+    expected_recipient_device_id: &str,
+) -> Result<ParsedSignalWireEnvelope, SignalAdapterError> {
+    const MAX_WIRE_BYTES: usize = 2 * 1024 * 1024;
+
+    if value.is_empty()
+        || value.len() > MAX_WIRE_BYTES * 2
+        || !is_canonical_uuid(expected_recipient_device_id)
+    {
+        return Err(SignalAdapterError::InvalidWireEnvelope);
+    }
+
+    let outer = decode_base64_compat(value).ok_or(SignalAdapterError::InvalidWireEnvelope)?;
+    if outer.is_empty() || outer.len() > MAX_WIRE_BYTES {
+        return Err(SignalAdapterError::InvalidWireEnvelope);
+    }
+    let dto = serde_json::from_slice::<SignalWireEnvelopeDto>(&outer)
+        .map_err(|_| SignalAdapterError::InvalidWireEnvelope)?;
+
+    if dto.version != SIGNAL_ENVELOPE_VERSION
+        || !signal_envelope_algorithm_supported(&dto.algorithm)
+        || !is_canonical_uuid(&dto.sender_device_id)
+        || !is_canonical_uuid(&dto.recipient_device_id)
+        || dto.sender_device_id == dto.recipient_device_id
+        || dto.recipient_device_id != expected_recipient_device_id
+        || dto.sender_protocol_device_id == 0
+        || dto.sender_protocol_device_id > i32::MAX as u32
+        || dto.recipient_protocol_device_id == 0
+        || dto.recipient_protocol_device_id > i32::MAX as u32
+    {
+        return Err(SignalAdapterError::InvalidWireEnvelope);
+    }
+
+    let message_type = match dto.message_type.as_str() {
+        "prekey" => session::SessionMessageType::PreKey,
+        "signal" => session::SessionMessageType::Signal,
+        _ => return Err(SignalAdapterError::InvalidWireEnvelope),
+    };
+    let ciphertext =
+        decode_base64_compat(&dto.ciphertext).ok_or(SignalAdapterError::InvalidWireEnvelope)?;
+    if ciphertext.is_empty() || ciphertext.len() > MAX_WIRE_BYTES {
+        return Err(SignalAdapterError::InvalidWireEnvelope);
+    }
+
+    Ok(ParsedSignalWireEnvelope {
+        sender_device_id: dto.sender_device_id,
+        sender_protocol_device_id: dto.sender_protocol_device_id,
+        recipient_device_id: dto.recipient_device_id,
+        recipient_protocol_device_id: dto.recipient_protocol_device_id,
+        message_type,
+        ciphertext,
+    })
+}
+
+fn decode_base64_compat(value: &str) -> Option<Vec<u8>> {
+    STANDARD_NO_PAD
+        .decode(value)
+        .or_else(|_| STANDARD.decode(value))
+        .ok()
+}
+
+fn is_canonical_uuid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
+        })
 }
 
 pub trait SignalAdapter {
@@ -387,6 +484,41 @@ mod tests {
         assert_eq!(
             verifier.verify_identity_proof(&[1, 2, 3], b"transcript", &[7; 64]),
             Err(SignalAdapterError::CryptoFailure)
+        );
+    }
+
+    #[test]
+    fn android_signal_wire_envelope_parser_is_strict_and_device_bound() {
+        let json = r#"{"version":1,"algorithm":"Signal-Protocol-libsignal-0.86.5","messageType":"prekey","senderDeviceId":"11111111-1111-4111-8111-111111111111","senderProtocolDeviceId":1,"recipientDeviceId":"22222222-2222-4222-8222-222222222222","recipientProtocolDeviceId":1,"ciphertext":"AQID"}"#;
+        let outer = STANDARD_NO_PAD.encode(json.as_bytes());
+        let parsed = parse_signal_wire_envelope(
+            &outer,
+            "22222222-2222-4222-8222-222222222222",
+        )
+        .expect("valid Android wire envelope");
+        assert_eq!(parsed.sender_device_id, "11111111-1111-4111-8111-111111111111");
+        assert_eq!(parsed.sender_protocol_device_id, 1);
+        assert_eq!(parsed.message_type, session::SessionMessageType::PreKey);
+        assert_eq!(parsed.ciphertext, vec![1, 2, 3]);
+
+        assert_eq!(
+            parse_signal_wire_envelope(
+                &outer,
+                "33333333-3333-4333-8333-333333333333"
+            ),
+            Err(SignalAdapterError::InvalidWireEnvelope)
+        );
+
+        let tampered = STANDARD_NO_PAD.encode(
+            json.replace("\"messageType\":\"prekey\"", "\"messageType\":\"unknown\"")
+                .as_bytes(),
+        );
+        assert_eq!(
+            parse_signal_wire_envelope(
+                &tampered,
+                "22222222-2222-4222-8222-222222222222"
+            ),
+            Err(SignalAdapterError::InvalidWireEnvelope)
         );
     }
 
