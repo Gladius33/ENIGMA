@@ -1095,7 +1095,7 @@ fn load_or_create_desktop_vault() -> Result<SodiumRecordVault, ()> {
             let mut key = [0_u8; INBOX_MASTER_KEY_BYTES];
             key.copy_from_slice(&raw);
             raw.fill(0);
-            SodiumRecordVault::import_key_and_wipe(&mut key).map_err(|_| ())?
+            SodiumRecordVault::import_key_and_wipe(&mut key).map_err(|_| ())
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let mut key = random_public_bytes::<INBOX_MASTER_KEY_BYTES>().map_err(|_| ())?;
@@ -1115,7 +1115,7 @@ fn load_or_create_desktop_vault() -> Result<SodiumRecordVault, ()> {
                 key.fill(0);
                 return Err(());
             }
-            SodiumRecordVault::import_key_and_wipe(&mut key).map_err(|_| ())?
+            SodiumRecordVault::import_key_and_wipe(&mut key).map_err(|_| ())
         }
         Err(_) => Err(()),
     }
