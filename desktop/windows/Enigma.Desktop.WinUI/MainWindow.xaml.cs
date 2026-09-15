@@ -1,5 +1,6 @@
 using System;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Enigma.Desktop.Interop;
 using Microsoft.UI.Xaml;
@@ -58,8 +59,13 @@ public sealed partial class MainWindow : Window
                         : "Le cœur Rust n’est pas prêt";
 
             MessageComposer.IsEnabled = operationalReady;
+            ContactSelector.IsEnabled = operationalReady;
             SendButton.IsEnabled = operationalReady;
             DevicesButton.IsEnabled = signalReady;
+            if (operationalReady)
+            {
+                RefreshContacts();
+            }
         }
         catch (DllNotFoundException)
         {
@@ -84,6 +90,7 @@ public sealed partial class MainWindow : Window
         CoreStatusText.Text = "Cœur sécurisé indisponible";
         CoreDetailText.Text = detail;
         MessageComposer.IsEnabled = false;
+        ContactSelector.IsEnabled = false;
         SendButton.IsEnabled = false;
     }
 
@@ -202,7 +209,9 @@ public sealed partial class MainWindow : Window
                                 ? $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion} • {inboxCount} message(s) local(aux)"
                                 : $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion} • {outboxCount} livraison(s) en attente";
                             MessageComposer.IsEnabled = true;
+                            ContactSelector.IsEnabled = true;
                             SendButton.IsEnabled = true;
+                            RefreshContacts();
                             dialog.Hide();
                         }
                         else
@@ -250,6 +259,90 @@ public sealed partial class MainWindow : Window
         {
             _core.CancelPairing();
         }
+    }
+
+    private void RefreshContacts()
+    {
+        if (_core is null || !_core.DeviceSessionReady)
+        {
+            return;
+        }
+
+        ContactSelector.Items.Clear();
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(_core.ReadContactsJson());
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return;
+            }
+
+            foreach (JsonElement contact in document.RootElement.EnumerateArray())
+            {
+                if (!contact.TryGetProperty("user_id", out JsonElement userIdElement) ||
+                    !contact.TryGetProperty("public_id", out JsonElement publicIdElement))
+                {
+                    continue;
+                }
+                string? userId = userIdElement.GetString();
+                string? publicId = publicIdElement.GetString();
+                if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(publicId))
+                {
+                    continue;
+                }
+                ContactSelector.Items.Add(new ComboBoxItem
+                {
+                    Content = publicId,
+                    Tag = userId,
+                });
+            }
+
+            if (ContactSelector.Items.Count > 0)
+            {
+                ContactSelector.SelectedIndex = 0;
+            }
+        }
+        catch (JsonException)
+        {
+            CoreDetailText.Text = "La liste de contacts reçue est invalide.";
+        }
+    }
+
+    private async void OnSendClick(object sender, RoutedEventArgs args)
+    {
+        if (_core is null ||
+            ContactSelector.SelectedItem is not ComboBoxItem selected ||
+            selected.Tag is not string recipientUserId)
+        {
+            CoreDetailText.Text = "Choisissez un contact avant d’envoyer.";
+            return;
+        }
+
+        string plaintext = MessageComposer.Text.Trim();
+        if (string.IsNullOrWhiteSpace(plaintext))
+        {
+            return;
+        }
+
+        SendButton.IsEnabled = false;
+        MessageComposer.IsEnabled = false;
+        bool queued = await Task.Run(() => _core.SendTextToContact(recipientUserId, plaintext));
+        nuint pending = _core.OutboxCount;
+
+        if (queued)
+        {
+            MessageComposer.Text = string.Empty;
+            CoreDetailText.Text = pending == 0
+                ? "Message chiffré et remis à tous les appareils disponibles."
+                : $"Message chiffré • {pending} livraison(s) durablement en attente.";
+        }
+        else
+        {
+            CoreDetailText.Text = "Échec de la mise en file chiffrée du message.";
+        }
+
+        MessageComposer.IsEnabled = true;
+        SendButton.IsEnabled = true;
     }
 
     private void OnClosed(object sender, WindowEventArgs args)
