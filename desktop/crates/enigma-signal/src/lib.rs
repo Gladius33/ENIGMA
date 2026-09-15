@@ -310,6 +310,51 @@ pub struct DeviceAuthorizationExpectation<'a> {
     pub authorizer_identity_key: &'a str,
 }
 
+pub fn verify_linked_device_authorization_binding<A: SignalAdapter>(
+    adapter: &A,
+    known_authorizer_identity_public: &[u8],
+    canonical_payload: &str,
+    authorizer_signature: &[u8],
+    account_id: &str,
+    target_device_id: &str,
+    expected_authorizer_device_id: &str,
+    target_identity_key: &str,
+) -> Result<(), SignalAdapterError> {
+    if known_authorizer_identity_public.is_empty()
+        || authorizer_signature.is_empty()
+        || authorizer_signature.len() > 4096
+        || account_id.is_empty()
+        || target_device_id.is_empty()
+        || expected_authorizer_device_id.is_empty()
+        || target_identity_key.is_empty()
+    {
+        return Err(SignalAdapterError::InvalidDeviceAuthorizationProof);
+    }
+
+    let parsed = CanonicalDeviceAuthorization::parse(canonical_payload)
+        .map_err(|_| SignalAdapterError::InvalidDeviceAuthorizationProof)?;
+    if parsed.account_id != account_id
+        || parsed.new_device_id != target_device_id
+        || parsed.authorizing_device_id != expected_authorizer_device_id
+        || parsed.target_identity_key != target_identity_key
+        || parsed.authorizer_identity_key != STANDARD.encode(known_authorizer_identity_public)
+        || parsed.protocol_version != 1
+        || parsed.min_supported_version > 1
+        || parsed.min_supported_version == 0
+    {
+        return Err(SignalAdapterError::InvalidDeviceAuthorizationProof);
+    }
+
+    match adapter.verify_identity_proof(
+        known_authorizer_identity_public,
+        canonical_payload.as_bytes(),
+        authorizer_signature,
+    )? {
+        true => Ok(()),
+        false => Err(SignalAdapterError::InvalidDeviceAuthorizationProof),
+    }
+}
+
 pub fn verify_device_authorization_proof<A: SignalAdapter>(
     adapter: &A,
     known_authorizer_identity_public: &[u8],
@@ -450,6 +495,39 @@ mod tests {
             target_identity_key: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB",
             authorizer_identity_key: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC",
         }
+    }
+
+    #[test]
+    fn linked_device_binding_rejects_wrong_authorizer_or_target() {
+        let verifier = ProofVerifier {
+            accepts_signature: true,
+        };
+        assert_eq!(
+            verify_linked_device_authorization_binding(
+                &verifier,
+                &[2; 33],
+                certified_transcript(),
+                &[7, 7],
+                "33333333-3333-4333-8333-333333333333",
+                "11111111-1111-4111-8111-111111111111",
+                "44444444-4444-4444-8444-444444444444",
+                "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB",
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            verify_linked_device_authorization_binding(
+                &verifier,
+                &[2; 33],
+                certified_transcript(),
+                &[7, 7],
+                "33333333-3333-4333-8333-333333333333",
+                "11111111-1111-4111-8111-111111111111",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB",
+            ),
+            Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
+        );
     }
 
     #[test]
