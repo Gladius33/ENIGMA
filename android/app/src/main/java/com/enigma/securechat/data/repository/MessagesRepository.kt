@@ -106,6 +106,9 @@ class MessagesRepository(
             "Empty message payload"
         }
         val senderDeviceId = requireNotNull(deviceStore.deviceId()) { "Device is not registered" }
+        val deliveryOutbox = requireNotNull(messageDeliveryOutboxStore) {
+            "Message delivery outbox unavailable"
+        }
         val activeBubbleId = activeBubbleIdProvider()
         val conversation = conversationId?.let { conversationDao.findById(it) }
             ?: conversationDao.findByContact(contact.userId, activeBubbleId)
@@ -134,7 +137,7 @@ class MessagesRepository(
                 "Recipient device is missing libsignal protocol metadata"
             }
             val ciphertext = cryptoEngine.encryptText(encodedPayload, remoteRef)
-            messageDeliveryOutboxStore?.enqueue(
+            deliveryOutbox.enqueue(
                 bubbleId = conversation.bubbleId,
                 senderDeviceId = senderDeviceId,
                 recipientUserId = contact.userId,
@@ -143,7 +146,7 @@ class MessagesRepository(
                 messageType = payload.messageType(),
                 ciphertext = ciphertext,
                 senderSync = false,
-            ) ?: error("Message delivery outbox unavailable")
+            )
             if (primaryDevice == null) {
                 primaryDevice = prepared
                 primaryCiphertext = ciphertext
@@ -185,7 +188,7 @@ class MessagesRepository(
                     "Sibling device is missing libsignal protocol metadata"
                 }
                 val syncCiphertext = cryptoEngine.encryptText(senderSyncPayload, siblingRef)
-                messageDeliveryOutboxStore.enqueue(
+                deliveryOutbox.enqueue(
                     bubbleId = conversation.bubbleId,
                     senderDeviceId = senderDeviceId,
                     recipientUserId = ownSession.userId,
@@ -216,7 +219,7 @@ class MessagesRepository(
         messageDao.upsert(queued.toEntity())
 
         flushMessageDeliveries(localId, payload)
-        if (messageDeliveryOutboxStore.hasPendingFor(localId)) {
+        if (deliveryOutbox.hasPendingFor(localId)) {
             messageDao.updateStatus(localId, MessageStatus.FAILED.name)
             error("MULTIDEVICE_FANOUT_INCOMPLETE")
         }
