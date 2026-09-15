@@ -341,16 +341,14 @@ mod tests {
 
     #[test]
     fn pairing_bootstrap_enforces_short_lived_ttl_and_signs() {
-        assert_eq!(
-            PairingBootstrap::generate(1_000, MIN_PAIRING_TTL_MS - 1)
-                .expect_err("short TTL must fail"),
-            PairingBootstrapError::InvalidTtl
-        );
-        assert_eq!(
-            PairingBootstrap::generate(1_000, MAX_PAIRING_TTL_MS + 1)
-                .expect_err("long TTL must fail"),
-            PairingBootstrapError::InvalidTtl
-        );
+        assert!(matches!(
+            PairingBootstrap::generate(1_000, MIN_PAIRING_TTL_MS - 1),
+            Err(PairingBootstrapError::InvalidTtl)
+        ));
+        assert!(matches!(
+            PairingBootstrap::generate(1_000, MAX_PAIRING_TTL_MS + 1),
+            Err(PairingBootstrapError::InvalidTtl)
+        ));
 
         let bootstrap = PairingBootstrap::generate(1_000, DEFAULT_PAIRING_TTL_MS)
             .expect("pairing bootstrap");
