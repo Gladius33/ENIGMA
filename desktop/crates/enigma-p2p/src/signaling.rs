@@ -13,7 +13,6 @@ use tokio_tungstenite::{
         protocol::Message,
     },
 };
-use webrtc::runtime::{default_runtime, Runtime};
 
 const MAX_SIGNAL_PAYLOAD_BYTES: usize = 131_072;
 const MAX_SERVER_EVENT_BYTES: usize = MAX_SIGNAL_PAYLOAD_BYTES + 4_096;
@@ -90,23 +89,11 @@ enum WsServerEvent {
 pub struct SignalingClient {
     outgoing: async_mpsc::Sender<P2pSignalCommand>,
     incoming: Mutex<mpsc::Receiver<P2pSignalingEvent>>,
+    _runtime: tokio::runtime::Runtime,
 }
 
 impl SignalingClient {
     pub fn connect_blocking(
-        base_url: &str,
-        device_id: &str,
-        access_token: &[u8],
-    ) -> Result<Self, P2pSignalingError> {
-        let runtime = default_runtime().ok_or(P2pSignalingError::RuntimeUnavailable)?;
-        let mut result = None;
-        runtime.block_on(Box::pin(async {
-            result = Some(Self::connect(base_url, device_id, access_token).await);
-        }));
-        result.ok_or(P2pSignalingError::RuntimeUnavailable)?
-    }
-
-    pub async fn connect(
         base_url: &str,
         device_id: &str,
         access_token: &[u8],
@@ -132,15 +119,20 @@ impl SignalingClient {
             .map_err(|_| P2pSignalingError::InvalidCredential)?;
         request.headers_mut().insert(AUTHORIZATION, authorization);
 
-        let (socket, _) = connect_async(request)
-            .await
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .thread_name("enigma-p2p-ws")
+            .build()
+            .map_err(|_| P2pSignalingError::RuntimeUnavailable)?;
+        let (socket, _) = runtime
+            .block_on(connect_async(request))
             .map_err(|_| P2pSignalingError::ConnectionFailed)?;
         let (mut writer, mut reader) = socket.split();
         let (outgoing, mut commands) = async_mpsc::channel(COMMAND_QUEUE_CAPACITY);
         let (events, incoming) = mpsc::channel();
-        let runtime = default_runtime().ok_or(P2pSignalingError::RuntimeUnavailable)?;
 
-        runtime.spawn(Box::pin(async move {
+        runtime.spawn(async move {
             loop {
                 tokio::select! {
                     command = commands.recv() => {
@@ -196,11 +188,12 @@ impl SignalingClient {
                     }
                 }
             }
-        }));
+        });
 
         Ok(Self {
             outgoing,
             incoming: Mutex::new(incoming),
+            _runtime: runtime,
         })
     }
 
@@ -208,14 +201,6 @@ impl SignalingClient {
         validate_command(&command)?;
         self.outgoing
             .try_send(command)
-            .map_err(|_| P2pSignalingError::QueueClosed)
-    }
-
-    pub async fn send(&self, command: P2pSignalCommand) -> Result<(), P2pSignalingError> {
-        validate_command(&command)?;
-        self.outgoing
-            .send(command)
-            .await
             .map_err(|_| P2pSignalingError::QueueClosed)
     }
 
