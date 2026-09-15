@@ -29,6 +29,21 @@ data class DeviceDto(
     val authorization: DeviceAuthorizationDto? = null,
 )
 
+data class PairingCandidateDto(
+    @Json(name = "pairing_session_id") val pairingSessionId: String,
+    @Json(name = "device_id") val deviceId: String,
+    @Json(name = "display_name") val displayName: String,
+    val platform: String,
+    @Json(name = "protocol_version") val protocolVersion: Int,
+    @Json(name = "min_supported_version") val minSupportedVersion: Int,
+    val capabilities: Long,
+    @Json(name = "expires_at_unix_ms") val expiresAtUnixMs: Long,
+    @Json(name = "pairing_public_key") val pairingPublicKey: String,
+    @Json(name = "target_identity_key") val targetIdentityKey: String,
+    @Json(name = "claim_secret_hash") val claimSecretHash: String,
+    @Json(name = "candidate_commitment") val candidateCommitment: String,
+)
+
 data class AuthorizeLinkedDesktopRequestDto(
     @Json(name = "device_id") val deviceId: String,
     @Json(name = "display_name") val displayName: String,
@@ -39,14 +54,13 @@ data class AuthorizeLinkedDesktopRequestDto(
     val capabilities: Long,
     @Json(name = "issued_at_unix_ms") val issuedAtUnixMs: Long,
     @Json(name = "target_identity_key") val targetIdentityKey: String,
+    @Json(name = "candidate_commitment") val candidateCommitment: String,
     @Json(name = "authorizer_signature") val authorizerSignature: String,
 )
 
 data class LinkedDesktopResponseDto(
     val device: DeviceDto,
-    @Json(name = "access_token") val accessToken: String,
-    @Json(name = "token_type") val tokenType: String,
-    @Json(name = "expires_in") val expiresIn: Long,
+    val status: String,
 )
 
 data class DevicesResponseDto(
