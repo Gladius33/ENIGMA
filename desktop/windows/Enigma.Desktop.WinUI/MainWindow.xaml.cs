@@ -13,13 +13,17 @@ namespace Enigma.Desktop.WinUI;
 
 public sealed partial class MainWindow : Window
 {
+    private readonly DispatcherTimer _p2pPollTimer = new();
     private EnigmaCoreClient? _core;
+    private bool _p2pPollInFlight;
 
     public MainWindow()
     {
         InitializeComponent();
         Closed += OnClosed;
         ContactSelector.SelectionChanged += OnContactSelectionChanged;
+        _p2pPollTimer.Interval = TimeSpan.FromMilliseconds(750);
+        _p2pPollTimer.Tick += OnP2pPollTick;
         InitializeSecureCore();
     }
 
@@ -69,6 +73,7 @@ public sealed partial class MainWindow : Window
             {
                 RefreshContacts();
                 RefreshMessages();
+                _p2pPollTimer.Start();
             }
         }
         catch (DllNotFoundException)
@@ -97,6 +102,37 @@ public sealed partial class MainWindow : Window
         ContactSelector.IsEnabled = false;
         SendButton.IsEnabled = false;
         RefreshButton.IsEnabled = false;
+        _p2pPollTimer.Stop();
+    }
+
+    private async void OnP2pPollTick(object? sender, object args)
+    {
+        if (_p2pPollInFlight || _core is null || !_core.DeviceSessionReady)
+        {
+            return;
+        }
+
+        _p2pPollInFlight = true;
+        try
+        {
+            nuint before = _core.InboxCount;
+            bool healthy = await Task.Run(() => _core.PollP2p());
+            nuint after = _core.InboxCount;
+            if (healthy && after != before)
+            {
+                RefreshMessages();
+                CoreDetailText.Text =
+                    $"P2P E2EE reçu • {after} message(s) local(aux) • relay fallback disponible";
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            _p2pPollTimer.Stop();
+        }
+        finally
+        {
+            _p2pPollInFlight = false;
+        }
     }
 
     private async void OnManageDevicesClick(object sender, RoutedEventArgs args)
@@ -219,6 +255,7 @@ public sealed partial class MainWindow : Window
                             RefreshButton.IsEnabled = true;
                             RefreshContacts();
                             RefreshMessages();
+                            _p2pPollTimer.Start();
                             dialog.Hide();
                         }
                         else
@@ -545,6 +582,7 @@ public sealed partial class MainWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        _p2pPollTimer.Stop();
         _core?.Dispose();
         _core = null;
     }
