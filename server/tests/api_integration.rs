@@ -194,8 +194,7 @@ async fn core_endpoint_flow() {
     let bob_second_token = bob_second_login["access_token"]
         .as_str()
         .expect("bob second bootstrap token");
-    let bob_second_device =
-        register_device(app.clone(), bob_second_token, "Bob Desktop").await;
+    let bob_second_device = register_device(app.clone(), bob_second_token, "Bob Desktop").await;
     let bob_second_device_id = bob_second_device["device"]["id"]
         .as_str()
         .expect("bob second device id");
@@ -547,7 +546,10 @@ async fn core_endpoint_flow() {
         second_pending["messages"][0]["client_message_id"],
         client_message_id
     );
-    assert_eq!(second_pending["messages"][0]["ciphertext"], second_ciphertext);
+    assert_eq!(
+        second_pending["messages"][0]["ciphertext"],
+        second_ciphertext
+    );
 
     let (status, pending) = request_json(
         app.clone(),
