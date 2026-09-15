@@ -40,6 +40,10 @@ pub(crate) struct DurableInboxEntry {
     pub contact_display_name: Option<String>,
     #[serde(default)]
     pub original_created_at_unix_ms: Option<i64>,
+    #[serde(default)]
+    pub delivery_status: Option<String>,
+    #[serde(default)]
+    pub delivery_updated_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -84,6 +88,49 @@ impl EncryptedDesktopInbox {
             .read_entries()?
             .iter()
             .any(|entry| entry.remote_message_id == remote_message_id))
+    }
+
+    pub(crate) fn apply_outbound_receipts(
+        &self,
+        receipts: &[(String, String, String, String)],
+    ) -> Result<bool, ()> {
+        if receipts.len() > 500 {
+            return Err(());
+        }
+
+        for (bubble_id, client_message_id, status, delivered_at) in receipts {
+            validate_uuid(bubble_id)?;
+            validate_uuid(client_message_id)?;
+            if !matches!(status.as_str(), "delivered" | "read")
+                || delivered_at.is_empty()
+                || delivered_at.len() > 128
+            {
+                return Err(());
+            }
+        }
+
+        let mut entries = self.read_entries()?;
+        let mut changed = false;
+        for (bubble_id, client_message_id, status, delivered_at) in receipts {
+            for entry in entries.iter_mut().filter(|entry| {
+                entry.direction == "outbound"
+                    && entry.bubble_id == *bubble_id
+                    && entry.client_message_id == *client_message_id
+            }) {
+                let current_rank = delivery_status_rank(entry.delivery_status.as_deref());
+                let next_rank = delivery_status_rank(Some(status));
+                if next_rank > current_rank {
+                    entry.delivery_status = Some(status.clone());
+                    entry.delivery_updated_at = Some(delivered_at.clone());
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
+            self.write_entries(&entries)?;
+        }
+        Ok(changed)
     }
 
     pub(crate) fn append(&self, entry: DurableInboxEntry) -> Result<(), ()> {
@@ -249,7 +296,27 @@ pub(crate) fn validate_entry(entry: &DurableInboxEntry) -> Result<(), ()> {
     {
         return Err(());
     }
+    if entry
+        .delivery_status
+        .as_deref()
+        .is_some_and(|status| !matches!(status, "sent" | "delivered" | "read"))
+        || entry
+            .delivery_updated_at
+            .as_ref()
+            .is_some_and(|value| value.is_empty() || value.len() > 128)
+    {
+        return Err(());
+    }
     Ok(())
+}
+
+fn delivery_status_rank(status: Option<&str>) -> u8 {
+    match status {
+        Some("read") => 3,
+        Some("delivered") => 2,
+        Some("sent") => 1,
+        _ => 0,
+    }
 }
 
 fn validate_uuid(value: &str) -> Result<(), ()> {
@@ -291,6 +358,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn delivery_status_is_monotonic() {
+        assert_eq!(delivery_status_rank(None), 0);
+        assert_eq!(delivery_status_rank(Some("sent")), 1);
+        assert_eq!(delivery_status_rank(Some("delivered")), 2);
+        assert_eq!(delivery_status_rank(Some("read")), 3);
+        assert!(
+            delivery_status_rank(Some("delivered")) > delivery_status_rank(Some("sent"))
+        );
+        assert!(delivery_status_rank(Some("read")) > delivery_status_rank(Some("delivered")));
+    }
+
+    #[test]
     fn validates_canonical_message_identity() {
         let entry = DurableInboxEntry {
             remote_message_id: "11111111-1111-4111-8111-111111111111".into(),
@@ -309,6 +388,8 @@ mod tests {
             contact_public_id: Some("alice".into()),
             contact_display_name: Some("alice".into()),
             original_created_at_unix_ms: None,
+            delivery_status: Some("delivered".into()),
+            delivery_updated_at: Some("2026-09-15T12:00:00Z".into()),
         };
         assert_eq!(validate_entry(&entry), Ok(()));
         assert!(validate_entry(&DurableInboxEntry {
