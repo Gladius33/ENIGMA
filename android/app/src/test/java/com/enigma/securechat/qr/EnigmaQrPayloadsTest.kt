@@ -1,5 +1,6 @@
 package com.enigma.securechat.qr
 
+import java.io.File
 import java.util.Base64
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -90,6 +91,22 @@ class EnigmaQrPayloadsTest {
             ),
         )
         assertEquals(null, EnigmaQrPayloads.parse(expired.uri))
+    }
+
+    @Test
+    fun parsesDesktopRustPairingBootstrapFromInteropFixture() {
+        val fixturePath = System.getenv("ENIGMA_ANDROID_PAIRING_URI") ?: return
+        val uri = File(fixturePath).readText().trim()
+        val parsed = EnigmaQrPayloads.parse(uri)
+
+        assertTrue(parsed is ParsedEnigmaQrPayload.PairDevice)
+        val pairing = (parsed as ParsedEnigmaQrPayload.PairDevice).payload
+        assertEquals(1, pairing.version)
+        assertEquals(1, pairing.protocol_version)
+        assertEquals(1, pairing.min_supported_version)
+        assertTrue(pairing.capabilities and (1L shl 2) != 0L)
+        assertTrue(pairing.expires_at_unix_ms > System.currentTimeMillis())
+        assertTrue(Base64.getDecoder().decode(pairing.pairing_public_key).isNotEmpty())
     }
 
     @Test
