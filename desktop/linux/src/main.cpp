@@ -160,7 +160,7 @@ int main(int argc, char* argv[]) {
             ? QStringLiteral("Le cœur Rust/libsignal est prêt.")
             : coreDetail);
 
-    QObject::connect(pairDevice, &QPushButton::clicked, [&window, &core]() {
+    QObject::connect(pairDevice, &QPushButton::clicked, [&window, &core, status]() {
         if (!core || !core->signalReady() || !core->startPairing()) return;
 
         const std::string svg = core->pairingSvg();
@@ -197,6 +197,45 @@ int main(int argc, char* argv[]) {
         uriField->setReadOnly(true);
         uriField->setAccessibleName(QStringLiteral("URI d’appairage"));
 
+        auto* pairingStatus = new QLabel(
+            QStringLiteral("En attente de l’autorisation Android…"),
+            &dialog);
+        pairingStatus->setWordWrap(true);
+
+        auto* finalize = new QPushButton(QStringLiteral("Finaliser la liaison"), &dialog);
+        QObject::connect(finalize, &QPushButton::clicked, [&dialog, &core, pairingStatus, finalize, status]() {
+            if (!core) return;
+            finalize->setEnabled(false);
+            const std::uint32_t claimState = core->claimPairing();
+            switch (claimState) {
+                case ENIGMA_PAIRING_CLAIMED:
+                    pairingStatus->setText(QStringLiteral("Ordinateur lié avec succès."));
+                    status->setText(QStringLiteral("Cœur sécurisé prêt • appareil lié"));
+                    dialog.accept();
+                    break;
+                case ENIGMA_PAIRING_CLAIM_PENDING:
+                    pairingStatus->setText(
+                        QStringLiteral("Autorisez d’abord cet ordinateur depuis Android."));
+                    finalize->setEnabled(true);
+                    break;
+                case ENIGMA_PAIRING_CLAIM_EXPIRED:
+                    pairingStatus->setText(QStringLiteral("La session d’appairage a expiré."));
+                    break;
+                case ENIGMA_PAIRING_CLAIM_ALREADY_USED:
+                    pairingStatus->setText(
+                        QStringLiteral("Cette session d’appairage a déjà été utilisée."));
+                    break;
+                case ENIGMA_PAIRING_CLAIM_MISSING:
+                    pairingStatus->setText(QStringLiteral("Session d’appairage introuvable."));
+                    break;
+                default:
+                    pairingStatus->setText(
+                        QStringLiteral("Le serveur d’appairage est momentanément indisponible."));
+                    finalize->setEnabled(true);
+                    break;
+            }
+        });
+
         auto* close = new QPushButton(QStringLiteral("Fermer"), &dialog);
         QObject::connect(close, &QPushButton::clicked, &dialog, &QDialog::accept);
 
@@ -204,6 +243,8 @@ int main(int argc, char* argv[]) {
         layout->addWidget(qr, 0, Qt::AlignHCenter);
         layout->addWidget(expiry);
         layout->addWidget(uriField);
+        layout->addWidget(pairingStatus);
+        layout->addWidget(finalize, 0, Qt::AlignLeft);
         layout->addWidget(close, 0, Qt::AlignRight);
 
         dialog.exec();
