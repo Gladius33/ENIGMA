@@ -23,6 +23,7 @@ import com.enigma.securechat.data.repository.InstallSource
 import com.enigma.securechat.data.repository.JcaEd25519ApkSignatureVerifier
 import com.enigma.securechat.data.repository.LocalAccountDataPurger
 import com.enigma.securechat.data.repository.MediaRepository
+import com.enigma.securechat.data.repository.MessageDeliveryOutboxStore
 import com.enigma.securechat.data.repository.MessagesRepository
 import com.enigma.securechat.data.repository.OkHttpApkDownloader
 import com.enigma.securechat.data.repository.RelayRepository
@@ -66,6 +67,7 @@ class AppContainer(context: Context) {
     val fileStore = SecureFileStore(appContext)
     val p2pReceiptOutboxStore = P2pReceiptOutboxStore(appContext, localCipher)
     val p2pAttachmentCommitOutboxStore = P2pAttachmentCommitOutboxStore(appContext, localCipher)
+    val messageDeliveryOutboxStore = MessageDeliveryOutboxStore(appContext, localCipher)
     private val signalRecordStorage = SharedPreferencesSignalRecordStorage(appContext, localCipher)
     private val signalStore = PersistentSignalProtocolStore.open(signalRecordStorage)
     val cryptoEngine: CryptoEngine = SignalCryptoEngine(signalStore).also(ReleaseCryptoGuard::requireSignalCrypto)
@@ -147,6 +149,7 @@ class AppContainer(context: Context) {
         fileStore = fileStore,
         p2pReceiptOutboxStore = p2pReceiptOutboxStore,
         p2pAttachmentCommitOutboxStore = p2pAttachmentCommitOutboxStore,
+        messageDeliveryOutboxStore = messageDeliveryOutboxStore,
     )
     val identityRepository = IdentityRepository(
         api = api,
@@ -205,6 +208,8 @@ class AppContainer(context: Context) {
         p2pReceiptOutboxStore = p2pReceiptOutboxStore,
         attachmentRepository = attachmentRepository,
         p2pAttachmentCommitOutboxStore = p2pAttachmentCommitOutboxStore,
+        messageDeliveryOutboxStore = messageDeliveryOutboxStore,
+        sessionStore = sessionStore,
         highSecurityModeProvider = { serverSettingsStore.highSecurityMode.firstOrNull() ?: false },
         activeBubbleIdProvider = { bubbleRepository.currentNetworkBubbleId() },
     ).also { repository ->
