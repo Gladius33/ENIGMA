@@ -115,7 +115,10 @@ pub unsafe extern "C" fn enigma_core_signal_is_ready(handle: *const EnigmaCoreHa
 }
 
 fn current_unix_ms() -> Option<u64> {
-    let millis = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_millis();
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis();
     u64::try_from(millis).ok()
 }
 
