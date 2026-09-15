@@ -20,7 +20,7 @@ public sealed partial class MainWindow : Window
         InitializeSecureCore();
     }
 
-    private void InitializeSecureCore()
+    private async void InitializeSecureCore()
     {
         try
         {
@@ -28,20 +28,32 @@ public sealed partial class MainWindow : Window
             bool runtimeReady = _core.IsReady;
             bool signalReady = runtimeReady &&
                 (_core.SignalReady || _core.EnsureDefaultSignalIdentity());
+            bool sessionReady = signalReady && _core.DeviceSessionReady;
+            bool deviceReady = sessionReady && await Task.Run(() => _core.InitializeDevice());
+            bool operationalReady = signalReady && sessionReady && deviceReady;
 
-            CoreStatusText.Text = signalReady
-                ? "Cœur sécurisé prêt"
-                : runtimeReady
-                    ? "Identité E2EE protégée requise"
-                    : "Cœur sécurisé indisponible";
-            CoreDetailText.Text = signalReady
-                ? $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion}"
-                : runtimeReady
-                    ? $"Rust chargé • ABI {EnigmaCoreClient.AbiVersion} • identité libsignal non restaurée"
-                    : "Le cœur Rust n’est pas prêt";
+            CoreStatusText.Text = operationalReady
+                ? "Cœur sécurisé prêt • appareil lié"
+                : signalReady
+                    ? sessionReady
+                        ? "Session liée • initialisation réseau requise"
+                        : "Appairage Android requis"
+                    : runtimeReady
+                        ? "Identité E2EE protégée requise"
+                        : "Cœur sécurisé indisponible";
+            CoreDetailText.Text = operationalReady
+                ? $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion} • prekeys publiées"
+                : signalReady
+                    ? sessionReady
+                        ? "Session device restaurée, mais la publication des prekeys doit être réessayée"
+                        : "Identité libsignal prête • liez cet ordinateur depuis Android"
+                    : runtimeReady
+                        ? $"Rust chargé • ABI {EnigmaCoreClient.AbiVersion} • identité libsignal non restaurée"
+                        : "Le cœur Rust n’est pas prêt";
 
-            MessageComposer.IsEnabled = signalReady;
-            SendButton.IsEnabled = signalReady;
+            MessageComposer.IsEnabled = operationalReady;
+            SendButton.IsEnabled = operationalReady;
+            DevicesButton.IsEnabled = signalReady;
         }
         catch (DllNotFoundException)
         {
@@ -164,13 +176,31 @@ public sealed partial class MainWindow : Window
                     return;
                 }
                 finalizeButton.IsEnabled = false;
-                EnigmaPairingClaimState state = await Task.Run(() => _core.TryClaimPairing());
+                EnigmaPairingClaimState state = _core.DeviceSessionReady
+                    ? EnigmaPairingClaimState.Claimed
+                    : await Task.Run(() => _core.TryClaimPairing());
                 switch (state)
                 {
                     case EnigmaPairingClaimState.Claimed:
-                        pairingStatus.Text = "Ordinateur lié avec succès.";
-                        CoreStatusText.Text = "Cœur sécurisé prêt • appareil lié";
-                        dialog.Hide();
+                        pairingStatus.Text = "Session autorisée. Publication des clés libsignal…";
+                        bool initialized = await Task.Run(() => _core.InitializeDevice());
+                        if (initialized)
+                        {
+                            pairingStatus.Text = "Ordinateur lié avec succès.";
+                            CoreStatusText.Text = "Cœur sécurisé prêt • appareil lié";
+                            CoreDetailText.Text =
+                                $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion} • prekeys publiées";
+                            MessageComposer.IsEnabled = true;
+                            SendButton.IsEnabled = true;
+                            dialog.Hide();
+                        }
+                        else
+                        {
+                            pairingStatus.Text =
+                                "Ordinateur autorisé, mais l’initialisation réseau a échoué. Réessayez sans rescanner le QR.";
+                            finalizeButton.Content = "Réessayer l’initialisation";
+                            finalizeButton.IsEnabled = true;
+                        }
                         break;
                     case EnigmaPairingClaimState.PendingAuthorization:
                         pairingStatus.Text = "Autorisez d’abord cet ordinateur depuis Android.";
