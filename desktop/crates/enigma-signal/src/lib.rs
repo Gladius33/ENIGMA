@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod persistent_store;
 pub mod session;
 
 use base64::{
