@@ -45,6 +45,7 @@ bool enigma_core_pairing_start(EnigmaCoreHandle *handle);
 bool enigma_core_pairing_publish(EnigmaCoreHandle *handle);
 uint32_t enigma_core_pairing_claim(EnigmaCoreHandle *handle);
 bool enigma_core_device_session_ready(const EnigmaCoreHandle *handle);
+bool enigma_core_device_initialize(EnigmaCoreHandle *handle);
 void enigma_core_pairing_cancel(EnigmaCoreHandle *handle);
 size_t enigma_core_pairing_uri_len(const EnigmaCoreHandle *handle);
 bool enigma_core_pairing_uri_copy(
