@@ -1008,7 +1008,10 @@ fn prepare_outbound_delivery(
     })
 }
 
-fn contacts_json(core: &mut EnigmaCoreHandle, client: &PairingRendezvousClient) -> Result<Vec<u8>, ()> {
+fn contacts_json(
+    core: &mut EnigmaCoreHandle,
+    client: &PairingRendezvousClient,
+) -> Result<Vec<u8>, ()> {
     let token = core.device_access_token.as_mut().ok_or(())?;
     let contacts = token
         .with_read(|bytes| client.contacts(bytes))
@@ -1017,7 +1020,10 @@ fn contacts_json(core: &mut EnigmaCoreHandle, client: &PairingRendezvousClient) 
     serde_json::to_vec(&contacts).map_err(|_| ())
 }
 
-fn main_bubble_id(core: &mut EnigmaCoreHandle, client: &PairingRendezvousClient) -> Result<String, ()> {
+fn main_bubble_id(
+    core: &mut EnigmaCoreHandle,
+    client: &PairingRendezvousClient,
+) -> Result<String, ()> {
     let token = core.device_access_token.as_mut().ok_or(())?;
     let bubbles = token
         .with_read(|bytes| client.bubbles(bytes))
@@ -1522,15 +1528,13 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
         Ok(devices) => devices,
         Err(()) => return false,
     };
-    let verified_sibling_ids: HashSet<String> = match core.signal_backend.as_ref().and_then(|backend| {
-        verified_sender_sync_targets(
-            backend,
-            &own_user_id,
-            &device_id,
-            &own_devices,
-        )
-        .ok()
-    }) {
+    let verified_sibling_ids: HashSet<String> = match core
+        .signal_backend
+        .as_ref()
+        .and_then(|backend| {
+            verified_sender_sync_targets(backend, &own_user_id, &device_id, &own_devices).ok()
+        })
+    {
         Some(devices) => devices.into_iter().map(|device| device.device_id).collect(),
         None => return false,
     };
