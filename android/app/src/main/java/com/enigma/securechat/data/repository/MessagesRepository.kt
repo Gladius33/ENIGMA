@@ -143,7 +143,7 @@ class MessagesRepository(
                 recipientUserId = contact.userId,
                 recipientDeviceId = prepared.deviceId,
                 clientMessageId = localId,
-                messageType = payload.messageType(),
+                messageType = messageType,
                 ciphertext = ciphertext,
                 senderSync = false,
             )
@@ -794,28 +794,27 @@ class MessagesRepository(
         payload: MessagePayload,
     ) {
         val outbox = messageDeliveryOutboxStore ?: return
-        if (!delivery.senderSync) {
-            val p2pDelivery = attemptP2pDelivery(
-                bubbleId = delivery.bubbleId,
-                senderDeviceId = delivery.senderDeviceId,
-                recipientDeviceId = delivery.recipientDeviceId,
-                clientMessageId = delivery.clientMessageId,
-                payload = payload,
-                ciphertext = delivery.ciphertext,
-            )
-            if (p2pDelivery != null) {
-                if (payload.attachments.isNotEmpty()) {
-                    scheduleP2pAttachmentCommit(
-                        bubbleId = delivery.bubbleId,
-                        senderDeviceId = delivery.senderDeviceId,
-                        recipientDeviceId = delivery.recipientDeviceId,
-                        clientMessageId = delivery.clientMessageId,
-                        blobIds = payload.attachments.map { it.descriptor.blobId },
-                    )
-                }
-                outbox.remove(delivery.deliveryId)
-                return
+        val p2pDelivery = attemptP2pDelivery(
+            bubbleId = delivery.bubbleId,
+            senderDeviceId = delivery.senderDeviceId,
+            recipientDeviceId = delivery.recipientDeviceId,
+            clientMessageId = delivery.clientMessageId,
+            payload = payload,
+            ciphertext = delivery.ciphertext,
+            messageType = delivery.messageType,
+        )
+        if (p2pDelivery != null) {
+            if (payload.attachments.isNotEmpty()) {
+                scheduleP2pAttachmentCommit(
+                    bubbleId = delivery.bubbleId,
+                    senderDeviceId = delivery.senderDeviceId,
+                    recipientDeviceId = delivery.recipientDeviceId,
+                    clientMessageId = delivery.clientMessageId,
+                    blobIds = payload.attachments.map { it.descriptor.blobId },
+                )
             }
+            outbox.remove(delivery.deliveryId)
+            return
         }
 
         try {
@@ -848,6 +847,7 @@ class MessagesRepository(
         clientMessageId: String,
         payload: MessagePayload,
         ciphertext: String,
+        messageType: String = payload.messageType(),
     ): P2pDelivery? {
         val coordinator = p2pCoordinator ?: return null
         val specs = payload.toP2pAttachmentSpecs()
