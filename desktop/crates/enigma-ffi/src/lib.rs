@@ -1054,7 +1054,10 @@ pub unsafe extern "C" fn enigma_core_retry_outbox(handle: *mut EnigmaCoreHandle)
     };
     // SAFETY: caller guarantees exclusive live access for this call.
     let core = unsafe { &mut *handle };
-    if core.device_access_token.is_none() || core.signal_backend.is_none() {
+    if core.device_access_token.is_none()
+        || core.signal_backend.is_none()
+        || recover_crypto_transactions(core).is_err()
+    {
         return false;
     }
     flush_desktop_outbox(core, &client).unwrap_or(false)
@@ -2058,6 +2061,65 @@ fn unprotect_signal_identity(_protected: &[u8]) -> Result<Vec<u8>, PlatformKeyEr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn desktop_text_payload_matches_android_contract() {
+        let encoded = encode_text_payload("Bonjour ENIGMA").expect("text payload");
+        assert!(encoded.starts_with("ENIGMA_PAYLOAD_V1:"));
+        let body = encoded
+            .strip_prefix("ENIGMA_PAYLOAD_V1:")
+            .expect("payload prefix");
+        let json: serde_json::Value = serde_json::from_str(body).expect("payload json");
+        assert_eq!(json["version"], 1);
+        assert_eq!(json["body"], "Bonjour ENIGMA");
+        assert_eq!(json["attachments"], serde_json::json!([]));
+        assert!(encode_text_payload("   ").is_err());
+    }
+
+    #[test]
+    fn desktop_sender_sync_matches_android_contract() {
+        let encoded_payload = encode_text_payload("Bonjour").expect("payload");
+        let encoded = encode_sender_sync_payload(
+            "11111111-1111-4111-8111-111111111111",
+            "alice",
+            "Alice",
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333",
+            1_700_000_000_000,
+            &encoded_payload,
+        )
+        .expect("sender sync");
+        assert!(encoded.starts_with("ENIGMA_SENDER_SYNC_V1:"));
+        let body = encoded
+            .strip_prefix("ENIGMA_SENDER_SYNC_V1:")
+            .expect("sender sync prefix");
+        let json: serde_json::Value = serde_json::from_str(body).expect("sender sync json");
+        assert_eq!(json["version"], 1);
+        assert_eq!(
+            json["contactUserId"],
+            "11111111-1111-4111-8111-111111111111"
+        );
+        assert_eq!(json["contactPublicId"], "alice");
+        assert_eq!(json["contactDisplayName"], "Alice");
+        assert_eq!(
+            json["bubbleId"],
+            "22222222-2222-4222-8222-222222222222"
+        );
+        assert_eq!(
+            json["clientMessageId"],
+            "33333333-3333-4333-8333-333333333333"
+        );
+        assert_eq!(json["originalCreatedAt"], 1_700_000_000_000_i64);
+        assert_eq!(json["encodedMessagePayload"], encoded_payload);
+    }
+
+    #[test]
+    fn generated_message_id_is_canonical_uuid_v4() {
+        let id = random_uuid_v4().expect("uuid");
+        assert!(is_canonical_device_uuid(&id));
+        assert_eq!(id.as_bytes()[14], b'4');
+        assert!(matches!(id.as_bytes()[19], b'8' | b'9' | b'a' | b'b'));
+    }
 
     #[test]
     fn signal_store_record_is_versioned_and_bounded() {
