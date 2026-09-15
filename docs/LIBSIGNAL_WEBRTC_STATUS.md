@@ -48,10 +48,10 @@ Classes/fonctions restantes avant production :
 
 Blocage actuel :
 
-- les smoke tests instrumentes demarrent l'app reelle sur un telephone S35; le test debug deux appareils du flux message complet a ete effectue, mais le test release signee deux appareils reste a faire;
+- les smoke tests instrumentes et l'interoperabilite automatisee ne remplacent pas le REAL-LAB; aucun test physique multi-appareils complet de cette branche n'est encore valide;
 - groupes/canaux n'ont pas de sender-key Signal; ils restent donc experimentaux/post-1.0 et hors gate de la RC production actuelle.
 
-Conclusion : le texte 1-to-1 utilise libsignal 0.86.5 et l'interoperabilite Android <-> Rust est couverte par CI. La RC reste volontairement bloquee par la qualification humaine `REAL-LAB-001`, notamment pairing/multi-device, reseaux reels, P2P-first et fallback relais.
+Conclusion : le texte 1-to-1 utilise libsignal 0.86.5 et l'interoperabilite Android <-> Rust est couverte par CI. `REAL-LAB-001` n'a pas encore ete execute; la RC reste donc bloquee jusqu'a la qualification humaine pairing/multi-device, reseaux reels, P2P-first et fallback relais.
 
 ## WebRTC
 
