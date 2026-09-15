@@ -344,12 +344,27 @@ class MessagesRepository(
 
     suspend fun syncPending(): AppResult<Unit> = runCatching {
         val deviceId = requireNotNull(deviceStore.deviceId())
+        val currentUserId = sessionStore?.session?.firstOrNull()?.userId
         val pending = apiProvider.withActiveApi { it.pendingMessages(deviceId) }
         for (message in pending.messages) {
+            val fromOwnSibling = currentUserId != null &&
+                message.senderUserId == currentUserId &&
+                message.senderDeviceId != deviceId
             val existing = messageDao.findByClientMessageId(
                 senderDeviceId = message.senderDeviceId,
                 clientMessageId = message.clientMessageId,
             )
+            if (
+                existing != null &&
+                fromOwnSibling &&
+                existing.direction == MessageDirection.OUTBOUND.name
+            ) {
+                require(existing.transportCiphertext == message.ciphertext) {
+                    "Sender-sync ciphertext mismatch"
+                }
+                apiProvider.withActiveApi { it.receipt(message.id, ReceiptRequestDto(deviceId)) }
+                continue
+            }
             if (existing != null) {
                 require(existing.transportCiphertext == message.ciphertext) {
                     "Relay/P2P client message ciphertext mismatch"
@@ -376,9 +391,23 @@ class MessagesRepository(
                 continue
             }
 
+            val encodedPayload = cryptoEngine.decryptText(message.ciphertext)
+            if (fromOwnSibling) {
+                require(message.messageType == "opaque") { "Own-device message must be sender-sync opaque" }
+                require(SenderSyncPayloadCodec.isSenderSync(encodedPayload)) {
+                    "Unknown own-device synchronization payload"
+                }
+                applySenderSync(
+                    pendingMessage = message,
+                    encodedSenderSync = encodedPayload,
+                    currentUserId = requireNotNull(currentUserId),
+                )
+                apiProvider.withActiveApi { it.receipt(message.id, ReceiptRequestDto(deviceId)) }
+                continue
+            }
+
             val conversation = conversationForPending(message) ?: continue
             val contactDevice = contactDeviceDao.findByDevice(message.senderDeviceId)
-            val encodedPayload = cryptoEngine.decryptText(message.ciphertext)
             MessagePayloadCodec.decode(encodedPayload)
             val localCiphertext = localCipher.encryptToString(encodedPayload.toByteArray(Charsets.UTF_8))
             val local = ChatMessage(
@@ -583,6 +612,61 @@ class MessagesRepository(
         onSuccess = { AppResult.Ok(it) },
         onFailure = { AppResult.Err(it.toUserVisibleError("Safety number non vérifié")) },
     )
+
+    private suspend fun applySenderSync(
+        pendingMessage: PendingMessageDto,
+        encodedSenderSync: String,
+        currentUserId: String,
+    ) {
+        val sync = SenderSyncPayloadCodec.decode(encodedSenderSync)
+        require(sync.contactUserId != currentUserId) { "Sender-sync cannot target the local identity as contact" }
+        require(sync.bubbleId == pendingMessage.bubbleId) { "Sender-sync bubble mismatch" }
+        require(sync.clientMessageId == pendingMessage.clientMessageId) {
+            "Sender-sync client message id mismatch"
+        }
+
+        val decoded = MessagePayloadCodec.decode(sync.encodedMessagePayload)
+        require(decoded.body.isNotBlank() || decoded.attachments.isNotEmpty()) {
+            "Sender-sync payload is empty"
+        }
+        require(decoded.attachments.all { it.descriptor.bubbleId == sync.bubbleId }) {
+            "Sender-sync attachment bubble mismatch"
+        }
+
+        val contact = Contact(
+            userId = sync.contactUserId,
+            publicId = sync.contactPublicId,
+            displayName = sync.contactDisplayName,
+        )
+        contactDao.upsert(contact.toEntity())
+        val conversation = conversationDao.findByContact(sync.contactUserId, sync.bubbleId)
+            ?: Conversation(
+                id = UUID.randomUUID().toString(),
+                contactUserId = sync.contactUserId,
+                contactPublicId = sync.contactPublicId,
+                bubbleId = sync.bubbleId,
+                updatedAt = Instant.ofEpochMilli(sync.originalCreatedAt),
+            ).toEntity().also { conversationDao.upsert(it) }
+
+        val localCiphertext = localCipher.encryptToString(
+            sync.encodedMessagePayload.toByteArray(Charsets.UTF_8),
+        )
+        val synchronized = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            clientMessageId = sync.clientMessageId,
+            conversationId = conversation.id,
+            senderDeviceId = pendingMessage.senderDeviceId,
+            recipientDeviceId = null,
+            direction = MessageDirection.OUTBOUND,
+            status = MessageStatus.SENT,
+            encryptedLocalBody = localCiphertext,
+            transportCiphertext = pendingMessage.ciphertext,
+            createdAt = Instant.ofEpochMilli(sync.originalCreatedAt),
+            transport = MessageTransport.RELAY,
+            peerIdentityState = MessagePeerIdentityState.VERIFIED,
+        )
+        messageDao.upsert(synchronized.toEntity())
+    }
 
     private suspend fun prepareRemoteDevice(
         contactUserId: String,
