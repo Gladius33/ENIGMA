@@ -504,12 +504,9 @@ mod tests {
         let handle = enigma_core_create();
         assert!(!handle.is_null());
 
-        let pairing = PairingBootstrap::generate(
-                1_700_000_000_000,
-                DEFAULT_PAIRING_TTL_MS,
-                &[0x51; 33],
-            )
-            .expect("pairing bootstrap");
+        let pairing =
+            PairingBootstrap::generate(1_700_000_000_000, DEFAULT_PAIRING_TTL_MS, &[0x51; 33])
+                .expect("pairing bootstrap");
         // SAFETY: handle is live and exclusively owned by this test.
         unsafe {
             (*handle).pairing_bootstrap = Some(pairing);
