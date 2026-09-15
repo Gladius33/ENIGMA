@@ -5,7 +5,9 @@
 #include <cstdint>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace enigma {
 
@@ -58,6 +60,38 @@ public:
                 protectedIdentity.data(),
                 protectedIdentity.size(),
                 registrationId);
+    }
+
+    [[nodiscard]] bool startPairing() noexcept {
+        return handle_ != nullptr && enigma_core_pairing_start(handle_);
+    }
+
+    void cancelPairing() noexcept {
+        if (handle_ != nullptr) {
+            enigma_core_pairing_cancel(handle_);
+        }
+    }
+
+    [[nodiscard]] std::string pairingUri() const {
+        if (handle_ == nullptr) return {};
+        const auto length = enigma_core_pairing_uri_len(handle_);
+        if (length == 0) return {};
+        std::vector<std::uint8_t> bytes(length);
+        if (!enigma_core_pairing_uri_copy(handle_, bytes.data(), bytes.size())) return {};
+        return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    }
+
+    [[nodiscard]] std::string pairingSvg() const {
+        if (handle_ == nullptr) return {};
+        const auto length = enigma_core_pairing_svg_len(handle_);
+        if (length == 0) return {};
+        std::vector<std::uint8_t> bytes(length);
+        if (!enigma_core_pairing_svg_copy(handle_, bytes.data(), bytes.size())) return {};
+        return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    }
+
+    [[nodiscard]] std::uint64_t pairingExpiresAtUnixMs() const noexcept {
+        return handle_ == nullptr ? 0 : enigma_core_pairing_expires_at_unix_ms(handle_);
     }
 
 private:
