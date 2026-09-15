@@ -32,7 +32,8 @@ pub struct P2pIceServer {
     pub credential: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct P2pIceCandidate {
     pub sdp_mid: Option<String>,
     pub sdp_mline_index: u16,
@@ -210,6 +211,100 @@ impl WebRtcP2pEngine {
 
     pub fn try_next_event(&self) -> Option<WebRtcP2pEvent> {
         self.events_rx.lock().ok()?.try_recv().ok()
+    }
+
+    pub fn start_outgoing_blocking(
+        &mut self,
+        session_id: &str,
+        ice_servers: &[P2pIceServer],
+    ) -> Result<String, WebRtcP2pError> {
+        let runtime = Arc::clone(&self.runtime);
+        let mut result = None;
+        runtime.block_on(Box::pin(async {
+            result = Some(self.start_outgoing(session_id, ice_servers).await);
+        }));
+        result.ok_or(WebRtcP2pError::RuntimeUnavailable)?
+    }
+
+    pub fn accept_incoming_blocking(
+        &mut self,
+        session_id: &str,
+        ice_servers: &[P2pIceServer],
+        remote_offer_sdp: &str,
+    ) -> Result<String, WebRtcP2pError> {
+        let runtime = Arc::clone(&self.runtime);
+        let mut result = None;
+        runtime.block_on(Box::pin(async {
+            result = Some(
+                self.accept_incoming(session_id, ice_servers, remote_offer_sdp)
+                    .await,
+            );
+        }));
+        result.ok_or(WebRtcP2pError::RuntimeUnavailable)?
+    }
+
+    pub fn set_remote_answer_blocking(
+        &mut self,
+        session_id: &str,
+        remote_answer_sdp: &str,
+    ) -> Result<(), WebRtcP2pError> {
+        let runtime = Arc::clone(&self.runtime);
+        let mut result = None;
+        runtime.block_on(Box::pin(async {
+            result = Some(
+                self.set_remote_answer(session_id, remote_answer_sdp)
+                    .await,
+            );
+        }));
+        result.ok_or(WebRtcP2pError::RuntimeUnavailable)?
+    }
+
+    pub fn add_remote_ice_candidate_blocking(
+        &self,
+        session_id: &str,
+        candidate: &P2pIceCandidate,
+    ) -> Result<(), WebRtcP2pError> {
+        let runtime = Arc::clone(&self.runtime);
+        let mut result = None;
+        runtime.block_on(Box::pin(async {
+            result = Some(
+                self.add_remote_ice_candidate(session_id, candidate)
+                    .await,
+            );
+        }));
+        result.ok_or(WebRtcP2pError::RuntimeUnavailable)?
+    }
+
+    pub fn selected_route_blocking(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<P2pSelectedRoute>, WebRtcP2pError> {
+        let runtime = Arc::clone(&self.runtime);
+        let mut result = None;
+        runtime.block_on(Box::pin(async {
+            result = Some(self.selected_route(session_id).await);
+        }));
+        result.ok_or(WebRtcP2pError::RuntimeUnavailable)?
+    }
+
+    pub fn send_text_blocking(
+        &self,
+        session_id: &str,
+        payload: &str,
+    ) -> Result<(), WebRtcP2pError> {
+        let runtime = Arc::clone(&self.runtime);
+        let mut result = None;
+        runtime.block_on(Box::pin(async {
+            result = Some(self.send_text(session_id, payload).await);
+        }));
+        result.ok_or(WebRtcP2pError::RuntimeUnavailable)?
+    }
+
+    pub fn release_blocking(&mut self, session_id: &str) {
+        let runtime = Arc::clone(&self.runtime);
+        runtime.block_on(Box::pin(async {
+            self.release(session_id).await;
+        }));
     }
 
     pub async fn start_outgoing(
