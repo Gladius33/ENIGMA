@@ -6,10 +6,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use enigma_storage::{RecordVault, SodiumRecordVault};
 use serde::{Deserialize, Serialize};
 
 const OUTBOX_AAD: &[u8] = b"ENIGMA_DESKTOP_OUTBOX_V1";
+const OUTBOX_JOURNAL_AAD: &[u8] = b"ENIGMA_DESKTOP_OUTBOX_JOURNAL_V1";
 const MAX_OUTBOX_ENTRIES: usize = 16_384;
 const MAX_OUTBOX_FILE_BYTES: usize = 64 * 1024 * 1024;
 
@@ -30,18 +32,102 @@ struct OutboxFile {
     entries: Vec<DurableOutboundDelivery>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct OutboxJournal {
+    version: u16,
+    deliveries: Vec<DurableOutboundDelivery>,
+    signal_snapshot: String,
+}
+
 pub(crate) struct EncryptedDesktopOutbox {
     path: PathBuf,
+    journal_path: PathBuf,
     vault: SodiumRecordVault,
 }
 
 impl EncryptedDesktopOutbox {
-    pub(crate) fn new(path: PathBuf, vault: SodiumRecordVault) -> Self {
-        Self { path, vault }
+    pub(crate) fn new(path: PathBuf, journal_path: PathBuf, vault: SodiumRecordVault) -> Self {
+        Self {
+            path,
+            journal_path,
+            vault,
+        }
     }
 
     pub(crate) fn pending(&self) -> Result<Vec<DurableOutboundDelivery>, ()> {
         self.read_entries()
+    }
+
+    pub(crate) fn write_journal(
+        &self,
+        deliveries: &[DurableOutboundDelivery],
+        signal_snapshot: &[u8],
+    ) -> Result<(), ()> {
+        if deliveries.is_empty()
+            || deliveries.len() > 256
+            || signal_snapshot.is_empty()
+            || signal_snapshot.len() > 16 * 1024 * 1024
+        {
+            return Err(());
+        }
+        deliveries.iter().try_for_each(validate_delivery)?;
+        let journal = OutboxJournal {
+            version: 1,
+            deliveries: deliveries.to_vec(),
+            signal_snapshot: STANDARD_NO_PAD.encode(signal_snapshot),
+        };
+        let plaintext = serde_json::to_vec(&journal).map_err(|_| ())?;
+        if plaintext.len() > MAX_OUTBOX_FILE_BYTES {
+            return Err(());
+        }
+        let sealed = self
+            .vault
+            .seal(&plaintext, OUTBOX_JOURNAL_AAD)
+            .map_err(|_| ())?;
+        persist_atomic(&self.journal_path, &sealed).map_err(|_| ())
+    }
+
+    pub(crate) fn read_journal(
+        &self,
+    ) -> Result<Option<(Vec<DurableOutboundDelivery>, Vec<u8>)>, ()> {
+        let sealed = match fs::read(&self.journal_path) {
+            Ok(value) => value,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(()),
+        };
+        if sealed.is_empty() || sealed.len() > MAX_OUTBOX_FILE_BYTES {
+            return Err(());
+        }
+        let mut plaintext = self
+            .vault
+            .open(&sealed, OUTBOX_JOURNAL_AAD)
+            .map_err(|_| ())?;
+        let journal = plaintext
+            .with_read(|bytes| serde_json::from_slice::<OutboxJournal>(bytes))
+            .map_err(|_| ())?
+            .map_err(|_| ())?;
+        if journal.version != 1
+            || journal.deliveries.is_empty()
+            || journal.deliveries.len() > 256
+        {
+            return Err(());
+        }
+        journal.deliveries.iter().try_for_each(validate_delivery)?;
+        let snapshot = STANDARD_NO_PAD
+            .decode(journal.signal_snapshot)
+            .map_err(|_| ())?;
+        if snapshot.is_empty() || snapshot.len() > 16 * 1024 * 1024 {
+            return Err(());
+        }
+        Ok(Some((journal.deliveries, snapshot)))
+    }
+
+    pub(crate) fn clear_journal(&self) -> Result<(), ()> {
+        match fs::remove_file(&self.journal_path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(()),
+        }
     }
 
     pub(crate) fn enqueue_batch(
