@@ -1082,6 +1082,10 @@ fn default_outbox_path() -> Option<PathBuf> {
     Some(default_desktop_state_dir()?.join("desktop-outbox-v1.enc"))
 }
 
+fn default_outbox_journal_path() -> Option<PathBuf> {
+    Some(default_desktop_state_dir()?.join("desktop-outbox-journal-v1.enc"))
+}
+
 fn load_or_create_desktop_vault() -> Result<SodiumRecordVault, ()> {
     let key_path = default_inbox_master_key_path().ok_or(())?;
     match fs::read(&key_path) {
@@ -1132,8 +1136,27 @@ fn load_or_create_desktop_inbox() -> Result<EncryptedDesktopInbox, ()> {
 fn load_or_create_desktop_outbox() -> Result<EncryptedDesktopOutbox, ()> {
     Ok(EncryptedDesktopOutbox::new(
         default_outbox_path().ok_or(())?,
+        default_outbox_journal_path().ok_or(())?,
         load_or_create_desktop_vault()?,
     ))
+}
+
+fn recover_outbox_journal(core: &mut EnigmaCoreHandle) -> Result<(), ()> {
+    let journal = core.desktop_outbox.as_ref().ok_or(())?.read_journal()?;
+    let Some((deliveries, mut snapshot)) = journal else {
+        return Ok(());
+    };
+
+    let backend = LibsignalSessionBackend::from_serialized_store(&snapshot).map_err(|_| ())?;
+    snapshot.fill(0);
+    persist_default_signal_store(&backend)?;
+    core.signal_backend = Some(backend);
+    core.desktop_outbox
+        .as_ref()
+        .ok_or(())?
+        .enqueue_batch(&deliveries)?;
+    let _ = core.desktop_outbox.as_ref().ok_or(())?.clear_journal();
+    Ok(())
 }
 
 fn recover_inbox_journal(core: &mut EnigmaCoreHandle) -> Result<(), ()> {
