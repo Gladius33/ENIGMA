@@ -2907,12 +2907,12 @@ mod tests {
             "text",
             bubble_id,
             "33333333-3333-4333-8333-333333333333",
-        InboundSenderContext {
-            sender_user_id:     "11111111-1111-4111-8111-111111111111",
-            sender_public_id:     "alice",
-            own_user_id:     "44444444-4444-4444-8444-444444444444",
-            from_verified_sibling:     false,
-        },
+            InboundSenderContext {
+                sender_user_id: "11111111-1111-4111-8111-111111111111",
+                sender_public_id: "alice",
+                own_user_id: "44444444-4444-4444-8444-444444444444",
+                from_verified_sibling: false,
+            },
         )
         .expect("valid inbound payload");
         assert_eq!(normalized.direction, "inbound");
@@ -2925,12 +2925,12 @@ mod tests {
             "text",
             bubble_id,
             "33333333-3333-4333-8333-333333333333",
-        InboundSenderContext {
-            sender_user_id:     "11111111-1111-4111-8111-111111111111",
-            sender_public_id:     "alice",
-            own_user_id:     "44444444-4444-4444-8444-444444444444",
-            from_verified_sibling:     false,
-        },
+            InboundSenderContext {
+                sender_user_id: "11111111-1111-4111-8111-111111111111",
+                sender_public_id: "alice",
+                own_user_id: "44444444-4444-4444-8444-444444444444",
+                from_verified_sibling: false,
+            },
         )
         .is_err());
     }
@@ -2958,12 +2958,12 @@ mod tests {
             "opaque",
             bubble_id,
             client_message_id,
-        InboundSenderContext {
-            sender_user_id:     own_user_id,
-            sender_public_id:     "me",
-            own_user_id:     own_user_id,
-            from_verified_sibling:     true,
-        },
+            InboundSenderContext {
+                sender_user_id: own_user_id,
+                sender_public_id: "me",
+                own_user_id: own_user_id,
+                from_verified_sibling: true,
+            },
         )
         .expect("verified sender sync");
         assert_eq!(normalized.direction, "outbound");
@@ -2982,12 +2982,12 @@ mod tests {
             "opaque",
             bubble_id,
             client_message_id,
-        InboundSenderContext {
-            sender_user_id:     own_user_id,
-            sender_public_id:     "me",
-            own_user_id:     own_user_id,
-            from_verified_sibling:     false,
-        },
+            InboundSenderContext {
+                sender_user_id: own_user_id,
+                sender_public_id: "me",
+                own_user_id: own_user_id,
+                from_verified_sibling: false,
+            },
         )
         .is_err());
     }
