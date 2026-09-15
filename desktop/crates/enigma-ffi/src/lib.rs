@@ -456,6 +456,18 @@ fn pairing_client() -> Option<PairingRendezvousClient> {
     PairingRendezvousClient::new(&base_url, allow_insecure_http).ok()
 }
 
+fn recover_crypto_transactions(core: &mut EnigmaCoreHandle) -> Result<(), ()> {
+    if core.desktop_outbox.is_none() {
+        core.desktop_outbox = Some(load_or_create_desktop_outbox()?);
+    }
+    if core.desktop_inbox.is_none() {
+        core.desktop_inbox = Some(load_or_create_desktop_inbox()?);
+    }
+
+    recover_outbox_journal(core)?;
+    recover_inbox_journal(core)
+}
+
 /// Publishes the public pairing candidate to the configured rendezvous server.
 ///
 /// No claim secret or private key crosses this ABI boundary.
@@ -603,6 +615,9 @@ pub unsafe extern "C" fn enigma_core_device_initialize(handle: *mut EnigmaCoreHa
 
     // SAFETY: caller guarantees exclusive live access for this call.
     let core = unsafe { &mut *handle };
+    if recover_crypto_transactions(core).is_err() {
+        return false;
+    }
     let Some(device_id) = core.device_id.clone() else {
         return false;
     };
@@ -873,10 +888,7 @@ pub unsafe extern "C" fn enigma_core_send_text(
     if core.device_access_token.is_none() || core.signal_backend.is_none() {
         return false;
     }
-    if core.desktop_outbox.is_none() {
-        core.desktop_outbox = load_or_create_desktop_outbox().ok();
-    }
-    if core.desktop_outbox.is_none() || recover_outbox_journal(core).is_err() {
+    if recover_crypto_transactions(core).is_err() {
         return false;
     }
 
@@ -1092,10 +1104,7 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
     if core.device_access_token.is_none() || core.signal_backend.is_none() {
         return false;
     }
-    if core.desktop_inbox.is_none() {
-        core.desktop_inbox = load_or_create_desktop_inbox().ok();
-    }
-    if core.desktop_inbox.is_none() || recover_inbox_journal(core).is_err() {
+    if recover_crypto_transactions(core).is_err() {
         return false;
     }
 
