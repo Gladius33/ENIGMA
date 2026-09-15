@@ -95,9 +95,9 @@ pub fn parse_signal_wire_envelope(
         || dto.sender_device_id == dto.recipient_device_id
         || dto.recipient_device_id != expected_recipient_device_id
         || dto.sender_protocol_device_id == 0
-        || dto.sender_protocol_device_id > i32::MAX as u32
+        || dto.sender_protocol_device_id > 127
         || dto.recipient_protocol_device_id == 0
-        || dto.recipient_protocol_device_id > i32::MAX as u32
+        || dto.recipient_protocol_device_id > 127
     {
         return Err(SignalAdapterError::InvalidWireEnvelope);
     }
