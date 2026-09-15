@@ -10,6 +10,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPalette>
 #include <QPixmap>
 #include <QPushButton>
@@ -198,6 +199,12 @@ int main(int argc, char* argv[]) {
     sendMessage->setAccessibleName(QStringLiteral("Envoyer le message"));
     sendMessage->setEnabled(coreReady);
 
+    auto* messageList = new QListWidget(surface);
+    messageList->setAccessibleName(QStringLiteral("Historique des messages chiffrés"));
+    messageList->setSelectionMode(QAbstractItemView::NoSelection);
+    messageList->setWordWrap(true);
+    messageList->setMinimumHeight(180);
+
     const auto refreshContacts = [&core, contactSelector]() {
         contactSelector->clear();
         if (!core || !core->deviceSessionReady()) return;
@@ -213,14 +220,86 @@ int main(int argc, char* argv[]) {
             }
         }
     };
+
+    const auto refreshMessages = [&core, contactSelector, messageList]() {
+        messageList->clear();
+        if (!core || contactSelector->currentIndex() < 0) {
+            auto* empty = new QListWidgetItem(
+                QStringLiteral("Sélectionnez un contact pour afficher la conversation."),
+                messageList);
+            empty->setFlags(Qt::NoItemFlags);
+            return;
+        }
+
+        const QString selectedContactId = contactSelector->currentData().toString();
+        const std::size_t count = core->inboxCount();
+        for (std::size_t index = 0; index < count; ++index) {
+            const QByteArray encoded =
+                QByteArray::fromStdString(core->inboxEntryJson(index));
+            const QJsonDocument document = QJsonDocument::fromJson(encoded);
+            if (!document.isObject()) continue;
+            const QJsonObject entry = document.object();
+            if (entry.value(QStringLiteral("contact_user_id")).toString()
+                != selectedContactId) {
+                continue;
+            }
+
+            const QString plaintext =
+                entry.value(QStringLiteral("plaintext")).toString();
+            constexpr auto kPayloadPrefix = "ENIGMA_PAYLOAD_V1:";
+            if (!plaintext.startsWith(QLatin1String(kPayloadPrefix))) continue;
+            const QByteArray payloadJson =
+                plaintext.mid(static_cast<int>(std::char_traits<char>::length(kPayloadPrefix)))
+                    .toUtf8();
+            const QJsonDocument payloadDocument = QJsonDocument::fromJson(payloadJson);
+            if (!payloadDocument.isObject()) continue;
+            const QString body =
+                payloadDocument.object().value(QStringLiteral("body")).toString();
+            if (body.isEmpty()) continue;
+
+            auto* item = new QListWidgetItem(body, messageList);
+            const bool outbound =
+                entry.value(QStringLiteral("direction")).toString() == QStringLiteral("outbound");
+            item->setTextAlignment(outbound ? Qt::AlignRight : Qt::AlignLeft);
+            item->setToolTip(
+                outbound ? QStringLiteral("Envoyé") : QStringLiteral("Reçu"));
+        }
+
+        if (messageList->count() == 0) {
+            auto* empty = new QListWidgetItem(
+                QStringLiteral("Aucun message local pour ce contact."),
+                messageList);
+            empty->setFlags(Qt::NoItemFlags);
+        }
+        messageList->scrollToBottom();
+    };
+
+    QObject::connect(
+        contactSelector,
+        &QComboBox::currentIndexChanged,
+        [&refreshMessages](int) { refreshMessages(); });
+    QObject::connect(
+        openMessages,
+        &QPushButton::clicked,
+        [&refreshMessages, messageList]() {
+            refreshMessages();
+            messageList->setFocus();
+        });
+
     if (coreReady) {
         refreshContacts();
+        refreshMessages();
     }
 
     QObject::connect(
         sendMessage,
         &QPushButton::clicked,
-        [&core, contactSelector, messageComposer, detail, sendMessage]() {
+        [&core,
+         contactSelector,
+         messageComposer,
+         detail,
+         sendMessage,
+         &refreshMessages]() {
             if (!core || contactSelector->currentIndex() < 0) return;
             const QString plaintext = messageComposer->text().trimmed();
             if (plaintext.isEmpty()) return;
@@ -235,6 +314,7 @@ int main(int argc, char* argv[]) {
 
             if (queued) {
                 messageComposer->clear();
+                refreshMessages();
                 detail->setText(
                     pending == 0
                         ? QStringLiteral(
@@ -260,7 +340,8 @@ int main(int argc, char* argv[]) {
          contactSelector,
          messageComposer,
          sendMessage,
-         &refreshContacts]() {
+         &refreshContacts,
+         &refreshMessages]() {
         if (!core || !core->signalReady() || !core->startPairing()) return;
 
         const std::string svg = core->pairingSvg();
@@ -315,7 +396,8 @@ int main(int argc, char* argv[]) {
              contactSelector,
              messageComposer,
              sendMessage,
-             &refreshContacts]() {
+             &refreshContacts,
+             &refreshMessages]() {
             if (!core) return;
             finalize->setEnabled(false);
             const std::uint32_t claimState = core->deviceSessionReady()
@@ -338,6 +420,7 @@ int main(int argc, char* argv[]) {
                         messageComposer->setEnabled(true);
                         sendMessage->setEnabled(true);
                         refreshContacts();
+                        refreshMessages();
                         detail->setText(
                             synchronized && outboundFlushed
                                 ? QStringLiteral("Rust/libsignal • synchronisation à jour")
@@ -396,6 +479,7 @@ int main(int argc, char* argv[]) {
     content->addSpacing(enigma::design::kSpacingSm);
     content->addWidget(pairDevice, 0, Qt::AlignLeft);
     content->addWidget(openMessages, 0, Qt::AlignLeft);
+    content->addWidget(messageList, 1);
 
     auto* composerRow = new QHBoxLayout();
     composerRow->setSpacing(enigma::design::kSpacingSm);
