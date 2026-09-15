@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
-project(enigma_linux_desktop LANGUAGES CXX)
+project(enigma_linux_desktop VERSION 1.0.0 LANGUAGES CXX)
 
+include(GNUInstallDirs)
 find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets)
 set(CMAKE_AUTORCC ON)
 
@@ -43,6 +44,40 @@ target_link_libraries(enigma_linux_desktop
         Qt6::Widgets
         enigma_linux_interop
 )
+
+set_target_properties(enigma_linux_desktop PROPERTIES
+    INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/enigma"
+)
+
+install(
+    TARGETS enigma_linux_desktop
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(
+    FILES "${ENIGMA_CORE_LIBRARY}"
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/enigma"
+)
+install(
+    FILES "${CMAKE_CURRENT_SOURCE_DIR}/../../android/app/src/main/res/drawable-nodpi/enigma_logo.png"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps"
+    RENAME enigma.png
+)
+install(
+    FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/enigma.desktop"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
+)
+
+set(CPACK_PACKAGE_NAME "enigma-desktop")
+set(CPACK_PACKAGE_VENDOR "ENIGMA")
+set(CPACK_PACKAGE_CONTACT "ENIGMA")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "ENIGMA end-to-end encrypted desktop messenger")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_GENERATOR "DEB")
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "ENIGMA")
+set(CPACK_DEBIAN_PACKAGE_SECTION "net")
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+include(CPack)
 
 if(MSVC)
     target_compile_options(enigma_linux_interop PRIVATE /W4 /WX)
