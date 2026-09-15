@@ -235,7 +235,10 @@ impl Ed25519SigningKeyPair {
         ensure_sodium()?;
         let mut signature = [0_u8; SIGNATURE_BYTES];
         let mut signature_len = 0_u64;
-        let mut secret_key = self.secret_key.lock().map_err(|_| SodiumError::LockPoisoned)?;
+        let mut secret_key = self
+            .secret_key
+            .lock()
+            .map_err(|_| SodiumError::LockPoisoned)?;
         let status = secret_key.with_read(|secret_bytes| {
             // SAFETY: signature is a writable SIGNATURE_BYTES array; message and secret key
             // pointers are valid for their declared lengths; secret_bytes is the keypair secret
