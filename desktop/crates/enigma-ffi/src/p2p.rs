@@ -315,11 +315,6 @@ impl DesktopP2pManager {
                 auth_sent = true;
             }
 
-            if remote_auth_verified && channel_open && remote_description_ready && !auth_sent {
-                self.send_local_auth(backend, request.session_id)?;
-                auth_sent = true;
-            }
-
             if remote_auth_verified && auth_sent && !local_route_sent {
                 if let Some(route) = self
                     .engine
