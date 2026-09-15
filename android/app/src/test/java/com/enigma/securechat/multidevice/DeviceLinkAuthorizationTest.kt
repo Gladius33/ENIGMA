@@ -20,6 +20,7 @@ class DeviceLinkAuthorizationTest {
             capabilities = 127,
             issuedAtUnixMs = 1_700_000_000_000,
             targetIdentityKey = "target-public",
+            candidateCommitment = "candidate-public",
             authorizerIdentityKey = "authorizer-public",
         )
 
@@ -36,6 +37,7 @@ class DeviceLinkAuthorizationTest {
             capabilities=127
             issued_at_unix_ms=1700000000000
             target_identity_key=target-public
+            candidate_commitment=candidate-public
             authorizer_identity_key=authorizer-public
 
             """.trimIndent(),
@@ -47,7 +49,9 @@ class DeviceLinkAuthorizationTest {
     fun candidateValidationRequiresMultiDeviceAndDistinctUuidDevices() {
         val identityKey = Base64.getEncoder().withoutPadding()
             .encodeToString(ByteArray(33) { 7 })
-        val valid = DesktopLinkCandidate(
+        val pairingKey = Base64.getEncoder().withoutPadding()
+            .encodeToString(ByteArray(32) { 9 })
+        val provisional = DesktopLinkCandidate(
             deviceId = "11111111-1111-4111-8111-111111111111",
             displayName = "Windows",
             platform = "windows",
@@ -55,7 +59,14 @@ class DeviceLinkAuthorizationTest {
             protocolVersion = 1,
             minSupportedVersion = 1,
             capabilities = DeviceLinkAuthorization.CAPABILITY_MULTI_DEVICE,
+            expiresAtUnixMs = System.currentTimeMillis() + 60_000,
+            pairingPublicKey = pairingKey,
             targetIdentityKey = identityKey,
+            claimSecretHash = "ab".repeat(32),
+            candidateCommitment = "",
+        )
+        val valid = provisional.copy(
+            candidateCommitment = DeviceLinkAuthorization.candidateCommitment(provisional),
         )
 
         DeviceLinkAuthorization.validateCandidate(
