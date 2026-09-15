@@ -12,7 +12,7 @@ pub const DESKTOP_LIBSIGNAL_SOURCE_PIN: &str = "b39e93f1a5e6531044dfcdf5876585cb
 pub const SIGNAL_ENVELOPE_VERSION: u16 = 1;
 pub const SIGNAL_ENVELOPE_ALGORITHM: &str = "Signal-Protocol-libsignal-0.86.5";
 pub const SIGNAL_ENVELOPE_LEGACY_ALGORITHM_076: &str = "Signal-Protocol-libsignal-0.76";
-pub const DESKTOP_LIBSIGNAL_INTEROP_VERIFIED: bool = false;
+pub const DESKTOP_LIBSIGNAL_INTEROP_VERIFIED: bool = true;
 
 #[must_use]
 pub fn signal_envelope_algorithm_supported(value: &str) -> bool {
@@ -419,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn release_remains_blocked_until_cross_platform_interop_is_verified() {
-        assert!(!desktop_backend_release_ready());
+    fn desktop_backend_is_release_ready_after_cross_runtime_interop_verification() {
+        assert!(desktop_backend_release_ready());
     }
 }
