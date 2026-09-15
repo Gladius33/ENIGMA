@@ -50,7 +50,6 @@ pub(crate) struct P2pInboundMessage {
     pub client_message_id: String,
     pub message_type: String,
     pub ciphertext: String,
-    pub route: &'static str,
 }
 
 pub(crate) struct DesktopP2pManager {
@@ -232,14 +231,9 @@ impl DesktopP2pManager {
                                     .map_err(|_| ())?;
                             }
                             DecodedP2pFrame::Message(message) => {
-                                let authenticated = self
-                                    .coordinator
+                                self.coordinator
                                     .validate_incoming_message(&offer.session_id, &message)
                                     .map_err(|_| ())?;
-                                let route = match authenticated.route {
-                                    enigma_p2p::P2pRoute::Direct => "DIRECT",
-                                    enigma_p2p::P2pRoute::Turn => "TURN",
-                                };
                                 return Ok(Some(P2pInboundMessage {
                                     sender_user_id: offer.sender_user_id.clone(),
                                     session_id: offer.session_id.clone(),
@@ -249,7 +243,6 @@ impl DesktopP2pManager {
                                     client_message_id: message.client_message_id,
                                     message_type: message.message_type,
                                     ciphertext: message.ciphertext,
-                                    route,
                                 }));
                             }
                             DecodedP2pFrame::Receipt(_)
