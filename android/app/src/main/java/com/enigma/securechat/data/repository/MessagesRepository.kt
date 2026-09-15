@@ -143,7 +143,7 @@ class MessagesRepository(
                 recipientUserId = contact.userId,
                 recipientDeviceId = prepared.deviceId,
                 clientMessageId = localId,
-                messageType = messageType,
+                messageType = payload.messageType(),
                 ciphertext = ciphertext,
                 senderSync = false,
             )
