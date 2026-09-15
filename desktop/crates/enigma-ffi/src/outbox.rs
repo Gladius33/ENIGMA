@@ -101,7 +101,14 @@ impl EncryptedDesktopOutbox {
 
     pub(crate) fn read_journal(
         &self,
-    ) -> Result<Option<(Vec<DurableOutboundDelivery>, Vec<u8>, Option<DurableInboxEntry>)>, ()> {
+    ) -> Result<
+        Option<(
+            Vec<DurableOutboundDelivery>,
+            Vec<u8>,
+            Option<DurableInboxEntry>,
+        )>,
+        (),
+    > {
         let sealed = match fs::read(&self.journal_path) {
             Ok(value) => value,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -118,10 +125,7 @@ impl EncryptedDesktopOutbox {
             .with_read(|bytes| serde_json::from_slice::<OutboxJournal>(bytes))
             .map_err(|_| ())?
             .map_err(|_| ())?;
-        if journal.version != 1
-            || journal.deliveries.is_empty()
-            || journal.deliveries.len() > 256
-        {
+        if journal.version != 1 || journal.deliveries.is_empty() || journal.deliveries.len() > 256 {
             return Err(());
         }
         journal.deliveries.iter().try_for_each(validate_delivery)?;
@@ -149,10 +153,7 @@ impl EncryptedDesktopOutbox {
         }
     }
 
-    pub(crate) fn enqueue_batch(
-        &self,
-        deliveries: &[DurableOutboundDelivery],
-    ) -> Result<(), ()> {
+    pub(crate) fn enqueue_batch(&self, deliveries: &[DurableOutboundDelivery]) -> Result<(), ()> {
         if deliveries.is_empty() || deliveries.len() > 256 {
             return Err(());
         }

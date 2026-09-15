@@ -4,7 +4,10 @@ pub mod coordinator;
 pub mod engine;
 pub mod signaling;
 
-use base64::{engine::general_purpose::{STANDARD, STANDARD_NO_PAD}, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, STANDARD_NO_PAD},
+    Engine as _,
+};
 use serde::{Deserialize, Serialize};
 
 const VERSION: u16 = 1;
@@ -191,10 +194,13 @@ pub fn encode_route(observation: &P2pRouteObservation) -> Result<String, P2pProt
     frame.session_id = Some(observation.session_id.clone());
     frame.bubble_id = Some(observation.bubble_id.clone());
     frame.sender_device_id = Some(observation.sender_device_id.clone());
-    frame.route = Some(match observation.route {
-        P2pRoute::Direct => "DIRECT",
-        P2pRoute::Turn => "TURN",
-    }.to_owned());
+    frame.route = Some(
+        match observation.route {
+            P2pRoute::Direct => "DIRECT",
+            P2pRoute::Turn => "TURN",
+        }
+        .to_owned(),
+    );
     frame.local_candidate_type = Some(observation.local_candidate_type.clone());
     frame.remote_candidate_type = Some(observation.remote_candidate_type.clone());
     encode_frame(&frame)
@@ -220,10 +226,13 @@ pub fn encode_receipt(receipt: &P2pReceiptEnvelope) -> Result<String, P2pProtoco
     frame.sender_device_id = Some(receipt.sender_device_id.clone());
     frame.recipient_device_id = Some(receipt.recipient_device_id.clone());
     frame.client_message_id = Some(receipt.client_message_id.clone());
-    frame.status = Some(match receipt.status {
-        P2pReceiptStatus::Delivered => "DELIVERED",
-        P2pReceiptStatus::Read => "READ",
-    }.to_owned());
+    frame.status = Some(
+        match receipt.status {
+            P2pReceiptStatus::Delivered => "DELIVERED",
+            P2pReceiptStatus::Read => "READ",
+        }
+        .to_owned(),
+    );
     encode_frame(&frame)
 }
 
@@ -238,7 +247,8 @@ pub fn decode(value: &str) -> Result<DecodedP2pFrame, P2pProtocolError> {
     if value.is_empty() || value.len() > MAX_FRAME_BYTES {
         return Err(P2pProtocolError::OversizedFrame);
     }
-    let frame = serde_json::from_str::<WireFrame>(value).map_err(|_| P2pProtocolError::InvalidFrame)?;
+    let frame =
+        serde_json::from_str::<WireFrame>(value).map_err(|_| P2pProtocolError::InvalidFrame)?;
     if frame.version != VERSION {
         return Err(P2pProtocolError::UnsupportedVersion);
     }
@@ -444,7 +454,9 @@ fn validate_uuid(value: &str) -> Result<(), P2pProtocolError> {
 }
 
 fn required(value: Option<String>) -> Result<String, P2pProtocolError> {
-    value.filter(|value| !value.is_empty()).ok_or(P2pProtocolError::InvalidField)
+    value
+        .filter(|value| !value.is_empty())
+        .ok_or(P2pProtocolError::InvalidField)
 }
 
 #[cfg(test)]
@@ -504,8 +516,8 @@ mod tests {
     #[test]
     fn transcript_matches_android_join_order() {
         let proof = auth();
-        let transcript = String::from_utf8(auth_transcript(&proof).expect("transcript"))
-            .expect("utf8");
+        let transcript =
+            String::from_utf8(auth_transcript(&proof).expect("transcript")).expect("utf8");
         assert_eq!(
             transcript,
             format!(

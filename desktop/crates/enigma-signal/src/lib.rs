@@ -297,7 +297,8 @@ pub fn verify_linked_device_authorization_binding<A: SignalAdapter>(
         || parsed.new_device_id != target_device_id
         || parsed.authorizing_device_id != expected_authorizer_device_id
         || parsed.target_identity_key != target_identity_key
-        || parsed.authorizer_identity_key != STANDARD_NO_PAD.encode(known_authorizer_identity_public)
+        || parsed.authorizer_identity_key
+            != STANDARD_NO_PAD.encode(known_authorizer_identity_public)
         || parsed.protocol_version != 1
         || parsed.min_supported_version > 1
         || parsed.min_supported_version == 0
@@ -342,7 +343,8 @@ pub fn verify_device_authorization_proof<A: SignalAdapter>(
         || parsed.issued_at_unix_ms != expected.issued_at_unix_ms
         || parsed.target_identity_key != expected.target_identity_key
         || parsed.authorizer_identity_key != expected.authorizer_identity_key
-        || STANDARD_NO_PAD.encode(known_authorizer_identity_public) != parsed.authorizer_identity_key
+        || STANDARD_NO_PAD.encode(known_authorizer_identity_public)
+            != parsed.authorizer_identity_key
     {
         return Err(SignalAdapterError::InvalidDeviceAuthorizationProof);
     }
@@ -634,11 +636,8 @@ mod tests {
             &ciphertext,
         )
         .expect("encode signal envelope");
-        let parsed = parse_signal_wire_envelope(
-            &encoded,
-            "22222222-2222-4222-8222-222222222222",
-        )
-        .expect("parse encoded signal envelope");
+        let parsed = parse_signal_wire_envelope(&encoded, "22222222-2222-4222-8222-222222222222")
+            .expect("parse encoded signal envelope");
         assert_eq!(
             parsed.sender_device_id,
             "11111111-1111-4111-8111-111111111111"
@@ -663,10 +662,12 @@ mod tests {
             &ciphertext,
         )
         .expect("encode wire");
-        let parsed =
-            parse_signal_wire_envelope(&wire, "22222222-2222-4222-8222-222222222222")
-                .expect("parse wire");
-        assert_eq!(parsed.sender_device_id, "11111111-1111-4111-8111-111111111111");
+        let parsed = parse_signal_wire_envelope(&wire, "22222222-2222-4222-8222-222222222222")
+            .expect("parse wire");
+        assert_eq!(
+            parsed.sender_device_id,
+            "11111111-1111-4111-8111-111111111111"
+        );
         assert_eq!(parsed.message_type, session::SessionMessageType::Signal);
         assert_eq!(parsed.ciphertext, vec![1, 2, 3, 4]);
     }

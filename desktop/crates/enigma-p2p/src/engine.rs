@@ -6,15 +6,14 @@ use std::{
 
 use async_trait::async_trait;
 use rtc::{
-    peer_connection::transport::RTCIceCandidateType,
-    statistics::report::RTCStatsReportEntry,
+    peer_connection::transport::RTCIceCandidateType, statistics::report::RTCStatsReportEntry,
 };
 use webrtc::{
     data_channel::{DataChannel, DataChannelEvent},
     peer_connection::{
-        PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler,
-        RTCConfigurationBuilder, RTCIceCandidateInit, RTCIceGatheringState, RTCIceServer,
-        RTCPeerConnectionIceEvent, RTCPeerConnectionState, RTCSessionDescription, StatsSelector,
+        PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder,
+        RTCIceCandidateInit, RTCIceGatheringState, RTCIceServer, RTCPeerConnectionIceEvent,
+        RTCPeerConnectionState, RTCSessionDescription, StatsSelector,
     },
     runtime::{default_runtime, Runtime},
 };
@@ -251,10 +250,7 @@ impl WebRtcP2pEngine {
         let runtime = Arc::clone(&self.runtime);
         let mut result = None;
         runtime.block_on(Box::pin(async {
-            result = Some(
-                self.set_remote_answer(session_id, remote_answer_sdp)
-                    .await,
-            );
+            result = Some(self.set_remote_answer(session_id, remote_answer_sdp).await);
         }));
         result.ok_or(WebRtcP2pError::RuntimeUnavailable)?
     }
@@ -267,10 +263,7 @@ impl WebRtcP2pEngine {
         let runtime = Arc::clone(&self.runtime);
         let mut result = None;
         runtime.block_on(Box::pin(async {
-            result = Some(
-                self.add_remote_ice_candidate(session_id, candidate)
-                    .await,
-            );
+            result = Some(self.add_remote_ice_candidate(session_id, candidate).await);
         }));
         result.ok_or(WebRtcP2pError::RuntimeUnavailable)?
     }
@@ -499,24 +492,14 @@ impl WebRtcP2pEngine {
     }
 
     pub fn local_dtls_fingerprint(&self, session_id: &str) -> Option<&str> {
-        self.sessions
-            .get(session_id)?
-            .local_fingerprint
-            .as_deref()
+        self.sessions.get(session_id)?.local_fingerprint.as_deref()
     }
 
     pub fn remote_dtls_fingerprint(&self, session_id: &str) -> Option<&str> {
-        self.sessions
-            .get(session_id)?
-            .remote_fingerprint
-            .as_deref()
+        self.sessions.get(session_id)?.remote_fingerprint.as_deref()
     }
 
-    pub async fn send_text(
-        &self,
-        session_id: &str,
-        payload: &str,
-    ) -> Result<(), WebRtcP2pError> {
+    pub async fn send_text(&self, session_id: &str, payload: &str) -> Result<(), WebRtcP2pError> {
         if payload.is_empty() || payload.len() > MAX_DATA_CHANNEL_TEXT_BYTES {
             return Err(WebRtcP2pError::InvalidInput);
         }

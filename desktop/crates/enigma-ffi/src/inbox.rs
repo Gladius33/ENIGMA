@@ -433,12 +433,8 @@ mod tests {
         assert_eq!(delivery_status_rank(Some("sent")), 2);
         assert_eq!(delivery_status_rank(Some("delivered")), 3);
         assert_eq!(delivery_status_rank(Some("read")), 4);
-        assert!(
-            delivery_status_rank(Some("sent")) > delivery_status_rank(Some("queued"))
-        );
-        assert!(
-            delivery_status_rank(Some("delivered")) > delivery_status_rank(Some("sent"))
-        );
+        assert!(delivery_status_rank(Some("sent")) > delivery_status_rank(Some("queued")));
+        assert!(delivery_status_rank(Some("delivered")) > delivery_status_rank(Some("sent")));
         assert!(delivery_status_rank(Some("read")) > delivery_status_rank(Some("delivered")));
     }
 

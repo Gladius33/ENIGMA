@@ -133,11 +133,7 @@ impl DesktopP2pManager {
 
         let answer = self
             .engine
-            .accept_incoming_blocking(
-                &offer.session_id,
-                ice_servers,
-                &offer.offer_sdp,
-            )
+            .accept_incoming_blocking(&offer.session_id, ice_servers, &offer.offer_sdp)
             .map_err(|_| ())?;
         self.bind_fingerprints(&offer.session_id)?;
         self.signal_to(
@@ -156,11 +152,7 @@ impl DesktopP2pManager {
 
         loop {
             if Instant::now() >= deadline {
-                self.invalidate(
-                    &offer.session_id,
-                    &offer.bubble_id,
-                    &offer.sender_device_id,
-                );
+                self.invalidate(&offer.session_id, &offer.bubble_id, &offer.sender_device_id);
                 return Ok(None);
             }
 
@@ -238,8 +230,7 @@ impl DesktopP2pManager {
                                     ciphertext: message.ciphertext,
                                 }));
                             }
-                            DecodedP2pFrame::Receipt(_)
-                            | DecodedP2pFrame::ReceiptAck(_) => {}
+                            DecodedP2pFrame::Receipt(_) | DecodedP2pFrame::ReceiptAck(_) => {}
                         }
                     }
                     WebRtcP2pEvent::StateChanged { session_id, state }
@@ -279,9 +270,8 @@ impl DesktopP2pManager {
                         }
                         match signal_kind.as_str() {
                             "ice" => {
-                                let candidate =
-                                    serde_json::from_str::<P2pIceCandidate>(&payload)
-                                        .map_err(|_| ())?;
+                                let candidate = serde_json::from_str::<P2pIceCandidate>(&payload)
+                                    .map_err(|_| ())?;
                                 self.engine
                                     .add_remote_ice_candidate_blocking(
                                         &offer.session_id,
@@ -457,11 +447,7 @@ impl DesktopP2pManager {
             .engine
             .start_outgoing_blocking(request.session_id, request.ice_servers)
             .map_err(|_| ())?;
-        self.signal(
-            request,
-            "offer",
-            offer,
-        )?;
+        self.signal(request, "offer", offer)?;
 
         let connect_deadline = Instant::now() + CONNECT_TIMEOUT;
         let mut remote_description_ready = false;
@@ -555,8 +541,7 @@ impl DesktopP2pManager {
                                     return Ok(true);
                                 }
                             }
-                            DecodedP2pFrame::Message(_)
-                            | DecodedP2pFrame::ReceiptAck(_) => {}
+                            DecodedP2pFrame::Message(_) | DecodedP2pFrame::ReceiptAck(_) => {}
                         }
                     }
                     WebRtcP2pEvent::StateChanged { session_id, state }
@@ -605,9 +590,8 @@ impl DesktopP2pManager {
                                 }
                             }
                             "ice" => {
-                                let candidate =
-                                    serde_json::from_str::<P2pIceCandidate>(&payload)
-                                        .map_err(|_| ())?;
+                                let candidate = serde_json::from_str::<P2pIceCandidate>(&payload)
+                                    .map_err(|_| ())?;
                                 if remote_description_ready {
                                     self.engine
                                         .add_remote_ice_candidate_blocking(
@@ -735,12 +719,7 @@ impl DesktopP2pManager {
             .map_err(|_| ())
     }
 
-    fn signal(
-        &self,
-        request: &P2pSend<'_>,
-        signal_kind: &str,
-        payload: String,
-    ) -> Result<(), ()> {
+    fn signal(&self, request: &P2pSend<'_>, signal_kind: &str, payload: String) -> Result<(), ()> {
         self.signal_to(
             request.bubble_id,
             request.recipient_device_id,

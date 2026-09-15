@@ -1,17 +1,11 @@
-use std::{
-    sync::{mpsc, Arc, Mutex},
-};
+use std::sync::{mpsc, Arc, Mutex};
 
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc as async_mpsc;
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{
-        client::IntoClientRequest,
-        http::header::AUTHORIZATION,
-        protocol::Message,
-    },
+    tungstenite::{client::IntoClientRequest, http::header::AUTHORIZATION, protocol::Message},
 };
 
 const MAX_SIGNAL_PAYLOAD_BYTES: usize = 131_072;
@@ -104,8 +98,8 @@ impl SignalingClient {
             return Err(P2pSignalingError::InvalidEndpoint);
         }
         let endpoint = websocket_endpoint(base_url, device_id)?;
-        let token = std::str::from_utf8(access_token)
-            .map_err(|_| P2pSignalingError::InvalidCredential)?;
+        let token =
+            std::str::from_utf8(access_token).map_err(|_| P2pSignalingError::InvalidCredential)?;
         if token.is_empty()
             || token.len() > MAX_BEARER_TOKEN_BYTES
             || token.bytes().any(|byte| byte.is_ascii_control())

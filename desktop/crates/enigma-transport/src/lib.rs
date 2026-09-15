@@ -431,10 +431,7 @@ impl PairingRendezvousClient {
         }
     }
 
-    pub fn account_user_id(
-        &self,
-        access_token: &[u8],
-    ) -> Result<String, PairingRendezvousError> {
+    pub fn account_user_id(&self, access_token: &[u8]) -> Result<String, PairingRendezvousError> {
         let endpoint = self
             .base_url
             .join("v1/devices")

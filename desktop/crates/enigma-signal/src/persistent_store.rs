@@ -533,8 +533,7 @@ mod tests {
     fn remote_identity_cannot_be_silently_replaced() {
         let mut rng = StdRng::from_seed([0x44; 32]);
         let local = IdentityKeyPair::generate(&mut rng);
-        let mut store =
-            PersistentSignalProtocolStore::new(local, 7).expect("persistent store");
+        let mut store = PersistentSignalProtocolStore::new(local, 7).expect("persistent store");
         let remote_a = IdentityKeyPair::generate(&mut rng);
         let remote_b = IdentityKeyPair::generate(&mut rng);
         let address = ProtocolAddress::new(

@@ -285,11 +285,7 @@ fn random_uuid_v4() -> Result<String, ()> {
     ))
 }
 
-unsafe fn read_utf8_input(
-    pointer: *const u8,
-    length: usize,
-    maximum: usize,
-) -> Option<String> {
+unsafe fn read_utf8_input(pointer: *const u8, length: usize, maximum: usize) -> Option<String> {
     if pointer.is_null() || length == 0 || length > maximum {
         return None;
     }
@@ -390,9 +386,7 @@ fn normalize_inbound_payload(
         {
             return Err(());
         }
-        let encoded = plaintext
-            .strip_prefix("ENIGMA_SENDER_SYNC_V1:")
-            .ok_or(())?;
+        let encoded = plaintext.strip_prefix("ENIGMA_SENDER_SYNC_V1:").ok_or(())?;
         let sync: SenderSyncInboundDto = serde_json::from_str(encoded).map_err(|_| ())?;
         if sync.version != 1
             || !is_canonical_device_uuid(&sync.contact_user_id)
@@ -460,13 +454,16 @@ fn commit_inbound_encrypted_delivery(
     verified_sibling_ids: &HashSet<String>,
     delivery: &InboundEncryptedDelivery<'_>,
 ) -> Result<bool, ()> {
-    let already_durable = core.desktop_inbox.as_ref().ok_or(())?.contains_remote_message(
-        delivery.remote_message_id,
-    )? || core
+    let already_durable = core
         .desktop_inbox
         .as_ref()
         .ok_or(())?
-        .contains_client_delivery(delivery.sender_device_id, delivery.client_message_id)?;
+        .contains_remote_message(delivery.remote_message_id)?
+        || core
+            .desktop_inbox
+            .as_ref()
+            .ok_or(())?
+            .contains_client_delivery(delivery.sender_device_id, delivery.client_message_id)?;
     if already_durable {
         return Ok(false);
     }
@@ -551,7 +548,13 @@ fn commit_inbound_encrypted_delivery(
     if persist_default_signal_store(&working_backend).is_err() {
         return Err(());
     }
-    if core.desktop_inbox.as_ref().ok_or(())?.append(entry).is_err() {
+    if core
+        .desktop_inbox
+        .as_ref()
+        .ok_or(())?
+        .append(entry)
+        .is_err()
+    {
         return Err(());
     }
 
@@ -1357,7 +1360,10 @@ pub unsafe extern "C" fn enigma_core_send_text_to_contact(
             Ok(Ok(contacts)) => contacts,
             Ok(Err(_)) | Err(_) => return false,
         };
-        match contacts.into_iter().find(|contact| contact.user_id == recipient_user_id) {
+        match contacts
+            .into_iter()
+            .find(|contact| contact.user_id == recipient_user_id)
+        {
             Some(contact) => contact,
             None => return false,
         }
@@ -1406,9 +1412,9 @@ pub unsafe extern "C" fn enigma_core_send_text(
     // SAFETY: the caller contract guarantees a live request structure for this call.
     let request = unsafe { &*request };
     // SAFETY: request fields are caller-owned readable buffers covered by the FFI contract.
-    let Some(recipient_user_id) = (unsafe {
-        read_utf8_input(request.recipient_user_id, request.recipient_user_id_len, 36)
-    }) else {
+    let Some(recipient_user_id) =
+        (unsafe { read_utf8_input(request.recipient_user_id, request.recipient_user_id_len, 36) })
+    else {
         return false;
     };
     // SAFETY: request fields are caller-owned readable buffers covered by the FFI contract.
@@ -1493,13 +1499,7 @@ pub unsafe extern "C" fn enigma_core_send_text(
         Err(()) => return false,
     };
     let sibling_devices = match core.signal_backend.as_ref().and_then(|backend| {
-        verified_sender_sync_targets(
-            backend,
-            &own_user_id,
-            &sender_device_id,
-            &own_devices,
-        )
-        .ok()
+        verified_sender_sync_targets(backend, &own_user_id, &sender_device_id, &own_devices).ok()
     }) {
         Some(devices) => devices,
         None => return false,
@@ -1550,13 +1550,7 @@ pub unsafe extern "C" fn enigma_core_send_text(
                 sender_sync: false,
                 now,
             };
-            prepare_outbound_delivery(
-                &mut working_backend,
-                &client,
-                token,
-                recipient,
-                &context,
-            )
+            prepare_outbound_delivery(&mut working_backend, &client, token, recipient, &context)
         };
         match delivery {
             Ok(delivery) => deliveries.push(delivery),
@@ -1582,13 +1576,7 @@ pub unsafe extern "C" fn enigma_core_send_text(
                 sender_sync: true,
                 now,
             };
-            prepare_outbound_delivery(
-                &mut working_backend,
-                &client,
-                token,
-                sibling,
-                &context,
-            )
+            prepare_outbound_delivery(&mut working_backend, &client, token, sibling, &context)
         };
         match delivery {
             Ok(delivery) => deliveries.push(delivery),
@@ -1701,15 +1689,10 @@ fn poll_one_incoming_p2p(
     let own_devices = discover_devices_for(core, client, &own_user_id)?;
     let verified_sibling_ids: HashSet<String> = {
         let backend = core.signal_backend.as_ref().ok_or(())?;
-        verified_sender_sync_targets(
-            backend,
-            &own_user_id,
-            &local_device_id,
-            &own_devices,
-        )?
-        .into_iter()
-        .map(|device| device.device_id)
-        .collect()
+        verified_sender_sync_targets(backend, &own_user_id, &local_device_id, &own_devices)?
+            .into_iter()
+            .map(|device| device.device_id)
+            .collect()
     };
 
     let remote_devices = if offer.sender_user_id == own_user_id {
@@ -1797,20 +1780,12 @@ fn poll_one_incoming_p2p(
         created_at: &created_at,
         expires_at: "p2p",
     };
-    commit_inbound_encrypted_delivery(
-        core,
-        &own_user_id,
-        &verified_sibling_ids,
-        &delivery,
-    )?;
+    commit_inbound_encrypted_delivery(core, &own_user_id, &verified_sibling_ids, &delivery)?;
 
     core.desktop_p2p
         .as_mut()
         .ok_or(())?
-        .acknowledge_incoming_delivery(
-            &inbound.session_id,
-            &inbound.client_message_id,
-        )?;
+        .acknowledge_incoming_delivery(&inbound.session_id, &inbound.client_message_id)?;
     Ok(true)
 }
 
@@ -1927,16 +1902,13 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
         Ok(devices) => devices,
         Err(()) => return false,
     };
-    let verified_sibling_ids: HashSet<String> = match core
-        .signal_backend
-        .as_ref()
-        .and_then(|backend| {
+    let verified_sibling_ids: HashSet<String> =
+        match core.signal_backend.as_ref().and_then(|backend| {
             verified_sender_sync_targets(backend, &own_user_id, &device_id, &own_devices).ok()
-        })
-    {
-        Some(devices) => devices.into_iter().map(|device| device.device_id).collect(),
-        None => return false,
-    };
+        }) {
+            Some(devices) => devices.into_iter().map(|device| device.device_id).collect(),
+            None => return false,
+        };
 
     let pending = {
         let Some(token) = core.device_access_token.as_mut() else {
@@ -1950,14 +1922,9 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
 
     for message in pending {
         let already_durable = core.desktop_inbox.as_ref().is_some_and(|inbox| {
-            inbox
-                .contains_remote_message(&message.id)
-                .unwrap_or(false)
+            inbox.contains_remote_message(&message.id).unwrap_or(false)
                 || inbox
-                    .contains_client_delivery(
-                        &message.sender_device_id,
-                        &message.client_message_id,
-                    )
+                    .contains_client_delivery(&message.sender_device_id, &message.client_message_id)
                     .unwrap_or(false)
         });
 
@@ -2911,10 +2878,7 @@ mod tests {
         );
         assert_eq!(json["contactPublicId"], "alice");
         assert_eq!(json["contactDisplayName"], "Alice");
-        assert_eq!(
-            json["bubbleId"],
-            "22222222-2222-4222-8222-222222222222"
-        );
+        assert_eq!(json["bubbleId"], "22222222-2222-4222-8222-222222222222");
         assert_eq!(
             json["clientMessageId"],
             "33333333-3333-4333-8333-333333333333"

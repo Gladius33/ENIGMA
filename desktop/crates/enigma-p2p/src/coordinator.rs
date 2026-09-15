@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use crate::{
-    auth_transcript, consensus_route, decode_bytes, encode_bytes,
-    engine::P2pSelectedRoute, P2pAuthProof, P2pMessageEnvelope, P2pProtocolError, P2pReceiptAck,
-    P2pReceiptEnvelope, P2pRoute, P2pRouteObservation,
+    auth_transcript, consensus_route, decode_bytes, encode_bytes, engine::P2pSelectedRoute,
+    P2pAuthProof, P2pMessageEnvelope, P2pProtocolError, P2pReceiptAck, P2pReceiptEnvelope,
+    P2pRoute, P2pRouteObservation,
 };
 
 const AUTH_NONCE_BYTES: usize = 32;
@@ -442,10 +442,7 @@ impl P2pSessionCoordinator {
             .ok_or(P2pCoordinatorError::AuthenticationRequired)
     }
 
-    pub fn metadata(
-        &self,
-        session_id: &str,
-    ) -> Result<&P2pSessionMetadata, P2pCoordinatorError> {
+    pub fn metadata(&self, session_id: &str) -> Result<&P2pSessionMetadata, P2pCoordinatorError> {
         self.sessions
             .get(session_id)
             .map(|state| &state.metadata)
@@ -476,11 +473,7 @@ mod tests {
             .register_outgoing(&session, &bubble, &local, &remote)
             .expect("register");
         coordinator
-            .set_dtls_fingerprints(
-                &session,
-                "sha-256 AA:BB",
-                "sha-256 CC:DD",
-            )
+            .set_dtls_fingerprints(&session, "sha-256 AA:BB", "sha-256 CC:DD")
             .expect("fingerprints");
 
         let nonce = [7_u8; 32];
@@ -490,7 +483,10 @@ mod tests {
         let proof = coordinator
             .build_local_auth(&session, &nonce, &[9_u8; 64])
             .expect("proof");
-        assert_eq!(transcript, auth_transcript(&proof).expect("same transcript"));
+        assert_eq!(
+            transcript,
+            auth_transcript(&proof).expect("same transcript")
+        );
         assert_eq!(proof.initiator_device_id, local);
         assert_eq!(proof.responder_device_id, remote);
     }

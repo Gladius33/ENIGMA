@@ -321,10 +321,9 @@ impl LibsignalSessionBackend {
         let remote = ProtocolAddress::new(remote_device_id.to_owned(), protocol_device_id);
         let identity_key = libsignal_protocol::IdentityKey::decode(&material.identity_key)
             .map_err(|_| SignalAdapterError::InvalidBundle)?;
-        let signed_public = libsignal_protocol::PublicKey::deserialize(
-            &material.signed_pre_key.public_key,
-        )
-        .map_err(|_| SignalAdapterError::InvalidBundle)?;
+        let signed_public =
+            libsignal_protocol::PublicKey::deserialize(&material.signed_pre_key.public_key)
+                .map_err(|_| SignalAdapterError::InvalidBundle)?;
         let kyber_public = kem::PublicKey::deserialize(&material.kyber_pre_key.public_key)
             .map_err(|_| SignalAdapterError::InvalidBundle)?;
         let one_time_pre_key = material
@@ -505,8 +504,7 @@ impl LibsignalSessionBackend {
         }
         let protocol_device_id = DeviceId::try_from(envelope.sender_protocol_device_id)
             .map_err(|_| SignalAdapterError::InvalidWireEnvelope)?;
-        let remote =
-            ProtocolAddress::new(envelope.sender_device_id.clone(), protocol_device_id);
+        let remote = ProtocolAddress::new(envelope.sender_device_id.clone(), protocol_device_id);
         let ciphertext = SessionCiphertext {
             message_type: envelope.message_type,
             serialized: envelope.ciphertext,
