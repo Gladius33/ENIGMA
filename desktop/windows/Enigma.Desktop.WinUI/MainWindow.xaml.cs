@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Enigma.Desktop.Interop;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Storage.Streams;
 
@@ -18,6 +19,7 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
         Closed += OnClosed;
+        ContactSelector.SelectionChanged += OnContactSelectionChanged;
         InitializeSecureCore();
     }
 
@@ -65,6 +67,7 @@ public sealed partial class MainWindow : Window
             if (operationalReady)
             {
                 RefreshContacts();
+                RefreshMessages();
             }
         }
         catch (DllNotFoundException)
@@ -212,6 +215,7 @@ public sealed partial class MainWindow : Window
                             ContactSelector.IsEnabled = true;
                             SendButton.IsEnabled = true;
                             RefreshContacts();
+                            RefreshMessages();
                             dialog.Hide();
                         }
                         else
@@ -308,6 +312,120 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void OnContactSelectionChanged(object sender, SelectionChangedEventArgs args)
+    {
+        RefreshMessages();
+    }
+
+    private static string DecodeMessageBody(string encodedPayload)
+    {
+        const string prefix = "ENIGMA_PAYLOAD_V1:";
+        if (!encodedPayload.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            using JsonDocument payload = JsonDocument.Parse(encodedPayload[prefix.Length..]);
+            return payload.RootElement.TryGetProperty("body", out JsonElement body)
+                ? body.GetString() ?? string.Empty
+                : string.Empty;
+        }
+        catch (JsonException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private void RefreshMessages()
+    {
+        if (_core is null)
+        {
+            return;
+        }
+
+        string? selectedContactId = (ContactSelector.SelectedItem as ComboBoxItem)?.Tag as string;
+        MessagesPanel.Children.Clear();
+
+        nuint count = _core.InboxCount;
+        for (nuint index = 0; index < count; index++)
+        {
+            string encoded = _core.ReadInboxEntryJson(index);
+            if (string.IsNullOrWhiteSpace(encoded))
+            {
+                continue;
+            }
+
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(encoded);
+                JsonElement root = document.RootElement;
+                string? contactUserId =
+                    root.TryGetProperty("contact_user_id", out JsonElement contact)
+                        ? contact.GetString()
+                        : null;
+                if (!string.IsNullOrWhiteSpace(selectedContactId) &&
+                    contactUserId != selectedContactId)
+                {
+                    continue;
+                }
+
+                string direction =
+                    root.TryGetProperty("direction", out JsonElement directionElement)
+                        ? directionElement.GetString() ?? "inbound"
+                        : "inbound";
+                string plaintext =
+                    root.TryGetProperty("plaintext", out JsonElement plaintextElement)
+                        ? plaintextElement.GetString() ?? string.Empty
+                        : string.Empty;
+                string body = DecodeMessageBody(plaintext);
+                if (string.IsNullOrEmpty(body))
+                {
+                    continue;
+                }
+
+                bool outbound = direction == "outbound";
+                var bubble = new Border
+                {
+                    MaxWidth = 520,
+                    Padding = new Thickness(14),
+                    CornerRadius = new CornerRadius(14),
+                    HorizontalAlignment = outbound
+                        ? HorizontalAlignment.Right
+                        : HorizontalAlignment.Left,
+                    Background = outbound
+                        ? (Brush)Application.Current.Resources["EnigmaPrimaryBrush"]
+                        : (Brush)Application.Current.Resources["EnigmaSurfaceBrush"],
+                    Child = new TextBlock
+                    {
+                        Text = body,
+                        TextWrapping = TextWrapping.Wrap,
+                        Foreground = outbound
+                            ? new SolidColorBrush(Microsoft.UI.Colors.White)
+                            : (Brush)Application.Current.Resources["EnigmaTextBrush"],
+                    },
+                };
+                MessagesPanel.Children.Add(bubble);
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+        }
+
+        if (MessagesPanel.Children.Count == 0)
+        {
+            MessagesPanel.Children.Add(new TextBlock
+            {
+                Text = selectedContactId is null
+                    ? "Sélectionnez un contact pour afficher la conversation."
+                    : "Aucun message local pour ce contact.",
+                Foreground = (Brush)Application.Current.Resources["EnigmaMutedTextBrush"],
+            });
+        }
+    }
+
     private async void OnSendClick(object sender, RoutedEventArgs args)
     {
         if (_core is null ||
@@ -332,6 +450,7 @@ public sealed partial class MainWindow : Window
         if (queued)
         {
             MessageComposer.Text = string.Empty;
+            RefreshMessages();
             CoreDetailText.Text = pending == 0
                 ? "Message chiffré et remis à tous les appareils disponibles."
                 : $"Message chiffré • {pending} livraison(s) durablement en attente.";
