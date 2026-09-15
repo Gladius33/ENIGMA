@@ -62,7 +62,7 @@ sealed interface ParsedEnigmaQrPayload {
 
 object EnigmaQrPayloads {
     private val forbiddenSecretKey = Regex(
-        "\"(token|password|private_key|identity_private|download_secret|access_token|refresh_token)\"\\s*:",
+        "\"(token|password|private_key|identity_private|[a-z0-9_]+_secret|access_token|refresh_token)\"\\s*:",
         RegexOption.IGNORE_CASE,
     )
     private val forbiddenQueryKeys = setOf(
@@ -166,7 +166,10 @@ object EnigmaQrPayloads {
         return uri.rawQuery
             ?.split("&")
             ?.filter { it.isNotBlank() }
-            ?.none { it.substringBefore("=").lowercase() in forbiddenQueryKeys }
+            ?.none {
+                val key = it.substringBefore("=").lowercase()
+                key in forbiddenQueryKeys || key.endsWith("_secret")
+            }
             ?: true
     }
 }
