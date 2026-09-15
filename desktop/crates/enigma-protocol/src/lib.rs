@@ -5,6 +5,7 @@ use std::fmt;
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const MIN_SUPPORTED_VERSION: u16 = 1;
 pub const MAX_PAIRING_PUBLIC_KEY_BYTES: usize = 4096;
+pub const PAIRING_CANDIDATE_COMMITMENT_BYTES: usize = 32;
 pub const MAX_DEVICE_IDENTITY_BYTES: usize = 4096;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -63,6 +64,13 @@ fn format_uuid_bytes(bytes: &[u8; 16]) -> String {
         bytes[14],
         bytes[15],
     )
+}
+
+impl DeviceId {
+    #[must_use]
+    pub fn to_canonical_uuid(self) -> String {
+        format_uuid_bytes(&self.0)
+    }
 }
 
 impl PairingSessionId {
@@ -165,6 +173,7 @@ pub struct PairingQrPayload {
     pub session_id: PairingSessionId,
     pub expires_at_unix_ms: u64,
     pub pairing_public_key: Vec<u8>,
+    pub candidate_commitment: Vec<u8>,
 }
 
 impl PairingQrPayload {
@@ -177,6 +186,9 @@ impl PairingQrPayload {
             || self.pairing_public_key.len() > MAX_PAIRING_PUBLIC_KEY_BYTES
         {
             return Err(ProtocolError::InvalidPairingPublicKey);
+        }
+        if self.candidate_commitment.len() != PAIRING_CANDIDATE_COMMITMENT_BYTES {
+            return Err(ProtocolError::InvalidPairingCandidateCommitment);
         }
         Ok(())
     }
@@ -394,6 +406,7 @@ pub enum ProtocolError {
     InvalidVersionRange,
     Expired,
     InvalidPairingPublicKey,
+    InvalidPairingCandidateCommitment,
     InvalidDeviceIdentity,
     InvalidSignatureShape,
     SelfAuthorization,
@@ -424,6 +437,18 @@ mod tests {
     }
 
     #[test]
+    fn device_id_formats_as_canonical_lowercase_uuid() {
+        let id = DeviceId::from_bytes([
+            0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0x4d, 0xef, 0x8a, 0xbc, 0xde, 0xf0, 0x12, 0x34,
+            0x56, 0x78,
+        ]);
+        assert_eq!(
+            id.to_canonical_uuid(),
+            "12345678-9abc-4def-8abc-def012345678"
+        );
+    }
+
+    #[test]
     fn version_negotiation_fails_closed() {
         let header = WireHeader {
             protocol_version: 0,
@@ -440,6 +465,7 @@ mod tests {
             session_id: PairingSessionId::from_bytes([7; 16]),
             expires_at_unix_ms: 2_000,
             pairing_public_key: vec![1; 32],
+            candidate_commitment: vec![2; PAIRING_CANDIDATE_COMMITMENT_BYTES],
         };
         assert_eq!(payload.validate(1_000), Ok(()));
         assert_eq!(payload.validate(2_000), Err(ProtocolError::Expired));
