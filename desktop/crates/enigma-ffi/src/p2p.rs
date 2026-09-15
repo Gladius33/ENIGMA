@@ -622,7 +622,7 @@ impl DesktopP2pManager {
                                 }
                             }
                             "ice_complete" => {}
-                            "cancel" => return Ok(None),
+                            "cancel" => return Ok(false),
                             "offer" => return Err(()),
                             _ => return Err(()),
                         }
@@ -639,7 +639,7 @@ impl DesktopP2pManager {
                             return Ok(false);
                         }
                     }
-                    P2pSignalingEvent::Disconnected => return Ok(None),
+                    P2pSignalingEvent::Disconnected => return Ok(false),
                 }
             }
 
