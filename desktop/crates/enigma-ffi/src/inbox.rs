@@ -30,6 +30,16 @@ pub(crate) struct DurableInboxEntry {
     pub plaintext: String,
     pub created_at: String,
     pub expires_at: String,
+    #[serde(default = "default_direction")]
+    pub direction: String,
+    #[serde(default)]
+    pub contact_user_id: Option<String>,
+    #[serde(default)]
+    pub contact_public_id: Option<String>,
+    #[serde(default)]
+    pub contact_display_name: Option<String>,
+    #[serde(default)]
+    pub original_created_at_unix_ms: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -189,6 +199,10 @@ impl EncryptedDesktopInbox {
     }
 }
 
+fn default_direction() -> String {
+    "inbound".to_owned()
+}
+
 fn validate_entry(entry: &DurableInboxEntry) -> Result<(), ()> {
     validate_uuid(&entry.remote_message_id)?;
     validate_uuid(&entry.bubble_id)?;
@@ -198,6 +212,7 @@ fn validate_entry(entry: &DurableInboxEntry) -> Result<(), ()> {
     validate_uuid(&entry.client_message_id)?;
     if entry.sender_public_id.is_empty()
         || entry.sender_public_id.len() > 256
+        || !matches!(entry.direction.as_str(), "inbound" | "outbound")
         || entry.message_type.is_empty()
         || entry.message_type.len() > 64
         || entry.plaintext.is_empty()
@@ -206,6 +221,31 @@ fn validate_entry(entry: &DurableInboxEntry) -> Result<(), ()> {
         || entry.created_at.len() > 128
         || entry.expires_at.is_empty()
         || entry.expires_at.len() > 128
+    {
+        return Err(());
+    }
+
+    match (
+        entry.contact_user_id.as_deref(),
+        entry.contact_public_id.as_deref(),
+        entry.contact_display_name.as_deref(),
+    ) {
+        (None, None, None) => {}
+        (Some(user_id), Some(public_id), Some(display_name)) => {
+            validate_uuid(user_id)?;
+            if public_id.trim().is_empty()
+                || public_id.len() > 128
+                || display_name.trim().is_empty()
+                || display_name.len() > 160
+            {
+                return Err(());
+            }
+        }
+        _ => return Err(()),
+    }
+    if entry
+        .original_created_at_unix_ms
+        .is_some_and(|timestamp| timestamp <= 0)
     {
         return Err(());
     }
@@ -264,6 +304,11 @@ mod tests {
             plaintext: "ENIGMA_PAYLOAD_V1:{}".into(),
             created_at: "2026-09-15T12:00:00Z".into(),
             expires_at: "2026-09-22T12:00:00Z".into(),
+            direction: "inbound".into(),
+            contact_user_id: Some("44444444-4444-4444-8444-444444444444".into()),
+            contact_public_id: Some("alice".into()),
+            contact_display_name: Some("alice".into()),
+            original_created_at_unix_ms: None,
         };
         assert_eq!(validate_entry(&entry), Ok(()));
         assert!(validate_entry(&DurableInboxEntry {
