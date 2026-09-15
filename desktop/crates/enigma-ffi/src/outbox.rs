@@ -26,6 +26,8 @@ pub(crate) struct DurableOutboundDelivery {
     pub message_type: String,
     pub ciphertext: String,
     pub sender_sync: bool,
+    #[serde(default)]
+    pub recipient_identity_key: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -249,6 +251,10 @@ fn validate_delivery(delivery: &DurableOutboundDelivery) -> Result<(), ()> {
         || delivery.message_type.len() > 64
         || delivery.ciphertext.is_empty()
         || delivery.ciphertext.len() > 4 * 1024 * 1024
+        || delivery
+            .recipient_identity_key
+            .as_ref()
+            .is_some_and(|value| value.is_empty() || value.len() > 16 * 1024)
     {
         return Err(());
     }
@@ -304,6 +310,7 @@ mod tests {
             message_type: "text".into(),
             ciphertext: "opaque-ciphertext".into(),
             sender_sync: false,
+            recipient_identity_key: Some("AQID".into()),
         }
     }
 
