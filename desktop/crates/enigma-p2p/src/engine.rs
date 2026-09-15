@@ -104,11 +104,12 @@ impl SessionHandler {
             if label != DATA_CHANNEL_LABEL {
                 return;
             }
-            let Ok(mut slot) = stored.lock() else {
-                return;
-            };
-            *slot = Some(Arc::clone(&data_channel));
-            drop(slot);
+            {
+                let Ok(mut slot) = stored.lock() else {
+                    return;
+                };
+                *slot = Some(Arc::clone(&data_channel));
+            }
 
             while let Some(event) = data_channel.poll().await {
                 match event {
