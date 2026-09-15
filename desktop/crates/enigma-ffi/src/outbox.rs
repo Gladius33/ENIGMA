@@ -10,6 +10,8 @@ use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use enigma_storage::{RecordVault, SodiumRecordVault};
 use serde::{Deserialize, Serialize};
 
+use crate::inbox::{validate_entry as validate_inbox_entry, DurableInboxEntry};
+
 const OUTBOX_AAD: &[u8] = b"ENIGMA_DESKTOP_OUTBOX_V1";
 const OUTBOX_JOURNAL_AAD: &[u8] = b"ENIGMA_DESKTOP_OUTBOX_JOURNAL_V1";
 const MAX_OUTBOX_ENTRIES: usize = 16_384;
@@ -37,6 +39,8 @@ struct OutboxJournal {
     version: u16,
     deliveries: Vec<DurableOutboundDelivery>,
     signal_snapshot: String,
+    #[serde(default)]
+    local_inbox_entry: Option<DurableInboxEntry>,
 }
 
 pub(crate) struct EncryptedDesktopOutbox {
@@ -62,6 +66,7 @@ impl EncryptedDesktopOutbox {
         &self,
         deliveries: &[DurableOutboundDelivery],
         signal_snapshot: &[u8],
+        local_inbox_entry: Option<&DurableInboxEntry>,
     ) -> Result<(), ()> {
         if deliveries.is_empty()
             || deliveries.len() > 256
@@ -71,10 +76,14 @@ impl EncryptedDesktopOutbox {
             return Err(());
         }
         deliveries.iter().try_for_each(validate_delivery)?;
+        if let Some(entry) = local_inbox_entry {
+            validate_inbox_entry(entry)?;
+        }
         let journal = OutboxJournal {
             version: 1,
             deliveries: deliveries.to_vec(),
             signal_snapshot: STANDARD_NO_PAD.encode(signal_snapshot),
+            local_inbox_entry: local_inbox_entry.cloned(),
         };
         let plaintext = serde_json::to_vec(&journal).map_err(|_| ())?;
         if plaintext.len() > MAX_OUTBOX_FILE_BYTES {
@@ -89,7 +98,7 @@ impl EncryptedDesktopOutbox {
 
     pub(crate) fn read_journal(
         &self,
-    ) -> Result<Option<(Vec<DurableOutboundDelivery>, Vec<u8>)>, ()> {
+    ) -> Result<Option<(Vec<DurableOutboundDelivery>, Vec<u8>, Option<DurableInboxEntry>)>, ()> {
         let sealed = match fs::read(&self.journal_path) {
             Ok(value) => value,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -113,13 +122,20 @@ impl EncryptedDesktopOutbox {
             return Err(());
         }
         journal.deliveries.iter().try_for_each(validate_delivery)?;
+        if let Some(entry) = journal.local_inbox_entry.as_ref() {
+            validate_inbox_entry(entry)?;
+        }
         let snapshot = STANDARD_NO_PAD
             .decode(journal.signal_snapshot)
             .map_err(|_| ())?;
         if snapshot.is_empty() || snapshot.len() > 16 * 1024 * 1024 {
             return Err(());
         }
-        Ok(Some((journal.deliveries, snapshot)))
+        Ok(Some((
+            journal.deliveries,
+            snapshot,
+            journal.local_inbox_entry,
+        )))
     }
 
     pub(crate) fn clear_journal(&self) -> Result<(), ()> {
