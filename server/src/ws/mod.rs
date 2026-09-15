@@ -161,7 +161,7 @@ async fn route_p2p_signal(
     ) {
         return Err(AppError::BadRequest("INVALID_P2P_SIGNAL_KIND".into()));
     }
-    if !valid_p2p_signal_payload(&payload) {
+    if !valid_p2p_signal_payload(&signal_kind, &payload) {
         return Err(AppError::BadRequest("INVALID_P2P_SIGNAL_PAYLOAD".into()));
     }
 
@@ -173,6 +173,7 @@ async fn route_p2p_signal(
         .notify_p2p_signal(
             recipient_device_id,
             bubble_id,
+            sender_user_id,
             sender_device_id,
             session_id,
             signal_kind,
@@ -189,8 +190,15 @@ async fn route_p2p_signal(
     Ok(())
 }
 
-fn valid_p2p_signal_payload(payload: &str) -> bool {
-    !payload.is_empty() && payload.len() <= P2P_SIGNAL_MAX_BYTES
+fn valid_p2p_signal_payload(signal_kind: &str, payload: &str) -> bool {
+    if payload.len() > P2P_SIGNAL_MAX_BYTES {
+        return false;
+    }
+    match signal_kind {
+        "offer" | "answer" | "ice" => !payload.is_empty(),
+        "ice_complete" | "cancel" => payload.is_empty(),
+        _ => false,
+    }
 }
 
 async fn ensure_direct_bubble_scope(
@@ -267,9 +275,13 @@ mod tests {
         let at_limit = "x".repeat(P2P_SIGNAL_MAX_BYTES);
         let oversized = "x".repeat(P2P_SIGNAL_MAX_BYTES + 1);
 
-        assert!(!valid_p2p_signal_payload(""));
-        assert!(valid_p2p_signal_payload("opaque"));
-        assert!(valid_p2p_signal_payload(&at_limit));
-        assert!(!valid_p2p_signal_payload(&oversized));
+        assert!(!valid_p2p_signal_payload("offer", ""));
+        assert!(valid_p2p_signal_payload("offer", "opaque"));
+        assert!(valid_p2p_signal_payload("ice", &at_limit));
+        assert!(!valid_p2p_signal_payload("answer", &oversized));
+        assert!(valid_p2p_signal_payload("ice_complete", ""));
+        assert!(valid_p2p_signal_payload("cancel", ""));
+        assert!(!valid_p2p_signal_payload("ice_complete", "unexpected"));
+        assert!(!valid_p2p_signal_payload("bogus", ""));
     }
 }

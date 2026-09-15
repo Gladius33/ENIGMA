@@ -1,0 +1,240 @@
+name: desktop-ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-cross-platform:
+    name: rust-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install pinned protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "31.1"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify protoc
+        run: protoc --version
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.94.1 --profile minimal --component rustfmt,clippy
+      - name: Format
+        run: cargo +1.94.1 fmt --all -- --check
+      - name: Check all targets
+        run: cargo +1.94.1 check --workspace --all-targets
+      - name: Clippy all targets
+        run: cargo +1.94.1 clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test debug
+        run: cargo +1.94.1 test --workspace
+      - name: Test release
+        run: cargo +1.94.1 test --workspace --release
+      - name: Documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo +1.94.1 doc --workspace --no-deps
+
+  windows-abi-consumer:
+    name: windows-winui3-consumer
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install pinned protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "31.1"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify protoc
+        run: protoc --version
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.94.1 --profile minimal
+      - name: Build Rust ABI library
+        run: cargo +1.94.1 build --package enigma-ffi --release
+      - name: Require native ABI DLL
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "target/release/enigma_core.dll")) {
+            throw "Rust ABI build did not produce target/release/enigma_core.dll"
+          }
+      - name: Build C# ABI consumer
+        run: dotnet build windows/Enigma.Desktop.Interop/Enigma.Desktop.Interop.csproj --configuration Release --nologo
+      - name: Build WinUI 3 client
+        run: dotnet build windows/Enigma.Desktop.WinUI/Enigma.Desktop.WinUI.csproj --configuration Release --nologo
+      - name: Require packaged native core
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem "windows/Enigma.Desktop.WinUI/bin/Release" -Recurse -Filter "enigma_core.dll" | Select-Object -First 1
+          if (-not $dll) {
+            throw "WinUI output does not contain enigma_core.dll"
+          }
+          Write-Host "Packaged native core: $($dll.FullName)"
+      - name: Publish self-contained Windows client
+        shell: pwsh
+        run: |
+          dotnet publish windows/Enigma.Desktop.WinUI/Enigma.Desktop.WinUI.csproj --configuration Release --runtime win-x64 --self-contained true -p:WindowsAppSDKSelfContained=true -p:EnigmaCoreNativePath="$env:GITHUB_WORKSPACE\desktop\target\release\enigma_core.dll" --output windows/Enigma.Desktop.WinUI/artifacts/win-x64 --nologo
+      - name: Validate Windows distributable
+        shell: pwsh
+        run: |
+          $root = "windows/Enigma.Desktop.WinUI/artifacts/win-x64"
+          if (-not (Test-Path "$root/Enigma.Desktop.WinUI.exe")) { throw "Windows publish output is missing the ENIGMA executable" }
+          if (-not (Test-Path "$root/enigma_core.dll")) { throw "Windows publish output is missing enigma_core.dll" }
+          if (-not (Test-Path "$root/Assets/enigma_logo.png")) { throw "Windows publish output is missing the canonical Android ENIGMA logo" }
+          Compress-Archive -Path "$root/*" -DestinationPath "windows/Enigma.Desktop.WinUI/artifacts/ENIGMA-1.0.0-win-x64.zip" -Force
+          if (-not (Test-Path "windows/Enigma.Desktop.WinUI/artifacts/ENIGMA-1.0.0-win-x64.zip")) { throw "Windows distributable archive was not created" }
+      - name: Upload Windows distributable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ENIGMA-1.0.0-win-x64
+          path: desktop/windows/Enigma.Desktop.WinUI/artifacts/ENIGMA-1.0.0-win-x64.zip
+          if-no-files-found: error
+
+  linux-abi-consumer:
+    name: linux-qt6-consumer
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install pinned protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "31.1"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify protoc
+        run: protoc --version
+      - name: Install Qt 6 development packages
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends qt6-base-dev qt6-svg-dev
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.94.1 --profile minimal
+      - name: Build Rust ABI library
+        run: cargo +1.94.1 build --package enigma-ffi --release
+      - name: Configure Qt 6 C++ consumer against Rust ABI
+        run: cmake -S linux -B linux/build -DCMAKE_BUILD_TYPE=Release -DENIGMA_CORE_LIBRARY="${GITHUB_WORKSPACE}/desktop/target/release/libenigma_core.so"
+      - name: Build Qt 6 C++ consumer
+        run: cmake --build linux/build --config Release --parallel 2
+      - name: Build Debian package
+        run: cmake --build linux/build --target package --config Release
+      - name: Validate Debian package layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="$(find linux/build -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$package"
+          dpkg-deb --info "$package"
+          stage="$(mktemp -d)"
+          dpkg-deb --extract "$package" "$stage"
+          test -x "$stage/usr/bin/enigma_linux_desktop"
+          test -f "$stage/usr/lib/enigma/libenigma_core.so"
+          test -f "$stage/usr/share/applications/enigma.desktop"
+          test -f "$stage/usr/share/icons/hicolor/512x512/apps/enigma.png"
+      - name: Upload Debian distributable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ENIGMA-1.0.0-linux-amd64-deb
+          path: desktop/linux/build/*.deb
+          if-no-files-found: error
+
+
+  android-rust-signal-interop:
+    name: android-rust-libsignal-interop
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Configure cross-runtime fixture paths
+        run: |
+          {
+            echo "ENIGMA_ANDROID_INTEROP_FIXTURE=${RUNNER_TEMP}/enigma-android-rust-libsignal.properties"
+            echo "ENIGMA_ANDROID_INTEROP_REPLY=${RUNNER_TEMP}/enigma-android-rust-libsignal-reply.properties"
+            echo "ENIGMA_ANDROID_PAIRING_URI=${RUNNER_TEMP}/enigma-android-rust-pairing-uri.txt"
+          } >> "${GITHUB_ENV}"
+      - name: Install pinned protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "31.1"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify protoc
+        run: protoc --version
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.94.1 --profile minimal
+      - name: Java 21
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Setup Gradle and validate wrapper
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          validate-wrappers: true
+          cache-cleanup: on-success
+      - name: Make Gradle wrapper executable
+        run: chmod +x android/gradlew
+      - name: Rust emits Android pairing bootstrap
+        working-directory: desktop
+        run: cargo +1.94.1 test -p enigma-core --test pairing_android_interop rust_emits_android_pairing_uri -- --ignored --exact
+      - name: Require desktop pairing fixture
+        run: test -s "${ENIGMA_ANDROID_PAIRING_URI}"
+      - name: Android parses desktop pairing bootstrap
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest --tests 'com.enigma.securechat.qr.EnigmaQrPayloadsTest.parsesDesktopRustPairingBootstrapFromInteropFixture'
+      - name: Rust emits canonical libsignal pre-key transcript
+        working-directory: desktop
+        run: cargo +1.94.1 test -p enigma-signal --test cross_runtime_interop rust_emits_android_prekey_fixture -- --ignored --exact
+      - name: Require Rust interoperability fixture
+        run: test -s "${ENIGMA_ANDROID_INTEROP_FIXTURE}"
+      - name: Android decrypts Rust pre-key and emits ratcheted reply
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest --tests 'com.enigma.securechat.crypto.LibsignalProtocolSmokeTest.desktopRustPreKeyCiphertextRoundTripsBackToRust'
+      - name: Require Android interoperability reply
+        run: test -s "${ENIGMA_ANDROID_INTEROP_REPLY}"
+      - name: Rust decrypts Android ratcheted reply
+        working-directory: desktop
+        run: cargo +1.94.1 test -p enigma-signal --test cross_runtime_interop rust_decrypts_android_signal_reply -- --ignored --exact
+
+  unsafe-policy:
+    name: desktop-unsafe-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Enforce unsafe boundary and SAFETY comments
+        run: python3 scripts/audit-desktop-unsafe.py

@@ -1,10 +1,10 @@
-# Enigma 
+# Enigma
 
 Enigma is an open-source messaging project focused on privacy and end-to-end encryption. It combines an Android client with a Rust server and prefers direct peer-to-peer communication while retaining relays and fallbacks for reachability.
 
 > **Status:** actively developed and testable, but not production-ready or a security guarantee. Independent review and real-device validation remain necessary.
 
-## Why Enigma ?
+## Why Enigma?
 
 The project aims to keep message and attachment content opaque to the server wherever the protocol permits, while remaining usable across restrictive networks. Direct paths are preferred; signaling, STUN/TURN and application relays remain available when a direct path cannot be established.
 
@@ -82,4 +82,4 @@ Enigma est une messagerie open source orientée confidentialité et chiffrement 
 
 ## License
 
-Enigma is released under the [MIT License](LICENSE).
+Enigma is released under the [GNU Affero General Public License v3.0 only (AGPL-3.0-only)](LICENSE). Commercial use is permitted subject to the license terms. Third-party components retain their respective licenses; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

@@ -8,7 +8,7 @@ Etat actuel :
 - `SignalCryptoEngine` est le moteur applicatif Android pour les messages texte 1-to-1.
 - L'ancien moteur crypto provisoire a ete retire du code Android principal.
 - `ReleaseCryptoGuard` bloque une release qui utiliserait un moteur non libsignal.
-- `org.signal:libsignal-android:0.76.1` est centralise dans `android/gradle/libs.versions.toml` et reference par le build Android.
+- `org.signal:libsignal-android:0.86.5` est centralise dans `android/gradle/libs.versions.toml` et reference par le build Android.
 - Le test `LibsignalProtocolSmokeTest` etablit une session libsignal avec prekey, signed prekey et Kyber prekey, puis chiffre/dechiffre un premier message et une reponse.
 - Le test `SignalCryptoEngineTest` chiffre Alice vers Bob, dechiffre, rouvre les stores persistants, puis chiffre Bob vers Alice sans regenerer de cles.
 - Le serveur et les DTO Android acceptent maintenant `registration_id`, `protocol_device_id` et `kyber_prekey` dans `/v1/keys/upload` et les restituent dans `/v1/keys/{user_id}`.
@@ -65,11 +65,11 @@ Etat actuel :
 Dependance WebRTC Android :
 
 ```kotlin
-webrtcAndroid = "125.6422.07"
+webrtcAndroid = "150.7871.01"
 implementation(libs.webrtc.android)
 ```
 
-Artefact : `io.github.webrtc-sdk:android:125.6422.07`, AAR BSD-3-Clause publie sur Maven Central.
+Artefact : `io.github.webrtc-sdk:android:150.7871.01`, AAR BSD-3-Clause publie sur Maven Central.
 
 Fichiers principaux :
 

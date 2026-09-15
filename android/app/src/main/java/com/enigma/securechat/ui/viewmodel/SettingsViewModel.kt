@@ -7,6 +7,7 @@ import com.enigma.securechat.crypto.CryptoEngine
 import com.enigma.securechat.crypto.SafetyNumber
 import com.enigma.securechat.data.repository.AndroidReleaseInfo
 import com.enigma.securechat.data.repository.AndroidUpdateStatus
+import com.enigma.securechat.data.repository.DeviceRepository
 import com.enigma.securechat.data.repository.IdentityRepository
 import com.enigma.securechat.data.repository.InstallSource
 import com.enigma.securechat.data.repository.RelayProfile
@@ -51,7 +52,13 @@ data class SettingsUiState(
     val usage: UsageDto? = null,
     val support: SupportConfigDto? = null,
     val announcements: List<OfficialAnnouncementDto> = emptyList(),
+    val pairingStatus: SettingsPairingStatus? = null,
 )
+
+sealed interface SettingsPairingStatus {
+    data object Authorizing : SettingsPairingStatus
+    data class Authorized(val displayName: String, val platform: String) : SettingsPairingStatus
+}
 
 sealed interface SettingsServerStatus {
     data object Checking : SettingsServerStatus
@@ -87,6 +94,7 @@ class SettingsViewModel(
     private val updateRepository: UpdateRepository,
     private val relayRepository: RelayRepository,
     private val identityRepository: IdentityRepository,
+    private val deviceRepository: DeviceRepository,
     private val sessionStore: SecureSessionStore,
     private val cryptoEngine: CryptoEngine,
     activeRelayEndpoint: StateFlow<ActiveRelayEndpoint>,
@@ -173,6 +181,52 @@ class SettingsViewModel(
                 return@launch
             }
             addCustomRelay(payload.payload.name, payload.payload.url)
+        }
+    }
+
+    fun authorizeDesktopPairing(input: String) {
+        viewModelScope.launch {
+            val parsed = EnigmaQrPayloads.parse(input) as? ParsedEnigmaQrPayload.PairDevice
+            if (parsed == null) {
+                _state.value = _state.value.copy(
+                    pairingStatus = null,
+                    error = UserVisibleError(
+                        message = "QR d’appairage invalide ou expiré",
+                        errorCode = "DESKTOP_PAIRING_QR_INVALID",
+                    ),
+                )
+                return@launch
+            }
+
+            _state.value = _state.value.copy(
+                pairingStatus = SettingsPairingStatus.Authorizing,
+                error = null,
+            )
+            when (val candidate = deviceRepository.resolvePairingCandidate(parsed.payload)) {
+                is AppResult.Ok -> {
+                    _state.value = when (
+                        val authorized = deviceRepository.authorizeLinkedDesktop(candidate.value)
+                    ) {
+                        is AppResult.Ok -> _state.value.copy(
+                            pairingStatus = SettingsPairingStatus.Authorized(
+                                displayName = authorized.value.displayName,
+                                platform = authorized.value.platform,
+                            ),
+                            error = null,
+                        )
+                        is AppResult.Err -> _state.value.copy(
+                            pairingStatus = null,
+                            error = authorized.error,
+                        )
+                    }
+                }
+                is AppResult.Err -> {
+                    _state.value = _state.value.copy(
+                        pairingStatus = null,
+                        error = candidate.error,
+                    )
+                }
+            }
         }
     }
 

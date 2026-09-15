@@ -1,0 +1,94 @@
+name: supply-chain-ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supply-chain-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sbom:
+    name: sbom
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Build deterministic source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive --format=tar --prefix="enigma-${GITHUB_SHA}/" HEAD | gzip -n > "enigma-source-${GITHUB_SHA}.tar.gz"
+          sha256sum "enigma-source-${GITHUB_SHA}.tar.gz" > source.sha256
+
+      - name: Generate SPDX JSON SBOM
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          path: .
+          format: spdx-json
+          output-file: enigma.spdx.json
+          syft-version: v1.51.1
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Validate SBOM fail-closed
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+
+          path = Path("enigma.spdx.json")
+          if not path.is_file() or path.stat().st_size == 0:
+              raise SystemExit("SBOM missing or empty")
+          doc = json.loads(path.read_text(encoding="utf-8"))
+          if not str(doc.get("spdxVersion", "")).startswith("SPDX-"):
+              raise SystemExit("invalid SPDX version")
+          if not doc.get("packages"):
+              raise SystemExit("SBOM contains no packages")
+          if not doc.get("documentNamespace"):
+              raise SystemExit("SBOM has no document namespace")
+
+      - name: Upload source archive and SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: enigma-supply-chain-${{ github.sha }}
+          path: |
+            enigma-source-${{ github.sha }}.tar.gz
+            source.sha256
+            enigma.spdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+  attest:
+    name: source-sbom-attestation
+    needs: sbom
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download supply-chain artifacts
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: enigma-supply-chain-${{ github.sha }}
+
+      - name: Attest source archive with SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: enigma-source-${{ github.sha }}.tar.gz
+          sbom-path: enigma.spdx.json

@@ -22,6 +22,7 @@ class LocalAccountDataPurger(
     private val fileStore: SecureFileStore,
     private val p2pReceiptOutboxStore: P2pReceiptOutboxStore,
     private val p2pAttachmentCommitOutboxStore: P2pAttachmentCommitOutboxStore,
+    private val messageDeliveryOutboxStore: MessageDeliveryOutboxStore,
 ) : AccountDataPurger {
     override suspend fun purgeAccountData() {
         val errors = mutableListOf<Throwable>()
@@ -31,6 +32,7 @@ class LocalAccountDataPurger(
             runCatching { fileStore.clearEncryptedAttachments() }.onFailure { errors.add(it) }
             runCatching { p2pReceiptOutboxStore.clear() }.onFailure { errors.add(it) }
             runCatching { p2pAttachmentCommitOutboxStore.clear() }.onFailure { errors.add(it) }
+            runCatching { messageDeliveryOutboxStore.clear() }.onFailure { errors.add(it) }
         }
         runCatching { sessionStore.clearAccountData() }.onFailure { errors.add(it) }
         runCatching { deviceStore.clearDeviceId() }.onFailure { errors.add(it) }

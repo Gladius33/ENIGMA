@@ -44,22 +44,25 @@ data class RelayQrPayload(
 data class PairDeviceQrPayload(
     val type: String = "enigma.pair_device",
     val version: Int = 1,
-    val identity_id: String,
-    val device_name: String,
-    val pairing_hint: String? = null,
-    val expires_at: String? = null,
-    val signature: String?,
+    val protocol_version: Int = 1,
+    val min_supported_version: Int = 1,
+    val capabilities: Long,
+    val pairing_session_id: String,
+    val expires_at_unix_ms: Long,
+    val pairing_public_key: String,
+    val candidate_commitment: String,
 )
 
 sealed interface ParsedEnigmaQrPayload {
     data class Identity(val payload: IdentityQrPayload) : ParsedEnigmaQrPayload
     data class Relay(val payload: RelayQrPayload) : ParsedEnigmaQrPayload
     data class BubbleInvite(val payload: BubbleInviteQrPayload) : ParsedEnigmaQrPayload
+    data class PairDevice(val payload: PairDeviceQrPayload) : ParsedEnigmaQrPayload
 }
 
 object EnigmaQrPayloads {
     private val forbiddenSecretKey = Regex(
-        "\"(token|password|private_key|identity_private|download_secret|access_token|refresh_token)\"\\s*:",
+        "\"(token|password|private_key|identity_private|[a-z0-9_]+_secret|access_token|refresh_token)\"\\s*:",
         RegexOption.IGNORE_CASE,
     )
     private val forbiddenQueryKeys = setOf(
@@ -107,6 +110,10 @@ object EnigmaQrPayloads {
                     bubbleAdapter.fromJson(payloadJson)
                         ?.takeIf { it.relay_hint?.isAllowedRelayUrl() != false }
                         ?.let { ParsedEnigmaQrPayload.BubbleInvite(it) }
+                payloadJson.contains("\"type\":\"enigma.pair_device\"") ->
+                    pairDeviceAdapter.fromJson(payloadJson)
+                        ?.takeIf { it.isValidPairingBootstrap() }
+                        ?.let { ParsedEnigmaQrPayload.PairDevice(it) }
                 else -> null
             }
         }.getOrNull()
@@ -129,6 +136,27 @@ object EnigmaQrPayloads {
         }.getOrNull()
     }
 
+    private fun PairDeviceQrPayload.isValidPairingBootstrap(): Boolean {
+        if (version != 1 || protocol_version != 1 || min_supported_version != 1) return false
+        if (capabilities < 0 || capabilities and (1L shl 2) == 0L) return false
+        if (expires_at_unix_ms <= System.currentTimeMillis()) return false
+        if (runCatching { java.util.UUID.fromString(pairing_session_id) }.isFailure) return false
+        val publicKey = runCatching { Base64.getDecoder().decode(pairing_public_key) }.getOrNull()
+            ?: return false
+        return try {
+            if (publicKey.isEmpty() || publicKey.size > 4_096) return false
+            val commitment = runCatching { Base64.getDecoder().decode(candidate_commitment) }.getOrNull()
+                ?: return false
+            try {
+                commitment.size == 32
+            } finally {
+                commitment.fill(0)
+            }
+        } finally {
+            publicKey.fill(0)
+        }
+    }
+
     private fun String.isAllowedRelayUrl(): Boolean {
         val uri = runCatching { URI(this) }.getOrNull() ?: return false
         val scheme = uri.scheme?.lowercase() ?: return false
@@ -138,7 +166,10 @@ object EnigmaQrPayloads {
         return uri.rawQuery
             ?.split("&")
             ?.filter { it.isNotBlank() }
-            ?.none { it.substringBefore("=").lowercase() in forbiddenQueryKeys }
+            ?.none {
+                val key = it.substringBefore("=").lowercase()
+                key in forbiddenQueryKeys || key.endsWith("_secret")
+            }
             ?: true
     }
 }

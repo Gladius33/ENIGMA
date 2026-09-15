@@ -165,7 +165,7 @@ async fn send_message(
         "INSERT INTO message_queue
             (id, bubble_id, sender_device_id, recipient_device_id, client_message_id, message_type, ciphertext, expires_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (sender_device_id, client_message_id) DO NOTHING
+         ON CONFLICT (sender_device_id, recipient_device_id, client_message_id) DO NOTHING
          RETURNING id, created_at, expires_at",
     )
     .bind(id)
@@ -200,9 +200,13 @@ async fn send_message(
         let existing = sqlx::query_as::<_, ExistingMessageRow>(
             "SELECT id, bubble_id, recipient_device_id, message_type, ciphertext, created_at, expires_at
              FROM message_queue
-             WHERE sender_device_id = $1 AND client_message_id = $2 AND expires_at > now()",
+             WHERE sender_device_id = $1
+               AND recipient_device_id = $2
+               AND client_message_id = $3
+               AND expires_at > now()",
         )
         .bind(payload.sender_device_id)
+        .bind(payload.recipient_device_id)
         .bind(payload.client_message_id)
         .fetch_optional(&mut *tx)
         .await?
