@@ -422,7 +422,7 @@ fn normalize_inbound_payload(
         return Err(());
     }
     let normalized_type = decode_message_payload(&plaintext, message_bubble_id)?;
-    if !matches!(message_type, "text" | "file") || message_type != normalized_type {
+    if !matches!(message_type, "text" | "file") || message_type != normalized_type.as_str() {
         return Err(());
     }
     Ok(NormalizedInboundPayload {
@@ -2525,6 +2525,92 @@ mod tests {
         );
         assert_eq!(json["originalCreatedAt"], 1_700_000_000_000_i64);
         assert_eq!(json["encodedMessagePayload"], encoded_payload);
+    }
+
+    #[test]
+    fn inbound_payload_requires_android_message_contract() {
+        let bubble_id = "22222222-2222-4222-8222-222222222222";
+        let payload = encode_text_payload("Bonjour").expect("payload");
+        let normalized = normalize_inbound_payload(
+            payload.clone(),
+            "text",
+            bubble_id,
+            "33333333-3333-4333-8333-333333333333",
+            "11111111-1111-4111-8111-111111111111",
+            "alice",
+            "44444444-4444-4444-8444-444444444444",
+            false,
+        )
+        .expect("valid inbound payload");
+        assert_eq!(normalized.direction, "inbound");
+        assert_eq!(normalized.contact_public_id, "alice");
+        assert_eq!(normalized.message_type, "text");
+        assert_eq!(normalized.plaintext, payload);
+
+        assert!(normalize_inbound_payload(
+            "plaintext libre".to_owned(),
+            "text",
+            bubble_id,
+            "33333333-3333-4333-8333-333333333333",
+            "11111111-1111-4111-8111-111111111111",
+            "alice",
+            "44444444-4444-4444-8444-444444444444",
+            false,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn verified_sender_sync_normalizes_to_outbound_contact_message() {
+        let own_user_id = "44444444-4444-4444-8444-444444444444";
+        let contact_user_id = "11111111-1111-4111-8111-111111111111";
+        let bubble_id = "22222222-2222-4222-8222-222222222222";
+        let client_message_id = "33333333-3333-4333-8333-333333333333";
+        let payload = encode_text_payload("Synchronisé").expect("payload");
+        let sender_sync = encode_sender_sync_payload(
+            contact_user_id,
+            "alice",
+            "Alice",
+            bubble_id,
+            client_message_id,
+            1_700_000_000_000,
+            &payload,
+        )
+        .expect("sender sync");
+
+        let normalized = normalize_inbound_payload(
+            sender_sync.clone(),
+            "opaque",
+            bubble_id,
+            client_message_id,
+            own_user_id,
+            "me",
+            own_user_id,
+            true,
+        )
+        .expect("verified sender sync");
+        assert_eq!(normalized.direction, "outbound");
+        assert_eq!(normalized.contact_user_id, contact_user_id);
+        assert_eq!(normalized.contact_public_id, "alice");
+        assert_eq!(normalized.contact_display_name, "Alice");
+        assert_eq!(normalized.message_type, "text");
+        assert_eq!(normalized.plaintext, payload);
+        assert_eq!(
+            normalized.original_created_at_unix_ms,
+            Some(1_700_000_000_000)
+        );
+
+        assert!(normalize_inbound_payload(
+            sender_sync,
+            "opaque",
+            bubble_id,
+            client_message_id,
+            own_user_id,
+            "me",
+            own_user_id,
+            false,
+        )
+        .is_err());
     }
 
     #[test]
