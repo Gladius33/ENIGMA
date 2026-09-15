@@ -103,12 +103,19 @@
                             FontSize="12"
                             Foreground="{ThemeResource EnigmaMutedTextBrush}" />
                     </StackPanel>
-                    <Button
-                        x:Name="DevicesButton"
-                        Grid.Column="1"
-                        Content="Appareils"
-                        Click="OnManageDevicesClick"
-                        AutomationProperties.Name="Gérer les appareils liés" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <Button
+                            x:Name="RefreshButton"
+                            Content="Actualiser"
+                            Click="OnRefreshClick"
+                            IsEnabled="False"
+                            AutomationProperties.Name="Actualiser les messages" />
+                        <Button
+                            x:Name="DevicesButton"
+                            Content="Appareils"
+                            Click="OnManageDevicesClick"
+                            AutomationProperties.Name="Gérer les appareils liés" />
+                    </StackPanel>
                 </Grid>
             </Border>
 
