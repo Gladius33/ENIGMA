@@ -91,7 +91,6 @@ mod tests {
     }
 }
 
-
 #[derive(Debug)]
 pub enum PairingRendezvousError {
     InvalidEndpoint,
@@ -109,7 +108,9 @@ impl std::fmt::Display for PairingRendezvousError {
             Self::InsecureEndpoint => formatter.write_str("insecure pairing rendezvous endpoint"),
             Self::ClientBuild => formatter.write_str("unable to build pairing HTTP client"),
             Self::Transport => formatter.write_str("pairing rendezvous transport failure"),
-            Self::Rejected(status) => write!(formatter, "pairing rendezvous rejected with HTTP {status}"),
+            Self::Rejected(status) => {
+                write!(formatter, "pairing rendezvous rejected with HTTP {status}")
+            }
             Self::InvalidResponse => formatter.write_str("invalid pairing rendezvous response"),
         }
     }
@@ -164,10 +165,7 @@ pub struct PairingRendezvousClient {
 }
 
 impl PairingRendezvousClient {
-    pub fn new(
-        base_url: &str,
-        allow_insecure_http: bool,
-    ) -> Result<Self, PairingRendezvousError> {
+    pub fn new(base_url: &str, allow_insecure_http: bool) -> Result<Self, PairingRendezvousError> {
         let mut parsed =
             reqwest::Url::parse(base_url).map_err(|_| PairingRendezvousError::InvalidEndpoint)?;
         match parsed.scheme() {
