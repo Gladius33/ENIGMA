@@ -178,8 +178,8 @@ int main(int argc, char* argv[]) {
             ? QStringLiteral("Créer un QR d’appairage court-vivant.")
             : coreDetail);
 
-    auto* openMessages = new QPushButton(QStringLiteral("Ouvrir les messages"), surface);
-    openMessages->setAccessibleName(QStringLiteral("Ouvrir les messages"));
+    auto* openMessages = new QPushButton(QStringLiteral("Actualiser"), surface);
+    openMessages->setAccessibleName(QStringLiteral("Actualiser les messages"));
     openMessages->setEnabled(coreReady);
     openMessages->setToolTip(
         coreReady
@@ -255,12 +255,28 @@ int main(int argc, char* argv[]) {
                 payloadDocument.object().value(QStringLiteral("body")).toString();
             if (body.isEmpty()) continue;
 
-            auto* item = new QListWidgetItem(body, messageList);
             const bool outbound =
                 entry.value(QStringLiteral("direction")).toString() == QStringLiteral("outbound");
+            const QString deliveryStatus =
+                entry.value(QStringLiteral("delivery_status")).toString();
+            QString statusLabel;
+            if (outbound) {
+                if (deliveryStatus == QStringLiteral("read")) {
+                    statusLabel = QStringLiteral("Lu");
+                } else if (deliveryStatus == QStringLiteral("delivered")) {
+                    statusLabel = QStringLiteral("Livré");
+                } else if (deliveryStatus == QStringLiteral("sent")) {
+                    statusLabel = QStringLiteral("Envoyé");
+                } else {
+                    statusLabel = QStringLiteral("Synchronisé");
+                }
+            }
+
+            auto* item = new QListWidgetItem(
+                outbound ? QStringLiteral("%1\n%2").arg(body, statusLabel) : body,
+                messageList);
             item->setTextAlignment(outbound ? Qt::AlignRight : Qt::AlignLeft);
-            item->setToolTip(
-                outbound ? QStringLiteral("Envoyé") : QStringLiteral("Reçu"));
+            item->setToolTip(outbound ? statusLabel : QStringLiteral("Reçu"));
         }
 
         if (messageList->count() == 0) {
@@ -279,8 +295,40 @@ int main(int argc, char* argv[]) {
     QObject::connect(
         openMessages,
         &QPushButton::clicked,
-        [&refreshMessages, messageList]() {
+        [&core,
+         detail,
+         contactSelector,
+         messageComposer,
+         sendMessage,
+         openMessages,
+         &refreshContacts,
+         &refreshMessages,
+         messageList]() {
+            if (!core || !core->deviceSessionReady()) return;
+
+            openMessages->setEnabled(false);
+            sendMessage->setEnabled(false);
+            contactSelector->setEnabled(false);
+            messageComposer->setEnabled(false);
+
+            const bool outboundFlushed = core->retryOutbox();
+            const bool synchronized = core->syncPending();
+            refreshContacts();
             refreshMessages();
+
+            const std::size_t inboxCount = core->inboxCount();
+            const std::size_t outboxCount = core->outboxCount();
+            detail->setText(
+                synchronized && outboundFlushed
+                    ? QStringLiteral("Synchronisation à jour • %1 message(s) local(aux)")
+                          .arg(static_cast<qulonglong>(inboxCount))
+                    : QStringLiteral("Synchronisation partielle • %1 livraison(s) en attente")
+                          .arg(static_cast<qulonglong>(outboxCount)));
+
+            contactSelector->setEnabled(true);
+            messageComposer->setEnabled(true);
+            sendMessage->setEnabled(true);
+            openMessages->setEnabled(true);
             messageList->setFocus();
         });
 
@@ -338,6 +386,7 @@ int main(int argc, char* argv[]) {
          contactSelector,
          messageComposer,
          sendMessage,
+         openMessages,
          &refreshContacts,
          &refreshMessages]() {
         if (!core || !core->signalReady() || !core->startPairing()) return;
@@ -394,6 +443,7 @@ int main(int argc, char* argv[]) {
              contactSelector,
              messageComposer,
              sendMessage,
+             openMessages,
              &refreshContacts,
              &refreshMessages]() {
             if (!core) return;
@@ -417,6 +467,7 @@ int main(int argc, char* argv[]) {
                         contactSelector->setEnabled(true);
                         messageComposer->setEnabled(true);
                         sendMessage->setEnabled(true);
+                        openMessages->setEnabled(true);
                         refreshContacts();
                         refreshMessages();
                         detail->setText(
