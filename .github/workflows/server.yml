@@ -131,7 +131,7 @@ jobs:
         run: |
           docker run --rm --network host \
             --entrypoint /bin/sh \
-            minio/mc:RELEASE.2025-04-16T18-13-26Z \
+            quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z \
             -c 'mc alias set local http://127.0.0.1:9000 minioadmin minioadmin123 && mc mb --ignore-existing local/enigma-attachments'
 
       - name: Server checks
