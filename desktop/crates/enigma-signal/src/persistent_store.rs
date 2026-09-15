@@ -378,13 +378,14 @@ impl IdentityKeyStore for PersistentIdentityKeyStore {
         identity: &IdentityKey,
     ) -> libsignal_protocol::error::Result<IdentityChange> {
         let key = AddressKey::from_address(address);
-        let change = match self.known_keys.get(&key) {
-            None => IdentityChange::NewOrUnchanged,
-            Some(existing) if existing == identity => IdentityChange::NewOrUnchanged,
-            Some(_) => IdentityChange::ReplacedExisting,
-        };
-        self.known_keys.insert(key, *identity);
-        Ok(change)
+        match self.known_keys.get(&key) {
+            None => {
+                self.known_keys.insert(key, *identity);
+                Ok(IdentityChange::NewOrUnchanged)
+            }
+            Some(existing) if existing == identity => Ok(IdentityChange::NewOrUnchanged),
+            Some(_) => Err(SignalProtocolError::UntrustedIdentity(address.clone())),
+        }
     }
 
     async fn is_trusted_identity(
@@ -527,6 +528,57 @@ mod tests {
     use futures_util::FutureExt as _;
     use libsignal_protocol::{IdentityKeyPair, KeyPair, Timestamp};
     use rand::{rngs::StdRng, SeedableRng};
+
+    #[test]
+    fn remote_identity_cannot_be_silently_replaced() {
+        let mut rng = StdRng::from_seed([0x44; 32]);
+        let local = IdentityKeyPair::generate(&mut rng);
+        let mut store =
+            PersistentSignalProtocolStore::new(local, 7).expect("persistent store");
+        let remote_a = IdentityKeyPair::generate(&mut rng);
+        let remote_b = IdentityKeyPair::generate(&mut rng);
+        let address = ProtocolAddress::new(
+            "11111111-1111-4111-8111-111111111111".to_owned(),
+            libsignal_protocol::DeviceId::try_from(1_u32).expect("device id"),
+        );
+
+        store
+            .identity_store
+            .save_identity(&address, remote_a.identity_key())
+            .now_or_never()
+            .expect("in-memory future")
+            .expect("first identity");
+
+        assert!(!store
+            .identity_store
+            .is_trusted_identity(
+                &address,
+                remote_b.identity_key(),
+                libsignal_protocol::Direction::Sending,
+            )
+            .now_or_never()
+            .expect("in-memory future")
+            .expect("trust lookup"));
+
+        assert!(matches!(
+            store
+                .identity_store
+                .save_identity(&address, remote_b.identity_key())
+                .now_or_never()
+                .expect("in-memory future"),
+            Err(SignalProtocolError::UntrustedIdentity(_))
+        ));
+
+        assert_eq!(
+            store
+                .identity_store
+                .get_identity(&address)
+                .now_or_never()
+                .expect("in-memory future")
+                .expect("identity lookup"),
+            Some(*remote_a.identity_key())
+        );
+    }
 
     #[test]
     fn snapshot_round_trip_preserves_direct_message_state() {
