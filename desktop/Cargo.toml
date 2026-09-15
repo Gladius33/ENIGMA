@@ -3,6 +3,7 @@ members = [
     "crates/enigma-protocol",
     "crates/enigma-core",
     "crates/enigma-signal",
+    "crates/enigma-p2p",
     "crates/enigma-transport",
     "crates/enigma-storage",
     "crates/enigma-sodium",
