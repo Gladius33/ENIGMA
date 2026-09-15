@@ -10,12 +10,15 @@ use enigma_protocol::{
     CapabilitySet, DeviceId, DeviceState, HistoryTransferManifest, MessageId, PairingQrPayload,
     PairingSessionId, ProtocolError, WireHeader,
 };
-use enigma_sodium::{random_public_bytes, Ed25519SigningKeyPair, SodiumError};
+use enigma_sodium::{random_public_bytes, Ed25519SigningKeyPair, SecureBytes, SodiumError};
 use qrcode::{render::svg, QrCode};
+use sha2::{Digest, Sha256};
 
 pub const DEFAULT_PAIRING_TTL_MS: u64 = 120_000;
 pub const MIN_PAIRING_TTL_MS: u64 = 30_000;
 pub const MAX_PAIRING_TTL_MS: u64 = 300_000;
+pub const PAIRING_CLAIM_SECRET_BYTES: usize = 32;
+pub const PAIRING_CANDIDATE_DOMAIN: &str = "ENIGMA_PAIRING_CANDIDATE_V1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PairingBootstrapError {
@@ -23,21 +26,42 @@ pub enum PairingBootstrapError {
     ExpiryOverflow,
     Randomness(SodiumError),
     InvalidPayload(ProtocolError),
+    InvalidIdentity,
+    UnsupportedPlatform,
     QrEncoding,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PairingCandidatePublic {
+    pub device_id: DeviceId,
+    pub display_name: String,
+    pub platform: String,
+    pub target_identity_key: String,
+    pub claim_secret_hash: String,
+    pub candidate_commitment: String,
 }
 
 pub struct PairingBootstrap {
     payload: PairingQrPayload,
+    candidate: PairingCandidatePublic,
     signing_key: Ed25519SigningKeyPair,
+    claim_secret: SecureBytes,
     payload_json: String,
     uri: String,
     svg: String,
 }
 
 impl PairingBootstrap {
-    pub fn generate(now_unix_ms: u64, ttl_ms: u64) -> Result<Self, PairingBootstrapError> {
+    pub fn generate(
+        now_unix_ms: u64,
+        ttl_ms: u64,
+        target_identity_public: &[u8],
+    ) -> Result<Self, PairingBootstrapError> {
         if !(MIN_PAIRING_TTL_MS..=MAX_PAIRING_TTL_MS).contains(&ttl_ms) {
             return Err(PairingBootstrapError::InvalidTtl);
+        }
+        if target_identity_public.is_empty() || target_identity_public.len() > 4096 {
+            return Err(PairingBootstrapError::InvalidIdentity);
         }
 
         let expires_at_unix_ms = now_unix_ms
@@ -50,20 +74,50 @@ impl PairingBootstrap {
         session_bytes[8] = (session_bytes[8] & 0x3f) | 0x80;
         let session_id = PairingSessionId::from_bytes(session_bytes);
 
+        let mut device_bytes =
+            random_public_bytes::<16>().map_err(PairingBootstrapError::Randomness)?;
+        device_bytes[6] = (device_bytes[6] & 0x0f) | 0x40;
+        device_bytes[8] = (device_bytes[8] & 0x3f) | 0x80;
+        let device_id = DeviceId::from_bytes(device_bytes);
+
+        let (platform, display_name) = desktop_platform()?;
         let signing_key =
             Ed25519SigningKeyPair::generate().map_err(PairingBootstrapError::Randomness)?;
+        let mut claim_secret = SecureBytes::random(PAIRING_CLAIM_SECRET_BYTES)
+            .map_err(PairingBootstrapError::Randomness)?;
+        let claim_secret_hash = claim_secret
+            .with_read(|secret| hex_lower(&Sha256::digest(secret)))
+            .map_err(PairingBootstrapError::Randomness)?;
+
         let capabilities = CapabilitySet::MULTI_DEVICE;
+        let header = WireHeader::v1(capabilities);
+        let pairing_public_key = STANDARD_NO_PAD.encode(signing_key.public_key());
+        let target_identity_key = STANDARD_NO_PAD.encode(target_identity_public);
+        let candidate_canonical = canonical_pairing_candidate(
+            session_id,
+            device_id,
+            display_name,
+            platform,
+            header,
+            expires_at_unix_ms,
+            &pairing_public_key,
+            &target_identity_key,
+            &claim_secret_hash,
+        );
+        let candidate_commitment_bytes = Sha256::digest(candidate_canonical.as_bytes()).to_vec();
+        let candidate_commitment = STANDARD_NO_PAD.encode(&candidate_commitment_bytes);
+
         let payload = PairingQrPayload {
-            header: WireHeader::v1(capabilities),
+            header,
             session_id,
             expires_at_unix_ms,
             pairing_public_key: signing_key.public_key().to_vec(),
+            candidate_commitment: candidate_commitment_bytes,
         };
         payload
             .validate(now_unix_ms)
             .map_err(PairingBootstrapError::InvalidPayload)?;
 
-        let public_key = STANDARD_NO_PAD.encode(signing_key.public_key());
         let payload_json = format!(
             concat!(
                 "{{\"type\":\"enigma.pair_device\",",
@@ -73,14 +127,16 @@ impl PairingBootstrap {
                 "\"capabilities\":{},",
                 "\"pairing_session_id\":\"{}\",",
                 "\"expires_at_unix_ms\":{},",
-                "\"pairing_public_key\":\"{}\"}}"
+                "\"pairing_public_key\":\"{}\",",
+                "\"candidate_commitment\":\"{}\"}}"
             ),
             payload.header.protocol_version,
             payload.header.min_supported_version,
             payload.header.capabilities.bits(),
             payload.session_id.to_canonical_uuid(),
             payload.expires_at_unix_ms,
-            public_key,
+            pairing_public_key,
+            candidate_commitment,
         );
         let encoded_payload = URL_SAFE_NO_PAD.encode(payload_json.as_bytes());
         let uri = format!("enigma://pair-device?payload={encoded_payload}");
@@ -93,7 +149,16 @@ impl PairingBootstrap {
 
         Ok(Self {
             payload,
+            candidate: PairingCandidatePublic {
+                device_id,
+                display_name: display_name.to_owned(),
+                platform: platform.to_owned(),
+                target_identity_key,
+                claim_secret_hash,
+                candidate_commitment,
+            },
             signing_key,
+            claim_secret,
             payload_json,
             uri,
             svg,
@@ -103,6 +168,11 @@ impl PairingBootstrap {
     #[must_use]
     pub const fn payload(&self) -> &PairingQrPayload {
         &self.payload
+    }
+
+    #[must_use]
+    pub const fn candidate(&self) -> &PairingCandidatePublic {
+        &self.candidate
     }
 
     #[must_use]
@@ -120,10 +190,81 @@ impl PairingBootstrap {
         &self.svg
     }
 
+    pub fn claim_secret_base64(&mut self) -> Result<String, PairingBootstrapError> {
+        self.claim_secret
+            .with_read(|secret| STANDARD_NO_PAD.encode(secret))
+            .map_err(PairingBootstrapError::Randomness)
+    }
+
     pub fn sign_pairing_message(&self, message: &[u8]) -> Result<[u8; 64], PairingBootstrapError> {
         self.signing_key
             .sign(message)
             .map_err(PairingBootstrapError::Randomness)
+    }
+}
+
+fn canonical_pairing_candidate(
+    session_id: PairingSessionId,
+    device_id: DeviceId,
+    display_name: &str,
+    platform: &str,
+    header: WireHeader,
+    expires_at_unix_ms: u64,
+    pairing_public_key: &str,
+    target_identity_key: &str,
+    claim_secret_hash: &str,
+) -> String {
+    format!(
+        concat!(
+            "{PAIRING_CANDIDATE_DOMAIN}\n",
+            "pairing_session_id={}\n",
+            "device_id={}\n",
+            "display_name={}\n",
+            "platform={}\n",
+            "protocol_version={}\n",
+            "min_supported_version={}\n",
+            "capabilities={}\n",
+            "expires_at_unix_ms={}\n",
+            "pairing_public_key={}\n",
+            "target_identity_key={}\n",
+            "claim_secret_hash={}\n"
+        ),
+        session_id.to_canonical_uuid(),
+        device_id.to_canonical_uuid(),
+        display_name,
+        platform,
+        header.protocol_version,
+        header.min_supported_version,
+        header.capabilities.bits(),
+        expires_at_unix_ms,
+        pairing_public_key,
+        target_identity_key,
+        claim_secret_hash,
+    )
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    output
+}
+
+fn desktop_platform() -> Result<(&'static str, &'static str), PairingBootstrapError> {
+    #[cfg(target_os = "windows")]
+    {
+        return Ok(("windows", "ENIGMA Windows"));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return Ok(("linux", "ENIGMA Linux"));
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        Err(PairingBootstrapError::UnsupportedPlatform)
     }
 }
 
@@ -309,7 +450,11 @@ mod tests {
 
     #[test]
     fn pairing_bootstrap_matches_android_qr_contract() {
-        let bootstrap = PairingBootstrap::generate(1_700_000_000_000, DEFAULT_PAIRING_TTL_MS)
+        let bootstrap = PairingBootstrap::generate(
+                1_700_000_000_000,
+                DEFAULT_PAIRING_TTL_MS,
+                &[0x51; 33],
+            )
             .expect("pairing bootstrap");
 
         assert_eq!(
@@ -318,6 +463,12 @@ mod tests {
         );
         assert_eq!(bootstrap.payload().expires_at_unix_ms, 1_700_000_120_000);
         assert_eq!(bootstrap.payload().pairing_public_key.len(), 32);
+        assert_eq!(bootstrap.payload().candidate_commitment.len(), 32);
+        assert_eq!(bootstrap.candidate().claim_secret_hash.len(), 64);
+        assert_eq!(
+            bootstrap.candidate().target_identity_key,
+            STANDARD_NO_PAD.encode([0x51; 33])
+        );
         assert!(bootstrap.uri().starts_with("enigma://pair-device?payload="));
         assert!(bootstrap
             .payload_json()
@@ -333,16 +484,17 @@ mod tests {
     #[test]
     fn pairing_bootstrap_enforces_short_lived_ttl_and_signs() {
         assert!(matches!(
-            PairingBootstrap::generate(1_000, MIN_PAIRING_TTL_MS - 1),
+            PairingBootstrap::generate(1_000, MIN_PAIRING_TTL_MS - 1, &[0x51; 33]),
             Err(PairingBootstrapError::InvalidTtl)
         ));
         assert!(matches!(
-            PairingBootstrap::generate(1_000, MAX_PAIRING_TTL_MS + 1),
+            PairingBootstrap::generate(1_000, MAX_PAIRING_TTL_MS + 1, &[0x51; 33]),
             Err(PairingBootstrapError::InvalidTtl)
         ));
 
         let bootstrap =
-            PairingBootstrap::generate(1_000, DEFAULT_PAIRING_TTL_MS).expect("pairing bootstrap");
+            PairingBootstrap::generate(1_000, DEFAULT_PAIRING_TTL_MS, &[0x51; 33])
+                .expect("pairing bootstrap");
         let signature = bootstrap
             .sign_pairing_message(b"ENIGMA_PAIRING_CHANNEL_V1")
             .expect("pairing signature");
