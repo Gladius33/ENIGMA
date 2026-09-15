@@ -44,6 +44,10 @@ public:
         return handle_ != nullptr && enigma_core_signal_is_ready(handle_);
     }
 
+    [[nodiscard]] bool ensureDefaultSignalIdentity() noexcept {
+        return handle_ != nullptr && enigma_core_signal_load_or_create_default(handle_);
+    }
+
     [[nodiscard]] bool initializeProtectedSignalIdentity(
         std::span<const std::uint8_t> protectedIdentity,
         std::uint32_t registrationId) noexcept {
