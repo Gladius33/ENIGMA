@@ -4,6 +4,7 @@ mod inbox;
 mod outbox;
 
 use std::{
+    collections::HashSet,
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -108,6 +109,43 @@ struct SenderSyncDto<'a> {
     client_message_id: &'a str,
     original_created_at: i64,
     encoded_message_payload: &'a str,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SenderSyncInboundDto {
+    version: u16,
+    contact_user_id: String,
+    contact_public_id: String,
+    contact_display_name: String,
+    bubble_id: String,
+    client_message_id: String,
+    original_created_at: i64,
+    encoded_message_payload: String,
+}
+
+#[derive(serde::Deserialize)]
+struct MessagePayloadInboundDto {
+    version: u16,
+    body: String,
+    #[serde(default)]
+    attachments: Vec<MessageAttachmentInboundDto>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MessageAttachmentInboundDto {
+    bubble_id: String,
+}
+
+struct NormalizedInboundPayload {
+    plaintext: String,
+    message_type: String,
+    direction: &'static str,
+    contact_user_id: String,
+    contact_public_id: String,
+    contact_display_name: String,
+    original_created_at_unix_ms: Option<i64>,
 }
 
 #[no_mangle]
@@ -305,6 +343,97 @@ fn encode_sender_sync_payload(
     })
     .map_err(|_| ())?;
     Ok(format!("ENIGMA_SENDER_SYNC_V1:{json}"))
+}
+
+fn decode_message_payload(value: &str, expected_bubble_id: &str) -> Result<String, ()> {
+    const PREFIX: &str = "ENIGMA_PAYLOAD_V1:";
+    let encoded = value.strip_prefix(PREFIX).ok_or(())?;
+    if encoded.is_empty() || encoded.len() > MAX_OUTBOUND_TEXT_BYTES {
+        return Err(());
+    }
+    let payload: MessagePayloadInboundDto = serde_json::from_str(encoded).map_err(|_| ())?;
+    if payload.version != 1
+        || payload.attachments.len() > 16
+        || (payload.body.trim().is_empty() && payload.attachments.is_empty())
+        || payload
+            .attachments
+            .iter()
+            .any(|attachment| attachment.bubble_id != expected_bubble_id)
+    {
+        return Err(());
+    }
+    Ok(if payload.attachments.is_empty() {
+        "text".to_owned()
+    } else {
+        "file".to_owned()
+    })
+}
+
+fn normalize_inbound_payload(
+    plaintext: String,
+    message_type: &str,
+    message_bubble_id: &str,
+    message_client_message_id: &str,
+    sender_user_id: &str,
+    sender_public_id: &str,
+    own_user_id: &str,
+    from_verified_sibling: bool,
+) -> Result<NormalizedInboundPayload, ()> {
+    if from_verified_sibling {
+        if sender_user_id != own_user_id
+            || message_type != "opaque"
+            || !plaintext.starts_with("ENIGMA_SENDER_SYNC_V1:")
+        {
+            return Err(());
+        }
+        let encoded = plaintext
+            .strip_prefix("ENIGMA_SENDER_SYNC_V1:")
+            .ok_or(())?;
+        let sync: SenderSyncInboundDto = serde_json::from_str(encoded).map_err(|_| ())?;
+        if sync.version != 1
+            || !is_canonical_device_uuid(&sync.contact_user_id)
+            || sync.contact_user_id == own_user_id
+            || sync.contact_public_id.trim().is_empty()
+            || sync.contact_public_id.len() > MAX_CONTACT_PUBLIC_ID_BYTES
+            || sync.contact_display_name.trim().is_empty()
+            || sync.contact_display_name.len() > MAX_CONTACT_DISPLAY_NAME_BYTES
+            || !is_canonical_device_uuid(&sync.bubble_id)
+            || !is_canonical_device_uuid(&sync.client_message_id)
+            || sync.bubble_id != message_bubble_id
+            || sync.client_message_id != message_client_message_id
+            || sync.original_created_at <= 0
+        {
+            return Err(());
+        }
+        let normalized_type =
+            decode_message_payload(&sync.encoded_message_payload, &sync.bubble_id)?;
+        return Ok(NormalizedInboundPayload {
+            plaintext: sync.encoded_message_payload,
+            message_type: normalized_type,
+            direction: "outbound",
+            contact_user_id: sync.contact_user_id,
+            contact_public_id: sync.contact_public_id,
+            contact_display_name: sync.contact_display_name,
+            original_created_at_unix_ms: Some(sync.original_created_at),
+        });
+    }
+
+    if sender_user_id == own_user_id {
+        return Err(());
+    }
+    let normalized_type = decode_message_payload(&plaintext, message_bubble_id)?;
+    if !matches!(message_type, "text" | "file") || message_type != normalized_type {
+        return Err(());
+    }
+    Ok(NormalizedInboundPayload {
+        plaintext,
+        message_type: normalized_type,
+        direction: "inbound",
+        contact_user_id: sender_user_id.to_owned(),
+        contact_public_id: sender_public_id.to_owned(),
+        contact_display_name: sender_public_id.to_owned(),
+        original_created_at_unix_ms: None,
+    })
 }
 
 fn decode_signal_key(value: &str) -> Result<Vec<u8>, ()> {
@@ -1346,6 +1475,32 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
         return false;
     }
 
+    let own_user_id = {
+        let Some(token) = core.device_access_token.as_mut() else {
+            return false;
+        };
+        match token.with_read(|bytes| client.account_user_id(bytes)) {
+            Ok(Ok(user_id)) => user_id,
+            Ok(Err(_)) | Err(_) => return false,
+        }
+    };
+    let own_devices = match discover_devices_for(core, &client, &own_user_id) {
+        Ok(devices) => devices,
+        Err(()) => return false,
+    };
+    let verified_sibling_ids: HashSet<String> = match core.signal_backend.as_ref().and_then(|backend| {
+        verified_sender_sync_targets(
+            backend,
+            &own_user_id,
+            &device_id,
+            &own_devices,
+        )
+        .ok()
+    }) {
+        Some(devices) => devices.into_iter().map(|device| device.device_id).collect(),
+        None => return false,
+    };
+
     let pending = {
         let Some(token) = core.device_access_token.as_mut() else {
             return false;
@@ -1392,6 +1547,25 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
             };
             plaintext_bytes.fill(0);
 
+            let from_verified_sibling = message.sender_user_id == own_user_id
+                && verified_sibling_ids.contains(&message.sender_device_id);
+            if message.sender_user_id == own_user_id && !from_verified_sibling {
+                return false;
+            }
+            let normalized = match normalize_inbound_payload(
+                plaintext,
+                &message.message_type,
+                &message.bubble_id,
+                &message.client_message_id,
+                &message.sender_user_id,
+                &message.sender_public_id,
+                &own_user_id,
+                from_verified_sibling,
+            ) {
+                Ok(value) => value,
+                Err(()) => return false,
+            };
+
             let entry = DurableInboxEntry {
                 remote_message_id: message.id.clone(),
                 bubble_id: message.bubble_id,
@@ -1400,10 +1574,15 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
                 sender_public_id: message.sender_public_id,
                 recipient_device_id: message.recipient_device_id,
                 client_message_id: message.client_message_id,
-                message_type: message.message_type,
-                plaintext,
+                message_type: normalized.message_type,
+                plaintext: normalized.plaintext,
                 created_at: message.created_at,
                 expires_at: message.expires_at,
+                direction: normalized.direction.to_owned(),
+                contact_user_id: Some(normalized.contact_user_id),
+                contact_public_id: Some(normalized.contact_public_id),
+                contact_display_name: Some(normalized.contact_display_name),
+                original_created_at_unix_ms: normalized.original_created_at_unix_ms,
             };
 
             let mut snapshot = match core
