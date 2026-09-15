@@ -267,6 +267,32 @@ struct AccountDevicesResponse {
     user_id: String,
 }
 
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+pub struct ContactSummary {
+    pub user_id: String,
+    pub public_id: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ContactsResponse {
+    contacts: Vec<ContactSummary>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq)]
+pub struct BubbleSummary {
+    pub id: String,
+    pub slug: String,
+    pub name: String,
+    pub mode: String,
+    pub visibility: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct BubblesResponse {
+    bubbles: Vec<BubbleSummary>,
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct RelayMessageSend<'a> {
     pub bubble_id: &'a str,
@@ -405,6 +431,80 @@ impl PairingRendezvousClient {
             return Err(PairingRendezvousError::InvalidResponse);
         }
         Ok(body.user_id)
+    }
+
+    pub fn contacts(
+        &self,
+        access_token: &[u8],
+    ) -> Result<Vec<ContactSummary>, PairingRendezvousError> {
+        let endpoint = self
+            .base_url
+            .join("v1/contacts")
+            .map_err(|_| PairingRendezvousError::InvalidEndpoint)?;
+        let header = bearer_header(access_token)?;
+        let response = self
+            .client
+            .get(endpoint)
+            .header(reqwest::header::AUTHORIZATION, header)
+            .send()
+            .map_err(|_| PairingRendezvousError::Transport)?;
+        if !response.status().is_success() {
+            return Err(PairingRendezvousError::Rejected(response.status().as_u16()));
+        }
+        let body = response
+            .json::<ContactsResponse>()
+            .map_err(|_| PairingRendezvousError::InvalidResponse)?;
+        if body.contacts.len() > 4096
+            || body.contacts.iter().any(|contact| {
+                !is_canonical_uuid(&contact.user_id)
+                    || contact.public_id.is_empty()
+                    || contact.public_id.len() > 128
+                    || contact.created_at.is_empty()
+                    || contact.created_at.len() > 128
+            })
+        {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        Ok(body.contacts)
+    }
+
+    pub fn bubbles(
+        &self,
+        access_token: &[u8],
+    ) -> Result<Vec<BubbleSummary>, PairingRendezvousError> {
+        let endpoint = self
+            .base_url
+            .join("v1/bubbles")
+            .map_err(|_| PairingRendezvousError::InvalidEndpoint)?;
+        let header = bearer_header(access_token)?;
+        let response = self
+            .client
+            .get(endpoint)
+            .header(reqwest::header::AUTHORIZATION, header)
+            .send()
+            .map_err(|_| PairingRendezvousError::Transport)?;
+        if !response.status().is_success() {
+            return Err(PairingRendezvousError::Rejected(response.status().as_u16()));
+        }
+        let body = response
+            .json::<BubblesResponse>()
+            .map_err(|_| PairingRendezvousError::InvalidResponse)?;
+        if body.bubbles.len() > 4096
+            || body.bubbles.iter().any(|bubble| {
+                !is_canonical_uuid(&bubble.id)
+                    || bubble.slug.is_empty()
+                    || bubble.slug.len() > 256
+                    || bubble.name.is_empty()
+                    || bubble.name.len() > 256
+                    || bubble.mode.is_empty()
+                    || bubble.mode.len() > 64
+                    || bubble.visibility.is_empty()
+                    || bubble.visibility.len() > 64
+            })
+        {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        Ok(body.bubbles)
     }
 
     pub fn discover_devices(
