@@ -12,9 +12,7 @@ use enigma_platform::{PlatformKeyError, PlatformKeyProtector};
 use enigma_runtime_core::{CoreRuntime, PairingBootstrap, DEFAULT_PAIRING_TTL_MS};
 use enigma_signal::session::LibsignalSessionBackend;
 use enigma_sodium::SecureBytes;
-use enigma_transport::{
-    PairingCandidatePublish, PairingClaimState, PairingRendezvousClient,
-};
+use enigma_transport::{PairingCandidatePublish, PairingClaimState, PairingRendezvousClient};
 
 pub const ENIGMA_CORE_ABI_VERSION: u32 = 1;
 const DEFAULT_DEDUP_CAPACITY: usize = 16_384;
@@ -293,9 +291,7 @@ pub unsafe extern "C" fn enigma_core_pairing_claim(handle: *mut EnigmaCoreHandle
 ///
 /// handle must be null or a live pointer returned by enigma_core_create.
 #[no_mangle]
-pub unsafe extern "C" fn enigma_core_device_session_ready(
-    handle: *const EnigmaCoreHandle,
-) -> bool {
+pub unsafe extern "C" fn enigma_core_device_session_ready(handle: *const EnigmaCoreHandle) -> bool {
     if handle.is_null() {
         return false;
     }
