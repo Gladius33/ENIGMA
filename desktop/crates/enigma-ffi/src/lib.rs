@@ -213,9 +213,9 @@ fn default_signal_identity_path() -> Option<PathBuf> {
 }
 
 fn persist_signal_identity_record(path: &Path, record: &[u8]) -> io::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "identity path has no parent"))?;
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "identity path has no parent")
+    })?;
     fs::create_dir_all(parent)?;
 
     let temporary = path.with_extension("tmp");
