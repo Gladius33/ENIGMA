@@ -1,5 +1,11 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+use std::{
+    fs,
+    io::{self, Write},
+    path::{Path, PathBuf},
+};
+
 use enigma_platform::{PlatformKeyError, PlatformKeyProtector};
 use enigma_runtime_core::CoreRuntime;
 use enigma_signal::session::LibsignalSessionBackend;
@@ -7,6 +13,8 @@ use enigma_signal::session::LibsignalSessionBackend;
 pub const ENIGMA_CORE_ABI_VERSION: u32 = 1;
 const DEFAULT_DEDUP_CAPACITY: usize = 16_384;
 const MAX_PROTECTED_SIGNAL_IDENTITY_BYTES: usize = 64 * 1024;
+const SIGNAL_IDENTITY_RECORD_MAGIC: &[u8] = b"ENIGMA-SIGNAL-IDENTITY\0v1\0";
+const LINUX_SIGNAL_IDENTITY_SLOT: &str = "signal-identity-primary";
 
 pub struct EnigmaCoreHandle {
     _runtime: CoreRuntime,
@@ -49,6 +57,41 @@ pub unsafe extern "C" fn enigma_core_destroy(handle: *mut EnigmaCoreHandle) {
 #[no_mangle]
 pub extern "C" fn enigma_core_is_ready(handle: *mut EnigmaCoreHandle) -> bool {
     !handle.is_null()
+}
+
+/// Loads the default protected desktop Signal identity, or creates and persists one on first run.
+///
+/// The libsignal private identity is generated inside Rust and immediately protected with the
+/// native OS backend (DPAPI user scope on Windows, Secret Service on Linux). Only the protected
+/// record is persisted; plaintext private-key material never crosses the FFI boundary.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create. The same handle must not
+/// be destroyed or mutably accessed concurrently for the duration of this call.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_signal_load_or_create_default(
+    handle: *mut EnigmaCoreHandle,
+) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+
+    // SAFETY: caller guarantees a live, exclusively accessed handle for this call.
+    if unsafe { (*handle).signal_backend.is_some() } {
+        return true;
+    }
+
+    let backend = match load_or_create_default_signal_backend() {
+        Ok(backend) => backend,
+        Err(()) => return false,
+    };
+
+    // SAFETY: caller guarantees exclusive live access to handle for this call.
+    unsafe {
+        (*handle).signal_backend = Some(backend);
+    }
+    true
 }
 
 /// Returns whether a real libsignal session backend has been restored from protected storage.
@@ -121,6 +164,133 @@ pub unsafe extern "C" fn enigma_core_signal_initialize_protected(
     true
 }
 
+fn encode_signal_identity_record(registration_id: u32, protected: &[u8]) -> Vec<u8> {
+    let mut record = Vec::with_capacity(SIGNAL_IDENTITY_RECORD_MAGIC.len() + 4 + protected.len());
+    record.extend_from_slice(SIGNAL_IDENTITY_RECORD_MAGIC);
+    record.extend_from_slice(&registration_id.to_le_bytes());
+    record.extend_from_slice(protected);
+    record
+}
+
+fn decode_signal_identity_record(record: &[u8]) -> Option<(u32, &[u8])> {
+    let body = record.strip_prefix(SIGNAL_IDENTITY_RECORD_MAGIC)?;
+    if body.len() < 5 {
+        return None;
+    }
+    let (registration_bytes, protected) = body.split_at(4);
+    let registration_id = u32::from_le_bytes(registration_bytes.try_into().ok()?);
+    if registration_id == 0
+        || protected.is_empty()
+        || protected.len() > MAX_PROTECTED_SIGNAL_IDENTITY_BYTES
+    {
+        return None;
+    }
+    Some((registration_id, protected))
+}
+
+#[cfg(windows)]
+fn default_signal_identity_path() -> Option<PathBuf> {
+    let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"))?;
+    Some(
+        PathBuf::from(base)
+            .join("ENIGMA")
+            .join("signal-identity-v1.bin"),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn default_signal_identity_path() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+    Some(base.join("ENIGMA").join("signal-identity-v1.bin"))
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn default_signal_identity_path() -> Option<PathBuf> {
+    None
+}
+
+fn persist_signal_identity_record(path: &Path, record: &[u8]) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "identity path has no parent"))?;
+    fs::create_dir_all(parent)?;
+
+    let temporary = path.with_extension("tmp");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&temporary)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+
+    file.write_all(record)?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(temporary, path)
+}
+
+fn restore_signal_backend_from_record(record: &[u8]) -> Result<LibsignalSessionBackend, ()> {
+    let (registration_id, protected) = decode_signal_identity_record(record).ok_or(())?;
+    let mut serialized_identity = unprotect_signal_identity(protected).map_err(|_| ())?;
+    if serialized_identity.is_empty() {
+        return Err(());
+    }
+
+    let backend =
+        LibsignalSessionBackend::from_serialized_identity(&serialized_identity, registration_id)
+            .map_err(|_| ());
+    serialized_identity.fill(0);
+    backend
+}
+
+fn load_or_create_default_signal_backend() -> Result<LibsignalSessionBackend, ()> {
+    let path = default_signal_identity_path().ok_or(())?;
+    match fs::read(&path) {
+        Ok(record) => restore_signal_backend_from_record(&record),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let (backend, mut serialized_identity, registration_id) =
+                LibsignalSessionBackend::generate_for_new_device().map_err(|_| ())?;
+            let protected_result = protect_signal_identity(&serialized_identity);
+            serialized_identity.fill(0);
+            let protected = protected_result.map_err(|_| ())?;
+            if protected.is_empty() || protected.len() > MAX_PROTECTED_SIGNAL_IDENTITY_BYTES {
+                return Err(());
+            }
+
+            let record = encode_signal_identity_record(registration_id, &protected);
+            persist_signal_identity_record(&path, &record).map_err(|_| ())?;
+            Ok(backend)
+        }
+        Err(_) => Err(()),
+    }
+}
+
+#[cfg(windows)]
+fn protect_signal_identity(serialized_identity: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::WindowsDpapiProtector;
+
+    WindowsDpapiProtector.protect(serialized_identity)
+}
+
+#[cfg(target_os = "linux")]
+fn protect_signal_identity(serialized_identity: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::LinuxSecretServiceProtector;
+
+    LinuxSecretServiceProtector::new(LINUX_SIGNAL_IDENTITY_SLOT)?.protect(serialized_identity)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn protect_signal_identity(_serialized_identity: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    Err(PlatformKeyError::BackendUnavailable)
+}
+
 #[cfg(windows)]
 fn unprotect_signal_identity(protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
     use enigma_platform::WindowsDpapiProtector;
@@ -144,6 +314,19 @@ fn unprotect_signal_identity(_protected: &[u8]) -> Result<Vec<u8>, PlatformKeyEr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protected_identity_record_round_trips_and_rejects_corruption() {
+        let protected = b"opaque-protected-identity";
+        let record = encode_signal_identity_record(7, protected);
+        assert_eq!(decode_signal_identity_record(&record), Some((7, protected.as_slice())));
+
+        assert_eq!(decode_signal_identity_record(b"not-an-enigma-record"), None);
+        assert_eq!(
+            decode_signal_identity_record(&encode_signal_identity_record(0, protected)),
+            None
+        );
+    }
 
     #[test]
     fn abi_version_is_stable_and_handle_lifecycle_is_explicit() {
