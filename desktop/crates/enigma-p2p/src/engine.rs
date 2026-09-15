@@ -540,7 +540,6 @@ impl WebRtcP2pEngine {
                 urls: server.urls.clone(),
                 username: server.username.clone().unwrap_or_default(),
                 credential: server.credential.clone().unwrap_or_default(),
-                ..Default::default()
             })
             .collect();
 
