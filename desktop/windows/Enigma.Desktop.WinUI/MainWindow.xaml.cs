@@ -1,5 +1,6 @@
 using System;
 using System.Text;
+using System.Threading.Tasks;
 using Enigma.Desktop.Interop;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -134,6 +135,19 @@ public sealed partial class MainWindow : Window
                 TextWrapping = TextWrapping.Wrap,
             });
 
+            var pairingStatus = new TextBlock
+            {
+                Text = "En attente de l’autorisation Android…",
+                TextWrapping = TextWrapping.Wrap,
+            };
+            var finalizeButton = new Button
+            {
+                Content = "Finaliser la liaison",
+                HorizontalAlignment = HorizontalAlignment.Left,
+            };
+            panel.Children.Add(pairingStatus);
+            panel.Children.Add(finalizeButton);
+
             var dialog = new ContentDialog
             {
                 XamlRoot = DevicesButton.XamlRoot,
@@ -142,6 +156,42 @@ public sealed partial class MainWindow : Window
                 CloseButtonText = "Fermer",
                 DefaultButton = ContentDialogButton.Close,
             };
+
+            finalizeButton.Click += async (_, _) =>
+            {
+                if (_core is null)
+                {
+                    return;
+                }
+                finalizeButton.IsEnabled = false;
+                EnigmaPairingClaimState state = await Task.Run(() => _core.TryClaimPairing());
+                switch (state)
+                {
+                    case EnigmaPairingClaimState.Claimed:
+                        pairingStatus.Text = "Ordinateur lié avec succès.";
+                        CoreStatusText.Text = "Cœur sécurisé prêt • appareil lié";
+                        dialog.Hide();
+                        break;
+                    case EnigmaPairingClaimState.PendingAuthorization:
+                        pairingStatus.Text = "Autorisez d’abord cet ordinateur depuis Android.";
+                        finalizeButton.IsEnabled = true;
+                        break;
+                    case EnigmaPairingClaimState.Expired:
+                        pairingStatus.Text = "La session d’appairage a expiré.";
+                        break;
+                    case EnigmaPairingClaimState.AlreadyClaimed:
+                        pairingStatus.Text = "Cette session d’appairage a déjà été utilisée.";
+                        break;
+                    case EnigmaPairingClaimState.Missing:
+                        pairingStatus.Text = "Session d’appairage introuvable.";
+                        break;
+                    default:
+                        pairingStatus.Text = "Le serveur d’appairage est momentanément indisponible.";
+                        finalizeButton.IsEnabled = true;
+                        break;
+                }
+            };
+
             await dialog.ShowAsync();
         }
         catch (InvalidOperationException)
