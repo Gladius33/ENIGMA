@@ -1674,6 +1674,176 @@ pub unsafe extern "C" fn enigma_core_send_text(
     true
 }
 
+fn poll_one_incoming_p2p(
+    core: &mut EnigmaCoreHandle,
+    client: &PairingRendezvousClient,
+) -> Result<bool, ()> {
+    ensure_desktop_p2p_manager(core)?;
+    let offer = match core
+        .desktop_p2p
+        .as_mut()
+        .and_then(DesktopP2pManager::take_incoming_offer)
+    {
+        Some(offer) => offer,
+        None => return Ok(false),
+    };
+
+    let local_device_id = core.device_id.clone().ok_or(())?;
+    if offer.sender_device_id == local_device_id {
+        return Err(());
+    }
+
+    let own_user_id = {
+        let token = core.device_access_token.as_mut().ok_or(())?;
+        token
+            .with_read(|bytes| client.account_user_id(bytes))
+            .map_err(|_| ())?
+            .map_err(|_| ())?
+    };
+    let own_devices = discover_devices_for(core, client, &own_user_id)?;
+    let verified_sibling_ids: HashSet<String> = {
+        let backend = core.signal_backend.as_ref().ok_or(())?;
+        verified_sender_sync_targets(
+            backend,
+            &own_user_id,
+            &local_device_id,
+            &own_devices,
+        )?
+        .into_iter()
+        .map(|device| device.device_id)
+        .collect()
+    };
+
+    let remote_devices = if offer.sender_user_id == own_user_id {
+        if !verified_sibling_ids.contains(&offer.sender_device_id) {
+            return Err(());
+        }
+        own_devices
+    } else {
+        discover_devices_for(core, client, &offer.sender_user_id)?
+    };
+    let remote_device = remote_devices
+        .iter()
+        .find(|device| device.device_id == offer.sender_device_id)
+        .ok_or(())?;
+    let remote_identity = decode_signal_key(&remote_device.identity_key)?;
+
+    let sender_public_id = if offer.sender_user_id == own_user_id {
+        own_user_id.clone()
+    } else {
+        let contacts = {
+            let token = core.device_access_token.as_mut().ok_or(())?;
+            token
+                .with_read(|bytes| client.contacts(bytes))
+                .map_err(|_| ())?
+                .map_err(|_| ())?
+        };
+        contacts
+            .into_iter()
+            .find(|contact| contact.user_id == offer.sender_user_id)
+            .map(|contact| contact.public_id)
+            .ok_or(())?
+    };
+
+    let ice_servers = {
+        let token = core.device_access_token.as_mut().ok_or(())?;
+        token
+            .with_read(|bytes| client.turn_credentials(bytes))
+            .ok()
+            .and_then(Result::ok)
+            .and_then(|credentials| {
+                turn_ice_servers(
+                    &credentials.uris,
+                    &credentials.username,
+                    &credentials.credential,
+                )
+                .ok()
+            })
+            .unwrap_or_default()
+    };
+
+    let auth_backend = core.signal_backend.clone().ok_or(())?;
+    let inbound = core
+        .desktop_p2p
+        .as_mut()
+        .ok_or(())?
+        .accept_incoming_until_message(
+            &auth_backend,
+            &local_device_id,
+            &offer,
+            &remote_identity,
+            &ice_servers,
+        )?;
+    let Some(inbound) = inbound else {
+        return Ok(true);
+    };
+
+    if inbound.sender_user_id != offer.sender_user_id
+        || inbound.sender_device_id != offer.sender_device_id
+        || inbound.recipient_device_id != local_device_id
+    {
+        return Err(());
+    }
+
+    let created_at = delivery_timestamp();
+    let delivery = InboundEncryptedDelivery {
+        remote_message_id: &inbound.client_message_id,
+        bubble_id: &inbound.bubble_id,
+        sender_device_id: &inbound.sender_device_id,
+        sender_user_id: &inbound.sender_user_id,
+        sender_public_id: &sender_public_id,
+        recipient_device_id: &inbound.recipient_device_id,
+        client_message_id: &inbound.client_message_id,
+        message_type: &inbound.message_type,
+        ciphertext: &inbound.ciphertext,
+        created_at: &created_at,
+        expires_at: "p2p",
+    };
+    commit_inbound_encrypted_delivery(
+        core,
+        &own_user_id,
+        &verified_sibling_ids,
+        &delivery,
+    )?;
+
+    core.desktop_p2p
+        .as_mut()
+        .ok_or(())?
+        .acknowledge_incoming_delivery(
+            &inbound.session_id,
+            &inbound.client_message_id,
+        )?;
+    Ok(true)
+}
+
+/// Polls one authenticated incoming P2P offer, if present.
+///
+/// The function returns true when the P2P listener is healthy, including when no offer is queued.
+/// Any received ciphertext is committed with the same crash-safe Signal/inbox transaction used by
+/// relay delivery before a DELIVERED receipt is emitted.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create and exclusively accessed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_poll_p2p(handle: *mut EnigmaCoreHandle) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let Some(client) = pairing_client() else {
+        return false;
+    };
+    // SAFETY: caller guarantees exclusive live access for this call.
+    let core = unsafe { &mut *handle };
+    if core.device_access_token.is_none()
+        || core.signal_backend.is_none()
+        || recover_crypto_transactions(core).is_err()
+    {
+        return false;
+    }
+    poll_one_incoming_p2p(core, &client).is_ok()
+}
+
 /// Retries all durably encrypted outbound deliveries without re-encrypting or advancing ratchets.
 ///
 /// # Safety
