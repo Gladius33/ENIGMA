@@ -2,6 +2,7 @@
 
 mod inbox;
 mod outbox;
+mod p2p;
 
 use std::{
     collections::HashSet,
@@ -34,6 +35,7 @@ use enigma_transport::{
 use futures_executor::block_on;
 use inbox::{DurableInboxEntry, EncryptedDesktopInbox};
 use outbox::{DurableOutboundDelivery, EncryptedDesktopOutbox};
+use p2p::{delivery_timestamp, turn_ice_servers, DesktopP2pManager};
 use rand::Rng as _;
 
 pub const ENIGMA_CORE_ABI_VERSION: u32 = 1;
@@ -843,9 +845,87 @@ fn flush_desktop_outbox(
     }
     recover_outbox_journal(core)?;
     let pending = core.desktop_outbox.as_ref().ok_or(())?.pending()?;
-    let mut all_sent = true;
+    if pending.is_empty() {
+        return Ok(true);
+    }
 
+    let sender_device_id = core.device_id.clone().ok_or(())?;
+    let (base_url, _) = pairing_server_config().ok_or(())?;
+
+    let mut p2p_manager = {
+        let token = core.device_access_token.as_mut().ok_or(())?;
+        token
+            .with_read(|bytes| DesktopP2pManager::connect(&base_url, &sender_device_id, bytes))
+            .ok()
+            .and_then(Result::ok)
+    };
+
+    let ice_servers = {
+        let token = core.device_access_token.as_mut().ok_or(())?;
+        token
+            .with_read(|bytes| client.turn_credentials(bytes))
+            .ok()
+            .and_then(Result::ok)
+            .and_then(|credentials| {
+                turn_ice_servers(
+                    &credentials.uris,
+                    &credentials.username,
+                    &credentials.credential,
+                )
+                .ok()
+            })
+            .unwrap_or_default()
+    };
+
+    let mut all_sent = true;
     for delivery in pending {
+        let mut delivered_p2p = false;
+        if let (Some(manager), Some(identity_key), Some(backend)) = (
+            p2p_manager.as_mut(),
+            delivery.recipient_identity_key.as_deref(),
+            core.signal_backend.as_ref(),
+        ) {
+            if let Ok(remote_identity_key) = decode_signal_key(identity_key) {
+                if let Ok(session_id) = random_uuid_v4() {
+                    delivered_p2p = manager
+                        .try_send(
+                            backend,
+                            &session_id,
+                            &delivery.bubble_id,
+                            &delivery.sender_device_id,
+                            &delivery.recipient_device_id,
+                            &delivery.client_message_id,
+                            &delivery.message_type,
+                            &delivery.ciphertext,
+                            &remote_identity_key,
+                            &ice_servers,
+                        )
+                        .ok()
+                        .flatten()
+                        .is_some();
+                }
+            }
+        }
+
+        if delivered_p2p {
+            core.desktop_outbox.as_ref().ok_or(())?.remove(
+                &delivery.sender_device_id,
+                &delivery.recipient_device_id,
+                &delivery.client_message_id,
+            )?;
+            if let Some(inbox) = core.desktop_inbox.as_ref() {
+                let delivered_at = delivery_timestamp();
+                let _ = inbox.apply_outbound_receipts(&[(
+                    delivery.bubble_id.clone(),
+                    delivery.client_message_id.clone(),
+                    delivery.recipient_device_id.clone(),
+                    "delivered".to_owned(),
+                    delivered_at,
+                )]);
+            }
+            continue;
+        }
+
         let request = RelayMessageSend {
             bubble_id: &delivery.bubble_id,
             sender_device_id: &delivery.sender_device_id,
@@ -863,21 +943,18 @@ fn flush_desktop_outbox(
                 .is_ok()
         };
         if sent {
-            if !delivery.sender_sync {
-                core.desktop_inbox
-                    .as_ref()
-                    .ok_or(())?
-                    .mark_outbound_relay_sent(
-                        &delivery.bubble_id,
-                        &delivery.client_message_id,
-                        &delivery.recipient_device_id,
-                    )?;
-            }
             core.desktop_outbox.as_ref().ok_or(())?.remove(
                 &delivery.sender_device_id,
                 &delivery.recipient_device_id,
                 &delivery.client_message_id,
             )?;
+            if let Some(inbox) = core.desktop_inbox.as_ref() {
+                let _ = inbox.mark_outbound_relay_sent(
+                    &delivery.bubble_id,
+                    &delivery.client_message_id,
+                    &delivery.recipient_device_id,
+                );
+            }
         } else {
             all_sent = false;
         }
@@ -1015,6 +1092,7 @@ fn prepare_outbound_delivery(
         message_type: context.message_type.to_owned(),
         ciphertext,
         sender_sync: context.sender_sync,
+        recipient_identity_key: Some(recipient.identity_key.clone()),
     })
 }
 
