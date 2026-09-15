@@ -7,6 +7,7 @@
 #include <QDialog>
 #include <QFont>
 #include <QFrame>
+#include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -15,8 +16,10 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QSvgWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include <exception>
 #include <memory>
@@ -294,6 +297,42 @@ int main(int argc, char* argv[]) {
         contactSelector,
         &QComboBox::currentIndexChanged,
         [&refreshMessages](int) { refreshMessages(); });
+    QFutureWatcher<bool> p2pWatcher(&window);
+    QTimer p2pTimer(&window);
+    p2pTimer.setInterval(750);
+    std::size_t p2pInboxBefore = 0;
+
+    QObject::connect(
+        &p2pTimer,
+        &QTimer::timeout,
+        [&core, &p2pWatcher, &p2pInboxBefore]() {
+            if (!core || !core->deviceSessionReady() || p2pWatcher.isRunning()) return;
+            p2pInboxBefore = core->inboxCount();
+            p2pWatcher.setFuture(QtConcurrent::run([corePointer = core.get()]() {
+                return corePointer != nullptr && corePointer->pollP2p();
+            }));
+        });
+
+    QObject::connect(
+        &p2pWatcher,
+        &QFutureWatcher<bool>::finished,
+        [&core, &p2pWatcher, &p2pInboxBefore, detail, &refreshMessages]() {
+            if (!core) return;
+            const bool healthy = p2pWatcher.result();
+            const std::size_t after = core->inboxCount();
+            if (healthy && after != p2pInboxBefore) {
+                refreshMessages();
+                detail->setText(
+                    QStringLiteral(
+                        "P2P E2EE reçu • %1 message(s) local(aux) • relay fallback disponible")
+                        .arg(static_cast<qulonglong>(after)));
+            }
+        });
+
+    if (coreReady) {
+        p2pTimer.start();
+    }
+
     QObject::connect(
         openMessages,
         &QPushButton::clicked,
@@ -389,6 +428,7 @@ int main(int argc, char* argv[]) {
          messageComposer,
          sendMessage,
          openMessages,
+         &p2pTimer,
          &refreshContacts,
          &refreshMessages]() {
         if (!core || !core->signalReady() || !core->startPairing()) return;
@@ -446,6 +486,7 @@ int main(int argc, char* argv[]) {
              messageComposer,
              sendMessage,
              openMessages,
+             &p2pTimer,
              &refreshContacts,
              &refreshMessages]() {
             if (!core) return;
@@ -472,6 +513,7 @@ int main(int argc, char* argv[]) {
                         openMessages->setEnabled(true);
                         refreshContacts();
                         refreshMessages();
+                        p2pTimer.start();
                         detail->setText(
                             synchronized && outboundFlushed
                                 ? QStringLiteral("Rust/libsignal • synchronisation à jour")
@@ -543,5 +585,10 @@ int main(int argc, char* argv[]) {
     root->addWidget(surface, 1);
 
     window.show();
-    return app.exec();
+    const int exitCode = app.exec();
+    p2pTimer.stop();
+    if (p2pWatcher.isRunning()) {
+        p2pWatcher.waitForFinished();
+    }
+    return exitCode;
 }
