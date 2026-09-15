@@ -280,6 +280,7 @@ pub unsafe extern "C" fn enigma_core_pairing_claim(handle: *mut EnigmaCoreHandle
         Ok((PairingClaimState::PendingAuthorization, None)) => PAIRING_CLAIM_PENDING,
         Ok((PairingClaimState::Claimed, Some(token))) => {
             let mut token_bytes = token.into_bytes();
+            let persisted = persist_default_device_session(&device_id, &token_bytes).is_ok();
             let secure_token = match SecureBytes::copy_and_wipe(&mut token_bytes) {
                 Ok(token) => token,
                 Err(_) => return PAIRING_CLAIM_ERROR,
@@ -290,7 +291,11 @@ pub unsafe extern "C" fn enigma_core_pairing_claim(handle: *mut EnigmaCoreHandle
                 (*handle).device_access_token = Some(secure_token);
                 (*handle).pairing_bootstrap = None;
             }
-            PAIRING_CLAIMED
+            if persisted {
+                PAIRING_CLAIMED
+            } else {
+                PAIRING_CLAIM_ERROR
+            }
         }
         Ok((PairingClaimState::AlreadyClaimed, None)) => PAIRING_CLAIM_ALREADY_USED,
         Ok((PairingClaimState::Expired, None)) => {
@@ -652,7 +657,11 @@ fn decode_device_session_record(record: &[u8]) -> Option<(String, &[u8])> {
 #[cfg(windows)]
 fn default_device_session_path() -> Option<PathBuf> {
     let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"))?;
-    Some(PathBuf::from(base).join("ENIGMA").join("device-session-v1.bin"))
+    Some(
+        PathBuf::from(base)
+            .join("ENIGMA")
+            .join("device-session-v1.bin"),
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -670,7 +679,10 @@ fn default_device_session_path() -> Option<PathBuf> {
 
 fn persist_protected_record(path: &Path, record: &[u8]) -> io::Result<()> {
     let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "protected record path has no parent")
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "protected record path has no parent",
+        )
     })?;
     fs::create_dir_all(parent)?;
 
