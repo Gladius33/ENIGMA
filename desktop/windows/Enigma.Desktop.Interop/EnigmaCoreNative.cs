@@ -85,6 +85,10 @@ internal static partial class EnigmaCoreNative
     [return: MarshalAs(UnmanagedType.I1)]
     internal static partial bool RetryOutbox(IntPtr handle);
 
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_poll_p2p")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static partial bool PollP2p(IntPtr handle);
+
     [LibraryImport(LibraryName, EntryPoint = "enigma_core_outbox_count")]
     internal static partial nuint OutboxCount(IntPtr handle);
 
@@ -199,6 +203,8 @@ internal sealed class EnigmaCoreHandle : SafeHandle
     internal bool SyncPending() => EnigmaCoreNative.SyncPending(handle);
 
     internal bool RetryOutbox() => EnigmaCoreNative.RetryOutbox(handle);
+
+    internal bool PollP2p() => EnigmaCoreNative.PollP2p(handle);
 
     internal nuint OutboxCount => EnigmaCoreNative.OutboxCount(handle);
 
@@ -465,6 +471,12 @@ public sealed class EnigmaCoreClient : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         return _handle.SignalIsReady && _handle.DeviceSessionReady && _handle.RetryOutbox();
+    }
+
+    public bool PollP2p()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _handle.SignalIsReady && _handle.DeviceSessionReady && _handle.PollP2p();
     }
 
     public bool SendText(
