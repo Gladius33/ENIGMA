@@ -92,6 +92,19 @@ impl EncryptedDesktopInbox {
             .any(|entry| entry.remote_message_id == remote_message_id))
     }
 
+    pub(crate) fn contains_client_delivery(
+        &self,
+        sender_device_id: &str,
+        client_message_id: &str,
+    ) -> Result<bool, ()> {
+        validate_uuid(sender_device_id)?;
+        validate_uuid(client_message_id)?;
+        Ok(self.read_entries()?.iter().any(|entry| {
+            entry.sender_device_id == sender_device_id
+                && entry.client_message_id == client_message_id
+        }))
+    }
+
     pub(crate) fn apply_outbound_receipts(
         &self,
         receipts: &[(String, String, String, String, String)],
