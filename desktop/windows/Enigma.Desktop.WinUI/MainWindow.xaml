@@ -104,8 +104,10 @@
                             Foreground="{ThemeResource EnigmaMutedTextBrush}" />
                     </StackPanel>
                     <Button
+                        x:Name="DevicesButton"
                         Grid.Column="1"
                         Content="Appareils"
+                        Click="OnManageDevicesClick"
                         AutomationProperties.Name="Gérer les appareils liés" />
                 </Grid>
             </Border>
