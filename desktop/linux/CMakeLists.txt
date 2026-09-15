@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(enigma_linux_desktop VERSION 1.0.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
-find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets SvgWidgets)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets SvgWidgets Concurrent)
 set(CMAKE_AUTORCC ON)
 
 set(ENIGMA_CORE_LIBRARY "" CACHE FILEPATH "Path to the compiled ENIGMA Rust core shared library")
@@ -43,6 +43,7 @@ target_link_libraries(enigma_linux_desktop
     PRIVATE
         Qt6::Widgets
         Qt6::SvgWidgets
+        Qt6::Concurrent
         enigma_linux_interop
 )
 
