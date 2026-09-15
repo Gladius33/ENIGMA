@@ -587,7 +587,7 @@ fn claimed_prekey_material(
     let one_time_pre_key = claimed
         .one_time_prekey
         .as_ref()
-        .map(|prekey| {
+        .map(|prekey| -> Result<RemotePublicPreKey, ()> {
             Ok(RemotePublicPreKey {
                 key_id: u32::try_from(prekey.key_id).map_err(|_| ())?,
                 public_key: decode_signal_key(&prekey.public_key)?,
@@ -672,8 +672,8 @@ fn prepare_remote_session(
 
 /// Starts a fresh short-lived desktop pairing bootstrap.
 ///
-/// The ephemeral pairing secret remains inside Rust/libsodium. Only the public QR payload can be
-/// retrieved through the read-only copy functions below.
+/// The ephemeral pairing secret remains inside Rust/libsodium. Only the public Android-compatible
+/// URI/SVG payload can be retrieved through the read-only copy functions below.
 ///
 /// # Safety
 ///
@@ -994,7 +994,6 @@ fn flush_desktop_outbox(
         return Ok(true);
     }
 
-    let sender_device_id = core.device_id.clone().ok_or(())?;
     let _ = ensure_desktop_p2p_manager(core);
     let p2p_auth_backend = core.signal_backend.clone();
 
