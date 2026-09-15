@@ -52,6 +52,21 @@ impl LibsignalSessionBackend {
         Ok(Self { store })
     }
 
+    /// Generates a fresh desktop Signal identity and registration id entirely inside Rust.
+    ///
+    /// The serialized identity is returned only so the FFI layer can immediately wrap it with
+    /// the operating system's protected-storage backend. Frontends never receive this plaintext.
+    pub fn generate_for_new_device() -> Result<(Self, Vec<u8>, u32), SignalAdapterError> {
+        const MAX_SIGNAL_REGISTRATION_ID: u32 = 16_380;
+
+        let mut rng = rand::rng();
+        let registration_id = rng.random_range(1..=MAX_SIGNAL_REGISTRATION_ID);
+        let identity = IdentityKeyPair::generate(&mut rng);
+        let serialized_identity = identity.serialize().to_vec();
+        let backend = Self::new(identity, registration_id)?;
+        Ok((backend, serialized_identity, registration_id))
+    }
+
     /// Restore a backend from libsignal's canonical serialized identity-key-pair representation.
     ///
     /// The serialized private identity is expected to come from ENIGMA's protected local storage.
