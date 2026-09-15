@@ -1,15 +1,12 @@
 use std::{
     collections::BTreeMap,
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use enigma_signal::session::{
-    LibsignalSessionBackend, SessionCiphertext, SessionMessageType,
-};
+use enigma_signal::session::{LibsignalSessionBackend, SessionCiphertext, SessionMessageType};
 use futures_util::FutureExt;
 use libsignal_protocol::{
     kem, DeviceId, GenericSignedPreKey, IdentityKeyPair, IdentityKeyStore, KeyPair,
@@ -134,9 +131,8 @@ fn rust_emits_android_prekey_fixture() {
     )
     .expect("construct deterministic Bob pre-key bundle");
 
-    let mut alice =
-        LibsignalSessionBackend::new(alice_identity, alice_registration_id)
-            .expect("initialize Alice backend");
+    let mut alice = LibsignalSessionBackend::new(alice_identity, alice_registration_id)
+        .expect("initialize Alice backend");
     alice
         .process_remote_prekey_bundle(&address("bob"), &bundle, now, &mut alice_rng)
         .now_or_never()
@@ -184,7 +180,11 @@ fn rust_emits_android_prekey_fixture() {
             ("bob_pre_key_id", pre_key_id.to_string()),
             (
                 "bob_pre_key_record",
-                encode(&pre_key_record.serialize().expect("serialize pre-key record")),
+                encode(
+                    &pre_key_record
+                        .serialize()
+                        .expect("serialize pre-key record"),
+                ),
             ),
             ("bob_signed_pre_key_id", signed_pre_key_id.to_string()),
             (
@@ -233,9 +233,8 @@ fn rust_decrypts_android_signal_reply() {
         LibsignalSessionBackend::from_serialized_identity(&alice_identity, alice_registration_id)
             .expect("restore Alice identity through canonical libsignal serialization");
 
-    let alice_session =
-        SessionRecord::deserialize(&decode(required(&fixture, "alice_session")))
-            .expect("restore canonical Alice libsignal session");
+    let alice_session = SessionRecord::deserialize(&decode(required(&fixture, "alice_session")))
+        .expect("restore canonical Alice libsignal session");
     alice
         .store_mut()
         .session_store
