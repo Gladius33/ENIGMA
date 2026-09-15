@@ -46,6 +46,39 @@ class DeviceLinkAuthorizationTest {
     }
 
     @Test
+    fun canonicalPayloadParserRejectsFieldReorderingAndReturnsBoundIdentity() {
+        val payload = DeviceLinkAuthorization.canonicalPayload(
+            accountId = "33333333-3333-4333-8333-333333333333",
+            newDeviceId = "11111111-1111-4111-8111-111111111111",
+            authorizingDeviceId = "44444444-4444-4444-8444-444444444444",
+            pairingSessionId = "22222222-2222-4222-8222-222222222222",
+            platform = "linux",
+            protocolVersion = 1,
+            minSupportedVersion = 1,
+            capabilities = DeviceLinkAuthorization.CAPABILITY_MULTI_DEVICE,
+            issuedAtUnixMs = 1_700_000_000_000,
+            targetIdentityKey = "target-public",
+            candidateCommitment = "candidate-public",
+            authorizerIdentityKey = "authorizer-public",
+        )
+
+        val parsed = DeviceLinkAuthorization.parseCanonicalPayload(payload)
+        assertEquals("33333333-3333-4333-8333-333333333333", parsed.accountId)
+        assertEquals("11111111-1111-4111-8111-111111111111", parsed.newDeviceId)
+        assertEquals("44444444-4444-4444-8444-444444444444", parsed.authorizingDeviceId)
+        assertEquals("target-public", parsed.targetIdentityKey)
+        assertEquals("authorizer-public", parsed.authorizerIdentityKey)
+
+        val reordered = payload.replace(
+            "platform=linux\nprotocol_version=1\n",
+            "protocol_version=1\nplatform=linux\n",
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            DeviceLinkAuthorization.parseCanonicalPayload(reordered)
+        }
+    }
+
+    @Test
     fun candidateValidationRequiresMultiDeviceAndDistinctUuidDevices() {
         val identityKey = Base64.getEncoder().withoutPadding()
             .encodeToString(ByteArray(33) { 7 })
