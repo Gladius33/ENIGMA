@@ -76,6 +76,7 @@ bool enigma_core_send_text(
     EnigmaCoreHandle *handle,
     const EnigmaSendTextRequest *request);
 bool enigma_core_retry_outbox(EnigmaCoreHandle *handle);
+bool enigma_core_poll_p2p(EnigmaCoreHandle *handle);
 size_t enigma_core_outbox_count(const EnigmaCoreHandle *handle);
 
 size_t enigma_core_contacts_json_len(EnigmaCoreHandle *handle);
