@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=ENIGMA
+Comment=Messagerie chiffrée de bout en bout
+Exec=enigma_linux_desktop
+Icon=enigma
+Terminal=false
+Categories=Network;InstantMessaging;
+StartupNotify=true
