@@ -89,19 +89,19 @@ async fn certified_desktop_linking_is_bound_replay_safe_and_revocable() {
     let claim_secret = general_purpose::STANDARD_NO_PAD.encode([0x24_u8; 32]);
     let claim_secret_hash = hex_lower(&Sha256::digest([0x24_u8; 32]));
     let expires_at_unix_ms = Utc::now().timestamp_millis() + 120_000;
-    let candidate_commitment = candidate_commitment(
+    let candidate_commitment = candidate_commitment(&CandidateCommitmentInput {
         pairing_session_id,
-        desktop_id,
-        "Windows desktop",
-        "windows",
-        1,
-        1,
-        127,
+        device_id: desktop_id,
+        display_name: "Windows desktop",
+        platform: "windows",
+        protocol_version: 1,
+        min_supported_version: 1,
+        capabilities: 127,
         expires_at_unix_ms,
-        &pairing_public_key,
-        &desktop_identity,
-        &claim_secret_hash,
-    );
+        pairing_public_key: &pairing_public_key,
+        target_identity_key: &desktop_identity,
+        claim_secret_hash: &claim_secret_hash,
+    });
 
     let (status, candidate) = request_json(
         app.clone(),
@@ -366,20 +366,21 @@ fn key_material(value: &str) -> String {
     general_purpose::STANDARD_NO_PAD.encode(value.as_bytes())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn candidate_commitment(
+struct CandidateCommitmentInput<'a> {
     pairing_session_id: Uuid,
     device_id: Uuid,
-    display_name: &str,
-    platform: &str,
+    display_name: &'a str,
+    platform: &'a str,
     protocol_version: i32,
     min_supported_version: i32,
     capabilities: i64,
     expires_at_unix_ms: i64,
-    pairing_public_key: &str,
-    target_identity_key: &str,
-    claim_secret_hash: &str,
-) -> String {
+    pairing_public_key: &'a str,
+    target_identity_key: &'a str,
+    claim_secret_hash: &'a str,
+}
+
+fn candidate_commitment(input: &CandidateCommitmentInput<'_>) -> String {
     let canonical = format!(
         concat!(
             "ENIGMA_PAIRING_CANDIDATE_V1\n",
@@ -395,17 +396,17 @@ fn candidate_commitment(
             "target_identity_key={}\n",
             "claim_secret_hash={}\n"
         ),
-        pairing_session_id,
-        device_id,
-        display_name,
-        platform,
-        protocol_version,
-        min_supported_version,
-        capabilities,
-        expires_at_unix_ms,
-        pairing_public_key,
-        target_identity_key,
-        claim_secret_hash,
+        input.pairing_session_id,
+        input.device_id,
+        input.display_name,
+        input.platform,
+        input.protocol_version,
+        input.min_supported_version,
+        input.capabilities,
+        input.expires_at_unix_ms,
+        input.pairing_public_key,
+        input.target_identity_key,
+        input.claim_secret_hash,
     );
     general_purpose::STANDARD_NO_PAD.encode(Sha256::digest(canonical.as_bytes()))
 }
