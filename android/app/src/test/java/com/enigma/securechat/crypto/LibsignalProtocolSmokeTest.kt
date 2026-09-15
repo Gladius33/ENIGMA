@@ -1,5 +1,8 @@
 package com.enigma.securechat.crypto
 
+import java.io.File
+import java.util.Base64
+import java.util.Properties
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -152,6 +155,66 @@ class LibsignalProtocolSmokeTest {
         val tamperedSignature = signature.copyOf()
         tamperedSignature[0] = (tamperedSignature[0].toInt() xor 0x01).toByte()
         assertFalse(identityPublic.verifySignature(signedPreKeyPublic, tamperedSignature))
+    }
+
+    @Test
+    fun desktopRustPreKeyCiphertextRoundTripsBackToRust() {
+        val fixturePath = System.getenv("ENIGMA_ANDROID_INTEROP_FIXTURE") ?: return
+        val replyPath = requireNotNull(System.getenv("ENIGMA_ANDROID_INTEROP_REPLY")) {
+            "ENIGMA_ANDROID_INTEROP_REPLY is required when the cross-runtime fixture is enabled"
+        }
+        val fixture = Properties().apply {
+            File(fixturePath).inputStream().buffered().use(::load)
+        }
+        fun property(name: String): String = requireNotNull(fixture.getProperty(name)) {
+            "Missing cross-runtime fixture property: $name"
+        }
+        fun decoded(name: String): ByteArray = Base64.getDecoder().decode(property(name))
+
+        assertEquals("1", property("version"))
+
+        val bobIdentity = IdentityKeyPair(decoded("bob_identity"))
+        val bobStore = InMemorySignalProtocolStore(
+            bobIdentity,
+            property("bob_registration_id").toInt(),
+        )
+        val preKeyId = property("bob_pre_key_id").toInt()
+        val signedPreKeyId = property("bob_signed_pre_key_id").toInt()
+        val kyberPreKeyId = property("bob_kyber_pre_key_id").toInt()
+        bobStore.storePreKey(preKeyId, PreKeyRecord(decoded("bob_pre_key_record")))
+        bobStore.storeSignedPreKey(
+            signedPreKeyId,
+            SignedPreKeyRecord(decoded("bob_signed_pre_key_record")),
+        )
+        bobStore.storeKyberPreKey(
+            kyberPreKeyId,
+            KyberPreKeyRecord(decoded("bob_kyber_pre_key_record")),
+        )
+
+        val firstCiphertext = decoded("first_ciphertext")
+        val firstPlaintext = decoded("first_plaintext")
+        assertFalse(firstCiphertext.containsSubsequence(firstPlaintext))
+
+        val bobCipher = SessionCipher(
+            bobStore,
+            SignalProtocolAddress("alice", 1),
+        )
+        val decrypted = bobCipher.decrypt(PreKeySignalMessage(firstCiphertext))
+        assertArrayEquals(firstPlaintext, decrypted)
+
+        val replyPlaintext = decoded("reply_plaintext")
+        val reply = bobCipher.encrypt(replyPlaintext)
+        val replyCiphertext = reply.serialize()
+        assertEquals(CiphertextMessage.WHISPER_TYPE, reply.type)
+        assertFalse(replyCiphertext.containsSubsequence(replyPlaintext))
+
+        val encoder = Base64.getEncoder()
+        File(replyPath).writeText(
+            buildString {
+                appendLine("version=1")
+                appendLine("reply_ciphertext=${encoder.encodeToString(replyCiphertext)}")
+            },
+        )
     }
 
     @Test
