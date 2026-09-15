@@ -267,6 +267,8 @@ int main(int argc, char* argv[]) {
                     statusLabel = QStringLiteral("Livré");
                 } else if (deliveryStatus == QStringLiteral("sent")) {
                     statusLabel = QStringLiteral("Envoyé");
+                } else if (deliveryStatus == QStringLiteral("queued")) {
+                    statusLabel = QStringLiteral("En attente");
                 } else {
                     statusLabel = QStringLiteral("Synchronisé");
                 }
