@@ -11,6 +11,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+async-trait = "=0.1.89"
 base64 = "=0.22.1"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
+webrtc = { version = "=0.20.4", default-features = true }
