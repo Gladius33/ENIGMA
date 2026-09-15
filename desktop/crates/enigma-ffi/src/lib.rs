@@ -12,12 +12,21 @@ use enigma_platform::{PlatformKeyError, PlatformKeyProtector};
 use enigma_runtime_core::{CoreRuntime, PairingBootstrap, DEFAULT_PAIRING_TTL_MS};
 use enigma_signal::session::LibsignalSessionBackend;
 use enigma_sodium::SecureBytes;
-use enigma_transport::{PairingCandidatePublish, PairingClaimState, PairingRendezvousClient};
+use enigma_transport::{
+    PairingCandidatePublish, PairingClaimState, PairingRendezvousClient, PublicKeyUpload,
+    PublicOneTimePreKey, PublicSignedPreKey,
+};
+use futures_executor::block_on;
+use rand::Rng as _;
 
 pub const ENIGMA_CORE_ABI_VERSION: u32 = 1;
 const DEFAULT_DEDUP_CAPACITY: usize = 16_384;
 const MAX_PROTECTED_SIGNAL_IDENTITY_BYTES: usize = 64 * 1024;
+const MAX_PROTECTED_DEVICE_SESSION_BYTES: usize = 64 * 1024;
 const SIGNAL_IDENTITY_RECORD_MAGIC: &[u8] = b"ENIGMA-SIGNAL-IDENTITY\0v1\0";
+const DEVICE_SESSION_RECORD_MAGIC: &[u8] = b"ENIGMA-DEVICE-SESSION\0v1\0";
+const V1_PROTOCOL_DEVICE_ID: u32 = 1;
+const DESKTOP_PREKEY_UPLOAD_COUNT: u32 = 50;
 const PAIRING_CLAIM_ERROR: u32 = 0;
 const PAIRING_CLAIM_PENDING: u32 = 1;
 const PAIRING_CLAIMED: u32 = 2;
@@ -26,11 +35,14 @@ const PAIRING_CLAIM_EXPIRED: u32 = 4;
 const PAIRING_CLAIM_MISSING: u32 = 5;
 #[cfg(target_os = "linux")]
 const LINUX_SIGNAL_IDENTITY_SLOT: &str = "signal-identity-primary";
+#[cfg(target_os = "linux")]
+const LINUX_DEVICE_SESSION_SLOT: &str = "device-session-primary";
 
 pub struct EnigmaCoreHandle {
     _runtime: CoreRuntime,
     signal_backend: Option<LibsignalSessionBackend>,
     pairing_bootstrap: Option<PairingBootstrap>,
+    device_id: Option<String>,
     device_access_token: Option<SecureBytes>,
 }
 
@@ -41,11 +53,17 @@ pub extern "C" fn enigma_core_abi_version() -> u32 {
 
 #[no_mangle]
 pub extern "C" fn enigma_core_create() -> *mut EnigmaCoreHandle {
+    let restored_session = load_default_device_session().ok();
+    let (device_id, device_access_token) = restored_session
+        .map(|(device_id, token)| (Some(device_id), Some(token)))
+        .unwrap_or((None, None));
+
     Box::into_raw(Box::new(EnigmaCoreHandle {
         _runtime: CoreRuntime::new(DEFAULT_DEDUP_CAPACITY),
         signal_backend: None,
         pairing_bootstrap: None,
-        device_access_token: None,
+        device_id,
+        device_access_token,
     }))
 }
 
@@ -248,6 +266,7 @@ pub unsafe extern "C" fn enigma_core_pairing_claim(handle: *mut EnigmaCoreHandle
         return PAIRING_CLAIM_ERROR;
     };
     let pairing_session_id = pairing.payload().session_id.to_canonical_uuid();
+    let device_id = pairing.candidate().device_id.to_canonical_uuid();
     let claim_secret = match pairing.claim_secret_base64() {
         Ok(secret) => secret,
         Err(_) => return PAIRING_CLAIM_ERROR,
@@ -267,6 +286,7 @@ pub unsafe extern "C" fn enigma_core_pairing_claim(handle: *mut EnigmaCoreHandle
             };
             // SAFETY: caller guarantees exclusive live access to handle for this call.
             unsafe {
+                (*handle).device_id = Some(device_id);
                 (*handle).device_access_token = Some(secure_token);
                 (*handle).pairing_bootstrap = None;
             }
@@ -296,7 +316,108 @@ pub unsafe extern "C" fn enigma_core_device_session_ready(handle: *const EnigmaC
         return false;
     }
     // SAFETY: caller guarantees immutable live access.
-    unsafe { (*handle).device_access_token.is_some() }
+    unsafe { (*handle).device_id.is_some() && (*handle).device_access_token.is_some() }
+}
+
+/// Persists the claimed device session with the native platform secret backend and uploads a
+/// fresh public libsignal pre-key bundle. The token and private pre-key material remain inside Rust.
+///
+/// This operation is retry-safe: server key publication is transactional and one-time pre-key IDs
+/// are regenerated when a retry is required.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create and exclusively accessed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_device_initialize(handle: *mut EnigmaCoreHandle) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let Some(client) = pairing_client() else {
+        return false;
+    };
+    let Some(now_unix_ms) = current_unix_ms() else {
+        return false;
+    };
+
+    // SAFETY: caller guarantees exclusive live access for this call.
+    let core = unsafe { &mut *handle };
+    let Some(device_id) = core.device_id.clone() else {
+        return false;
+    };
+    let Some(token) = core.device_access_token.as_mut() else {
+        return false;
+    };
+    let Some(signal_backend) = core.signal_backend.as_mut() else {
+        return false;
+    };
+
+    let persisted = token
+        .with_read(|bytes| persist_default_device_session(&device_id, bytes))
+        .is_ok_and(|result| result.is_ok());
+    if !persisted {
+        return false;
+    }
+
+    let mut rng = rand::rng();
+    let max_first_one_time = (i32::MAX as u32)
+        .saturating_sub(DESKTOP_PREKEY_UPLOAD_COUNT)
+        .max(1);
+    let first_one_time_pre_key_id = rng.random_range(1..=max_first_one_time);
+    let signed_pre_key_id = rng.random_range(1..=i32::MAX as u32);
+    let kyber_pre_key_id = rng.random_range(1..=i32::MAX as u32);
+
+    let published = match block_on(signal_backend.generate_and_store_prekey_bundle(
+        first_one_time_pre_key_id,
+        DESKTOP_PREKEY_UPLOAD_COUNT,
+        signed_pre_key_id,
+        kyber_pre_key_id,
+        now_unix_ms,
+        &mut rng,
+    )) {
+        Ok(bundle) => bundle,
+        Err(_) => return false,
+    };
+
+    let identity_key = STANDARD_NO_PAD.encode(&published.identity_key);
+    let signed_public_key = STANDARD_NO_PAD.encode(&published.signed_pre_key.public_key);
+    let signed_signature = STANDARD_NO_PAD.encode(&published.signed_pre_key.signature);
+    let kyber_public_key = STANDARD_NO_PAD.encode(&published.kyber_pre_key.public_key);
+    let kyber_signature = STANDARD_NO_PAD.encode(&published.kyber_pre_key.signature);
+    let encoded_one_time: Vec<(u32, String)> = published
+        .one_time_pre_keys
+        .iter()
+        .map(|prekey| (prekey.key_id, STANDARD_NO_PAD.encode(&prekey.public_key)))
+        .collect();
+    let one_time_prekeys = encoded_one_time
+        .iter()
+        .map(|(key_id, public_key)| PublicOneTimePreKey {
+            key_id: *key_id,
+            public_key,
+        })
+        .collect();
+
+    let upload = PublicKeyUpload {
+        device_id: &device_id,
+        identity_key: &identity_key,
+        registration_id: published.registration_id,
+        protocol_device_id: V1_PROTOCOL_DEVICE_ID,
+        signed_prekey: PublicSignedPreKey {
+            key_id: published.signed_pre_key.key_id,
+            public_key: &signed_public_key,
+            signature: &signed_signature,
+        },
+        kyber_prekey: PublicSignedPreKey {
+            key_id: published.kyber_pre_key.key_id,
+            public_key: &kyber_public_key,
+            signature: &kyber_signature,
+        },
+        one_time_prekeys,
+    };
+
+    token
+        .with_read(|bytes| client.upload_keys(bytes, &upload))
+        .is_ok_and(|result| result.is_ok())
 }
 
 /// Cancels and destroys the current ephemeral pairing bootstrap.
@@ -489,6 +610,151 @@ pub unsafe extern "C" fn enigma_core_signal_initialize_protected(
     true
 }
 
+fn is_canonical_device_uuid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
+        })
+}
+
+fn encode_device_session_record(device_id: &str, protected: &[u8]) -> Option<Vec<u8>> {
+    if !is_canonical_device_uuid(device_id)
+        || protected.is_empty()
+        || protected.len() > MAX_PROTECTED_DEVICE_SESSION_BYTES
+    {
+        return None;
+    }
+    let mut record =
+        Vec::with_capacity(DEVICE_SESSION_RECORD_MAGIC.len() + device_id.len() + protected.len());
+    record.extend_from_slice(DEVICE_SESSION_RECORD_MAGIC);
+    record.extend_from_slice(device_id.as_bytes());
+    record.extend_from_slice(protected);
+    Some(record)
+}
+
+fn decode_device_session_record(record: &[u8]) -> Option<(String, &[u8])> {
+    let body = record.strip_prefix(DEVICE_SESSION_RECORD_MAGIC)?;
+    if body.len() <= 36 {
+        return None;
+    }
+    let (device_id_bytes, protected) = body.split_at(36);
+    let device_id = std::str::from_utf8(device_id_bytes).ok()?;
+    if !is_canonical_device_uuid(device_id)
+        || protected.is_empty()
+        || protected.len() > MAX_PROTECTED_DEVICE_SESSION_BYTES
+    {
+        return None;
+    }
+    Some((device_id.to_owned(), protected))
+}
+
+#[cfg(windows)]
+fn default_device_session_path() -> Option<PathBuf> {
+    let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"))?;
+    Some(PathBuf::from(base).join("ENIGMA").join("device-session-v1.bin"))
+}
+
+#[cfg(target_os = "linux")]
+fn default_device_session_path() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+    Some(base.join("ENIGMA").join("device-session-v1.bin"))
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn default_device_session_path() -> Option<PathBuf> {
+    None
+}
+
+fn persist_protected_record(path: &Path, record: &[u8]) -> io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "protected record path has no parent")
+    })?;
+    fs::create_dir_all(parent)?;
+
+    let temporary = path.with_extension("tmp");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&temporary)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+
+    file.write_all(record)?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(temporary, path)
+}
+
+fn persist_default_device_session(device_id: &str, token: &[u8]) -> Result<(), ()> {
+    if token.is_empty() || token.len() > 16 * 1024 {
+        return Err(());
+    }
+    let protected = protect_device_session_token(token).map_err(|_| ())?;
+    let record = encode_device_session_record(device_id, &protected).ok_or(())?;
+    let path = default_device_session_path().ok_or(())?;
+    persist_protected_record(&path, &record).map_err(|_| ())
+}
+
+fn load_default_device_session() -> Result<(String, SecureBytes), ()> {
+    let path = default_device_session_path().ok_or(())?;
+    let record = fs::read(path).map_err(|_| ())?;
+    let (device_id, protected) = decode_device_session_record(&record).ok_or(())?;
+    let mut token = unprotect_device_session_token(protected).map_err(|_| ())?;
+    if token.is_empty() || token.len() > 16 * 1024 {
+        token.fill(0);
+        return Err(());
+    }
+    let secure = SecureBytes::copy_and_wipe(&mut token).map_err(|_| ())?;
+    Ok((device_id, secure))
+}
+
+#[cfg(windows)]
+fn protect_device_session_token(token: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::WindowsDpapiProtector;
+
+    WindowsDpapiProtector.protect(token)
+}
+
+#[cfg(target_os = "linux")]
+fn protect_device_session_token(token: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::LinuxSecretServiceProtector;
+
+    LinuxSecretServiceProtector::new(LINUX_DEVICE_SESSION_SLOT)?.protect(token)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn protect_device_session_token(_token: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    Err(PlatformKeyError::BackendUnavailable)
+}
+
+#[cfg(windows)]
+fn unprotect_device_session_token(protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::WindowsDpapiProtector;
+
+    WindowsDpapiProtector.unprotect(protected)
+}
+
+#[cfg(target_os = "linux")]
+fn unprotect_device_session_token(protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::LinuxSecretServiceProtector;
+
+    let protector = LinuxSecretServiceProtector::from_locator(protected)?;
+    protector.unprotect(protected)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn unprotect_device_session_token(_protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    Err(PlatformKeyError::BackendUnavailable)
+}
+
 fn encode_signal_identity_record(registration_id: u32, protected: &[u8]) -> Vec<u8> {
     let mut record = Vec::with_capacity(SIGNAL_IDENTITY_RECORD_MAGIC.len() + 4 + protected.len());
     record.extend_from_slice(SIGNAL_IDENTITY_RECORD_MAGIC);
@@ -537,28 +803,7 @@ fn default_signal_identity_path() -> Option<PathBuf> {
 }
 
 fn persist_signal_identity_record(path: &Path, record: &[u8]) -> io::Result<()> {
-    let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "identity path has no parent")
-    })?;
-    fs::create_dir_all(parent)?;
-
-    let temporary = path.with_extension("tmp");
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&temporary)?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        file.set_permissions(fs::Permissions::from_mode(0o600))?;
-    }
-
-    file.write_all(record)?;
-    file.sync_all()?;
-    drop(file);
-    fs::rename(temporary, path)
+    persist_protected_record(path, record)
 }
 
 fn restore_signal_backend_from_record(record: &[u8]) -> Result<LibsignalSessionBackend, ()> {
