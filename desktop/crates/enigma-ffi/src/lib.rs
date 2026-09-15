@@ -1,5 +1,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod inbox;
+
 use std::{
     fs,
     io::{self, Write},
@@ -11,12 +13,14 @@ use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use enigma_platform::{PlatformKeyError, PlatformKeyProtector};
 use enigma_runtime_core::{CoreRuntime, PairingBootstrap, DEFAULT_PAIRING_TTL_MS};
 use enigma_signal::session::LibsignalSessionBackend;
-use enigma_sodium::SecureBytes;
+use enigma_sodium::{random_public_bytes, SecureBytes};
+use enigma_storage::SodiumRecordVault;
 use enigma_transport::{
     PairingCandidatePublish, PairingClaimState, PairingRendezvousClient, PublicKeyUpload,
     PublicOneTimePreKey, PublicSignedPreKey,
 };
 use futures_executor::block_on;
+use inbox::{DurableInboxEntry, EncryptedDesktopInbox};
 use rand::Rng as _;
 
 pub const ENIGMA_CORE_ABI_VERSION: u32 = 1;
@@ -26,9 +30,11 @@ const MAX_PROTECTED_SIGNAL_STORE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PROTECTED_DEVICE_SESSION_BYTES: usize = 64 * 1024;
 const SIGNAL_IDENTITY_RECORD_MAGIC: &[u8] = b"ENIGMA-SIGNAL-IDENTITY\0v1\0";
 const SIGNAL_STORE_RECORD_MAGIC: &[u8] = b"ENIGMA-SIGNAL-STORE\0v2\0";
+const INBOX_MASTER_KEY_RECORD_MAGIC: &[u8] = b"ENIGMA-INBOX-MASTER-KEY\0v1\0";
 const DEVICE_SESSION_RECORD_MAGIC: &[u8] = b"ENIGMA-DEVICE-SESSION\0v1\0";
 const V1_PROTOCOL_DEVICE_ID: u32 = 1;
 const DESKTOP_PREKEY_UPLOAD_COUNT: u32 = 50;
+const INBOX_MASTER_KEY_BYTES: usize = 32;
 const PAIRING_CLAIM_ERROR: u32 = 0;
 const PAIRING_CLAIM_PENDING: u32 = 1;
 const PAIRING_CLAIMED: u32 = 2;
@@ -40,6 +46,8 @@ const LINUX_SIGNAL_IDENTITY_SLOT: &str = "signal-identity-primary";
 #[cfg(target_os = "linux")]
 const LINUX_SIGNAL_STORE_SLOT: &str = "signal-store-primary-v2";
 #[cfg(target_os = "linux")]
+const LINUX_INBOX_MASTER_KEY_SLOT: &str = "desktop-inbox-master-key-v1";
+#[cfg(target_os = "linux")]
 const LINUX_DEVICE_SESSION_SLOT: &str = "device-session-primary";
 
 pub struct EnigmaCoreHandle {
@@ -48,6 +56,7 @@ pub struct EnigmaCoreHandle {
     pairing_bootstrap: Option<PairingBootstrap>,
     device_id: Option<String>,
     device_access_token: Option<SecureBytes>,
+    desktop_inbox: Option<EncryptedDesktopInbox>,
 }
 
 #[no_mangle]
@@ -68,6 +77,7 @@ pub extern "C" fn enigma_core_create() -> *mut EnigmaCoreHandle {
         pairing_bootstrap: None,
         device_id,
         device_access_token,
+        desktop_inbox: None,
     }))
 }
 
@@ -431,6 +441,228 @@ pub unsafe extern "C" fn enigma_core_device_initialize(handle: *mut EnigmaCoreHa
     token
         .with_read(|bytes| client.upload_keys(bytes, &upload))
         .is_ok_and(|result| result.is_ok())
+}
+
+/// Pulls encrypted pending messages, decrypts them entirely inside Rust, persists the
+/// updated libsignal ratchet and encrypted local inbox durably, then acknowledges the relay.
+///
+/// A crash-safe encrypted journal makes the ratchet/inbox commit replayable. The server is never
+/// ACKed before both the updated Signal state and plaintext message are durable at rest.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create and exclusively accessed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let Some(client) = pairing_client() else {
+        return false;
+    };
+
+    // SAFETY: caller guarantees exclusive live access for this call.
+    let core = unsafe { &mut *handle };
+    let Some(device_id) = core.device_id.clone() else {
+        return false;
+    };
+    if core.device_access_token.is_none() || core.signal_backend.is_none() {
+        return false;
+    }
+    if core.desktop_inbox.is_none() {
+        core.desktop_inbox = load_or_create_desktop_inbox().ok();
+    }
+    if core.desktop_inbox.is_none() || recover_inbox_journal(core).is_err() {
+        return false;
+    }
+
+    let pending = {
+        let Some(token) = core.device_access_token.as_mut() else {
+            return false;
+        };
+        match token.with_read(|bytes| client.pending_messages(bytes, &device_id)) {
+            Ok(Ok(messages)) => messages,
+            Ok(Err(_)) | Err(_) => return false,
+        }
+    };
+
+    for message in pending {
+        let already_durable = core
+            .desktop_inbox
+            .as_ref()
+            .and_then(|inbox| {
+                inbox
+                    .contains_remote_message(&message.id)
+                    .ok()
+            })
+            .unwrap_or(false);
+
+        if !already_durable {
+            let (sender_device_id, mut plaintext_bytes) = {
+                let Some(signal_backend) = core.signal_backend.as_mut() else {
+                    return false;
+                };
+                let mut rng = rand::rng();
+                match block_on(signal_backend.decrypt_wire(
+                    &message.ciphertext,
+                    &device_id,
+                    V1_PROTOCOL_DEVICE_ID,
+                    &mut rng,
+                )) {
+                    Ok(value) => value,
+                    Err(_) => return false,
+                }
+            };
+            if sender_device_id != message.sender_device_id {
+                plaintext_bytes.fill(0);
+                return false;
+            }
+            let plaintext = match std::str::from_utf8(&plaintext_bytes) {
+                Ok(value) if !value.is_empty() => value.to_owned(),
+                Ok(_) | Err(_) => {
+                    plaintext_bytes.fill(0);
+                    return false;
+                }
+            };
+            plaintext_bytes.fill(0);
+
+            let entry = DurableInboxEntry {
+                remote_message_id: message.id.clone(),
+                bubble_id: message.bubble_id,
+                sender_device_id: message.sender_device_id,
+                sender_user_id: message.sender_user_id,
+                sender_public_id: message.sender_public_id,
+                recipient_device_id: message.recipient_device_id,
+                client_message_id: message.client_message_id,
+                message_type: message.message_type,
+                plaintext,
+                created_at: message.created_at,
+                expires_at: message.expires_at,
+            };
+
+            let mut snapshot = match core
+                .signal_backend
+                .as_ref()
+                .and_then(|backend| backend.export_serialized_store().ok())
+            {
+                Some(snapshot) => snapshot,
+                None => return false,
+            };
+            let journal_written = core
+                .desktop_inbox
+                .as_ref()
+                .is_some_and(|inbox| inbox.write_journal(&entry, &snapshot).is_ok());
+            snapshot.fill(0);
+            if !journal_written {
+                return false;
+            }
+
+            let signal_persisted = core
+                .signal_backend
+                .as_ref()
+                .is_some_and(|backend| persist_default_signal_store(backend).is_ok());
+            if !signal_persisted {
+                return false;
+            }
+            let inbox_persisted = core
+                .desktop_inbox
+                .as_ref()
+                .is_some_and(|inbox| inbox.append(entry).is_ok());
+            if !inbox_persisted {
+                return false;
+            }
+            if let Some(inbox) = core.desktop_inbox.as_ref() {
+                let _ = inbox.clear_journal();
+            }
+        }
+
+        let acknowledged = {
+            let Some(token) = core.device_access_token.as_mut() else {
+                return false;
+            };
+            token
+                .with_read(|bytes| {
+                    client.acknowledge_message(bytes, &message.id, &device_id)
+                })
+                .is_ok_and(|result| result.is_ok())
+        };
+        if !acknowledged {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Returns the number of durably encrypted local inbox entries.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create and immutably accessed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_inbox_count(handle: *const EnigmaCoreHandle) -> usize {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: caller guarantees immutable live access for this read.
+    let core = unsafe { &*handle };
+    core.desktop_inbox
+        .as_ref()
+        .and_then(|inbox| inbox.entries().ok())
+        .map_or(0, |entries| entries.len())
+}
+
+/// Returns the UTF-8 JSON byte length of an inbox entry, or zero for an invalid index.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create and immutably accessed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_inbox_entry_json_len(
+    handle: *const EnigmaCoreHandle,
+    index: usize,
+) -> usize {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: caller guarantees immutable live access for this read.
+    let core = unsafe { &*handle };
+    core.desktop_inbox
+        .as_ref()
+        .and_then(|inbox| inbox.entries().ok())
+        .and_then(|entries| entries.get(index).cloned())
+        .and_then(|entry| serde_json::to_vec(&entry).ok())
+        .map_or(0, |encoded| encoded.len())
+}
+
+/// Copies one decrypted inbox entry as UTF-8 JSON into caller-owned memory.
+///
+/// # Safety
+///
+/// handle must be live or null. output must reference at least output_len writable bytes and must
+/// not overlap Rust-owned storage. The same handle must not be concurrently mutated or destroyed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_inbox_entry_json_copy(
+    handle: *const EnigmaCoreHandle,
+    index: usize,
+    output: *mut u8,
+    output_len: usize,
+) -> bool {
+    if handle.is_null() || output.is_null() {
+        return false;
+    }
+    // SAFETY: caller guarantees immutable live access for this read.
+    let core = unsafe { &*handle };
+    let Some(encoded) = core
+        .desktop_inbox
+        .as_ref()
+        .and_then(|inbox| inbox.entries().ok())
+        .and_then(|entries| entries.get(index).cloned())
+        .and_then(|entry| serde_json::to_vec(&entry).ok())
+    else {
+        return false;
+    };
+    copy_pairing_bytes(&encoded, output, output_len)
 }
 
 /// Cancels and destroys the current ephemeral pairing bootstrap.
@@ -797,6 +1029,156 @@ fn decode_signal_identity_record(record: &[u8]) -> Option<(u32, &[u8])> {
         return None;
     }
     Some((registration_id, protected))
+}
+
+fn encode_inbox_master_key_record(protected: &[u8]) -> Option<Vec<u8>> {
+    if protected.is_empty() || protected.len() > MAX_PROTECTED_DEVICE_SESSION_BYTES {
+        return None;
+    }
+    let mut record =
+        Vec::with_capacity(INBOX_MASTER_KEY_RECORD_MAGIC.len() + protected.len());
+    record.extend_from_slice(INBOX_MASTER_KEY_RECORD_MAGIC);
+    record.extend_from_slice(protected);
+    Some(record)
+}
+
+fn decode_inbox_master_key_record(record: &[u8]) -> Option<&[u8]> {
+    let protected = record.strip_prefix(INBOX_MASTER_KEY_RECORD_MAGIC)?;
+    if protected.is_empty() || protected.len() > MAX_PROTECTED_DEVICE_SESSION_BYTES {
+        return None;
+    }
+    Some(protected)
+}
+
+fn default_desktop_state_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"))?;
+        return Some(PathBuf::from(base).join("ENIGMA"));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+        return Some(base.join("ENIGMA"));
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        None
+    }
+}
+
+fn default_inbox_master_key_path() -> Option<PathBuf> {
+    Some(default_desktop_state_dir()?.join("desktop-inbox-master-key-v1.bin"))
+}
+
+fn default_inbox_path() -> Option<PathBuf> {
+    Some(default_desktop_state_dir()?.join("desktop-inbox-v1.enc"))
+}
+
+fn default_inbox_journal_path() -> Option<PathBuf> {
+    Some(default_desktop_state_dir()?.join("desktop-inbox-journal-v1.enc"))
+}
+
+fn load_or_create_desktop_inbox() -> Result<EncryptedDesktopInbox, ()> {
+    let key_path = default_inbox_master_key_path().ok_or(())?;
+    let vault = match fs::read(&key_path) {
+        Ok(record) => {
+            let protected = decode_inbox_master_key_record(&record).ok_or(())?;
+            let mut raw = unprotect_inbox_master_key(protected).map_err(|_| ())?;
+            if raw.len() != INBOX_MASTER_KEY_BYTES {
+                raw.fill(0);
+                return Err(());
+            }
+            let mut key = [0_u8; INBOX_MASTER_KEY_BYTES];
+            key.copy_from_slice(&raw);
+            raw.fill(0);
+            SodiumRecordVault::import_key_and_wipe(&mut key).map_err(|_| ())?
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let mut key = random_public_bytes::<INBOX_MASTER_KEY_BYTES>().map_err(|_| ())?;
+            let protected_result = protect_inbox_master_key(&key);
+            let protected = match protected_result {
+                Ok(value) => value,
+                Err(_) => {
+                    key.fill(0);
+                    return Err(());
+                }
+            };
+            let record = encode_inbox_master_key_record(&protected).ok_or(())?;
+            if persist_protected_record(&key_path, &record).is_err() {
+                key.fill(0);
+                return Err(());
+            }
+            SodiumRecordVault::import_key_and_wipe(&mut key).map_err(|_| ())?
+        }
+        Err(_) => return Err(()),
+    };
+
+    Ok(EncryptedDesktopInbox::new(
+        default_inbox_path().ok_or(())?,
+        default_inbox_journal_path().ok_or(())?,
+        vault,
+    ))
+}
+
+fn recover_inbox_journal(core: &mut EnigmaCoreHandle) -> Result<(), ()> {
+    let journal = core
+        .desktop_inbox
+        .as_ref()
+        .ok_or(())?
+        .read_journal()?;
+    let Some((entry, mut snapshot)) = journal else {
+        return Ok(());
+    };
+
+    let backend = LibsignalSessionBackend::from_serialized_store(&snapshot).map_err(|_| ())?;
+    snapshot.fill(0);
+    persist_default_signal_store(&backend)?;
+    core.signal_backend = Some(backend);
+    core.desktop_inbox.as_ref().ok_or(())?.append(entry)?;
+    let _ = core.desktop_inbox.as_ref().ok_or(())?.clear_journal();
+    Ok(())
+}
+
+#[cfg(windows)]
+fn protect_inbox_master_key(key: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::WindowsDpapiProtector;
+
+    WindowsDpapiProtector.protect(key)
+}
+
+#[cfg(target_os = "linux")]
+fn protect_inbox_master_key(key: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::LinuxSecretServiceProtector;
+
+    LinuxSecretServiceProtector::new(LINUX_INBOX_MASTER_KEY_SLOT)?.protect(key)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn protect_inbox_master_key(_key: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    Err(PlatformKeyError::BackendUnavailable)
+}
+
+#[cfg(windows)]
+fn unprotect_inbox_master_key(protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::WindowsDpapiProtector;
+
+    WindowsDpapiProtector.unprotect(protected)
+}
+
+#[cfg(target_os = "linux")]
+fn unprotect_inbox_master_key(protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::LinuxSecretServiceProtector;
+
+    let protector = LinuxSecretServiceProtector::from_locator(protected)?;
+    protector.unprotect(protected)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn unprotect_inbox_master_key(_protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    Err(PlatformKeyError::BackendUnavailable)
 }
 
 fn encode_signal_store_record(protected: &[u8]) -> Option<Vec<u8>> {
