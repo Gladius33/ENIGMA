@@ -183,6 +183,32 @@ pub struct PublicKeyUpload<'a> {
     pub one_time_prekeys: Vec<PublicOneTimePreKey<'a>>,
 }
 
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq)]
+pub struct PendingRelayMessage {
+    pub id: String,
+    pub bubble_id: String,
+    pub sender_device_id: String,
+    pub sender_user_id: String,
+    pub sender_public_id: String,
+    pub recipient_device_id: String,
+    pub client_message_id: String,
+    pub message_type: String,
+    pub ciphertext: String,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PendingRelayMessagesResponse {
+    messages: Vec<PendingRelayMessage>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ReceiptRequest<'a> {
+    device_id: &'a str,
+    status: &'a str,
+}
+
 pub struct PairingRendezvousClient {
     client: reqwest::blocking::Client,
     base_url: reqwest::Url,
@@ -249,26 +275,99 @@ impl PairingRendezvousClient {
         access_token: &[u8],
         bundle: &PublicKeyUpload<'_>,
     ) -> Result<(), PairingRendezvousError> {
-        if access_token.is_empty() || access_token.len() > 16 * 1024 {
-            return Err(PairingRendezvousError::InvalidResponse);
-        }
         let endpoint = self
             .base_url
             .join("v1/keys/upload")
             .map_err(|_| PairingRendezvousError::InvalidEndpoint)?;
 
-        let mut authorization = Vec::with_capacity(7 + access_token.len());
-        authorization.extend_from_slice(b"Bearer ");
-        authorization.extend_from_slice(access_token);
-        let header = reqwest::header::HeaderValue::from_bytes(&authorization)
-            .map_err(|_| PairingRendezvousError::InvalidResponse)?;
-        authorization.fill(0);
+        let header = bearer_header(access_token)?;
 
         let response = self
             .client
             .post(endpoint)
             .header(reqwest::header::AUTHORIZATION, header)
             .json(bundle)
+            .send()
+            .map_err(|_| PairingRendezvousError::Transport)?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(PairingRendezvousError::Rejected(response.status().as_u16()))
+        }
+    }
+
+    pub fn pending_messages(
+        &self,
+        access_token: &[u8],
+        device_id: &str,
+    ) -> Result<Vec<PendingRelayMessage>, PairingRendezvousError> {
+        if !is_canonical_uuid(device_id) {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        let mut endpoint = self
+            .base_url
+            .join("v1/messages/pending")
+            .map_err(|_| PairingRendezvousError::InvalidEndpoint)?;
+        endpoint
+            .query_pairs_mut()
+            .append_pair("device_id", device_id);
+
+        let header = bearer_header(access_token)?;
+        let response = self
+            .client
+            .get(endpoint)
+            .header(reqwest::header::AUTHORIZATION, header)
+            .send()
+            .map_err(|_| PairingRendezvousError::Transport)?;
+        if !response.status().is_success() {
+            return Err(PairingRendezvousError::Rejected(response.status().as_u16()));
+        }
+
+        let body = response
+            .json::<PendingRelayMessagesResponse>()
+            .map_err(|_| PairingRendezvousError::InvalidResponse)?;
+        if body.messages.len() > 4096
+            || body.messages.iter().any(|message| {
+                !is_canonical_uuid(&message.id)
+                    || !is_canonical_uuid(&message.bubble_id)
+                    || !is_canonical_uuid(&message.sender_device_id)
+                    || !is_canonical_uuid(&message.sender_user_id)
+                    || !is_canonical_uuid(&message.recipient_device_id)
+                    || !is_canonical_uuid(&message.client_message_id)
+                    || message.recipient_device_id != device_id
+                    || message.ciphertext.is_empty()
+                    || message.ciphertext.len() > 2 * 1024 * 1024
+                    || message.message_type.is_empty()
+                    || message.message_type.len() > 64
+            })
+        {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        Ok(body.messages)
+    }
+
+    pub fn acknowledge_message(
+        &self,
+        access_token: &[u8],
+        message_id: &str,
+        device_id: &str,
+    ) -> Result<(), PairingRendezvousError> {
+        if !is_canonical_uuid(message_id) || !is_canonical_uuid(device_id) {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        let endpoint = self
+            .base_url
+            .join(&format!("v1/messages/{message_id}/receipt"))
+            .map_err(|_| PairingRendezvousError::InvalidEndpoint)?;
+        let header = bearer_header(access_token)?;
+        let response = self
+            .client
+            .post(endpoint)
+            .header(reqwest::header::AUTHORIZATION, header)
+            .json(&ReceiptRequest {
+                device_id,
+                status: "delivered",
+            })
             .send()
             .map_err(|_| PairingRendezvousError::Transport)?;
         if response.status().is_success() {
@@ -323,6 +422,29 @@ impl PairingRendezvousClient {
         };
         Ok((state, None))
     }
+}
+
+fn bearer_header(
+    access_token: &[u8],
+) -> Result<reqwest::header::HeaderValue, PairingRendezvousError> {
+    if access_token.is_empty() || access_token.len() > 16 * 1024 {
+        return Err(PairingRendezvousError::InvalidResponse);
+    }
+    let mut authorization = Vec::with_capacity(7 + access_token.len());
+    authorization.extend_from_slice(b"Bearer ");
+    authorization.extend_from_slice(access_token);
+    let header = reqwest::header::HeaderValue::from_bytes(&authorization)
+        .map_err(|_| PairingRendezvousError::InvalidResponse)?;
+    authorization.fill(0);
+    Ok(header)
+}
+
+fn is_canonical_uuid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
+        })
 }
 
 #[cfg(test)]
