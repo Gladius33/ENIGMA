@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace Enigma.Desktop.Interop;
 
@@ -35,6 +36,30 @@ internal static partial class EnigmaCoreNative
         byte* protectedIdentity,
         nuint protectedIdentityLength,
         uint registrationId);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_pairing_start")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static partial bool PairingStart(IntPtr handle);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_pairing_cancel")]
+    internal static partial void PairingCancel(IntPtr handle);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_pairing_uri_len")]
+    internal static partial nuint PairingUriLength(IntPtr handle);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_pairing_uri_copy")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static unsafe partial bool PairingUriCopy(IntPtr handle, byte* output, nuint outputLength);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_pairing_svg_len")]
+    internal static partial nuint PairingSvgLength(IntPtr handle);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_pairing_svg_copy")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static unsafe partial bool PairingSvgCopy(IntPtr handle, byte* output, nuint outputLength);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_pairing_expires_at_unix_ms")]
+    internal static partial ulong PairingExpiresAtUnixMs(IntPtr handle);
 }
 
 internal sealed class EnigmaCoreHandle : SafeHandle
@@ -81,6 +106,38 @@ internal sealed class EnigmaCoreHandle : SafeHandle
         }
     }
 
+    internal bool StartPairing() => EnigmaCoreNative.PairingStart(handle);
+
+    internal void CancelPairing() => EnigmaCoreNative.PairingCancel(handle);
+
+    internal string ReadPairingUri() =>
+        ReadPairingUtf8(EnigmaCoreNative.PairingUriLength(handle), EnigmaCoreNative.PairingUriCopy);
+
+    internal string ReadPairingSvg() =>
+        ReadPairingUtf8(EnigmaCoreNative.PairingSvgLength(handle), EnigmaCoreNative.PairingSvgCopy);
+
+    internal ulong PairingExpiresAtUnixMs => EnigmaCoreNative.PairingExpiresAtUnixMs(handle);
+
+    private unsafe string ReadPairingUtf8(
+        nuint length,
+        delegate* unmanaged<IntPtr, byte*, nuint, bool> copier)
+    {
+        if (length == 0 || length > int.MaxValue)
+        {
+            return string.Empty;
+        }
+
+        byte[] bytes = new byte[(int)length];
+        fixed (byte* output = bytes)
+        {
+            if (!copier(handle, output, length))
+            {
+                return string.Empty;
+            }
+        }
+        return Encoding.UTF8.GetString(bytes);
+    }
+
     protected override bool ReleaseHandle()
     {
         EnigmaCoreNative.Destroy(handle);
@@ -92,6 +149,11 @@ internal sealed class EnigmaCoreHandle : SafeHandle
 /// Managed lifetime boundary for the shared Rust ENIGMA core.
 /// Cryptographic operations and protected-identity restoration remain inside Rust.
 /// </summary>
+public sealed record EnigmaPairingBootstrap(
+    string Uri,
+    string Svg,
+    ulong ExpiresAtUnixMs);
+
 public sealed class EnigmaCoreClient : IDisposable
 {
     private readonly EnigmaCoreHandle _handle = new();
@@ -137,6 +199,32 @@ public sealed class EnigmaCoreClient : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         return _handle.InitializeProtectedSignalIdentity(protectedIdentity, registrationId);
+    }
+
+    public EnigmaPairingBootstrap? StartPairing()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_handle.SignalIsReady || !_handle.StartPairing())
+        {
+            return null;
+        }
+
+        string uri = _handle.ReadPairingUri();
+        string svg = _handle.ReadPairingSvg();
+        ulong expiresAtUnixMs = _handle.PairingExpiresAtUnixMs;
+        if (string.IsNullOrWhiteSpace(uri) || string.IsNullOrWhiteSpace(svg) || expiresAtUnixMs == 0)
+        {
+            _handle.CancelPairing();
+            return null;
+        }
+
+        return new EnigmaPairingBootstrap(uri, svg, expiresAtUnixMs);
+    }
+
+    public void CancelPairing()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _handle.CancelPairing();
     }
 
     public void Dispose()
