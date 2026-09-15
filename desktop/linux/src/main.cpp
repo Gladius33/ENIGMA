@@ -1,11 +1,15 @@
 #include <QApplication>
+#include <QDateTime>
+#include <QDialog>
 #include <QFont>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPalette>
 #include <QPixmap>
 #include <QPushButton>
+#include <QSvgWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -140,6 +144,14 @@ int main(int argc, char* argv[]) {
     auto* secure = new QLabel(QStringLiteral("● Chiffrement de bout en bout"), surface);
     secure->setObjectName(QStringLiteral("secure"));
 
+    auto* pairDevice = new QPushButton(QStringLiteral("Lier un appareil"), surface);
+    pairDevice->setAccessibleName(QStringLiteral("Lier un appareil Android"));
+    pairDevice->setEnabled(coreReady);
+    pairDevice->setToolTip(
+        coreReady
+            ? QStringLiteral("Créer un QR d’appairage court-vivant.")
+            : coreDetail);
+
     auto* openMessages = new QPushButton(QStringLiteral("Ouvrir les messages"), surface);
     openMessages->setAccessibleName(QStringLiteral("Ouvrir les messages"));
     openMessages->setEnabled(coreReady);
@@ -148,11 +160,62 @@ int main(int argc, char* argv[]) {
             ? QStringLiteral("Le cœur Rust/libsignal est prêt.")
             : coreDetail);
 
+    QObject::connect(pairDevice, &QPushButton::clicked, [&window, &core]() {
+        if (!core || !core->signalReady() || !core->startPairing()) return;
+
+        const std::string svg = core->pairingSvg();
+        const std::string uri = core->pairingUri();
+        const std::uint64_t expiresAtUnixMs = core->pairingExpiresAtUnixMs();
+        if (svg.empty() || uri.empty() || expiresAtUnixMs == 0) {
+            core->cancelPairing();
+            return;
+        }
+
+        QDialog dialog(&window);
+        dialog.setWindowTitle(QStringLiteral("Lier cet ordinateur"));
+        dialog.setModal(true);
+        auto* layout = new QVBoxLayout(&dialog);
+        layout->setContentsMargins(20, 20, 20, 20);
+        layout->setSpacing(12);
+
+        auto* instructions = new QLabel(
+            QStringLiteral("Scannez ce code depuis ENIGMA sur votre appareil Android autorisé."),
+            &dialog);
+        instructions->setWordWrap(true);
+
+        auto* qr = new QSvgWidget(&dialog);
+        qr->load(QByteArray::fromStdString(svg));
+        qr->setFixedSize(320, 320);
+
+        const auto expiresAt = QDateTime::fromMSecsSinceEpoch(
+            static_cast<qint64>(expiresAtUnixMs));
+        auto* expiry = new QLabel(
+            QStringLiteral("Expire à %1").arg(expiresAt.toLocalTime().toString(QStringLiteral("HH:mm:ss"))),
+            &dialog);
+
+        auto* uriField = new QLineEdit(QString::fromStdString(uri), &dialog);
+        uriField->setReadOnly(true);
+        uriField->setAccessibleName(QStringLiteral("URI d’appairage"));
+
+        auto* close = new QPushButton(QStringLiteral("Fermer"), &dialog);
+        QObject::connect(close, &QPushButton::clicked, &dialog, &QDialog::accept);
+
+        layout->addWidget(instructions);
+        layout->addWidget(qr, 0, Qt::AlignHCenter);
+        layout->addWidget(expiry);
+        layout->addWidget(uriField);
+        layout->addWidget(close, 0, Qt::AlignRight);
+
+        dialog.exec();
+        core->cancelPairing();
+    });
+
     content->addWidget(title);
     content->addWidget(status);
     content->addWidget(detail);
     content->addWidget(secure);
     content->addSpacing(enigma::design::kSpacingSm);
+    content->addWidget(pairDevice, 0, Qt::AlignLeft);
     content->addWidget(openMessages, 0, Qt::AlignLeft);
     content->addStretch();
 
