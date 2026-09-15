@@ -110,18 +110,9 @@ internal sealed class EnigmaCoreHandle : SafeHandle
 
     internal void CancelPairing() => EnigmaCoreNative.PairingCancel(handle);
 
-    internal string ReadPairingUri() =>
-        ReadPairingUtf8(EnigmaCoreNative.PairingUriLength(handle), EnigmaCoreNative.PairingUriCopy);
-
-    internal string ReadPairingSvg() =>
-        ReadPairingUtf8(EnigmaCoreNative.PairingSvgLength(handle), EnigmaCoreNative.PairingSvgCopy);
-
-    internal ulong PairingExpiresAtUnixMs => EnigmaCoreNative.PairingExpiresAtUnixMs(handle);
-
-    private unsafe string ReadPairingUtf8(
-        nuint length,
-        delegate* unmanaged<IntPtr, byte*, nuint, bool> copier)
+    internal unsafe string ReadPairingUri()
     {
+        nuint length = EnigmaCoreNative.PairingUriLength(handle);
         if (length == 0 || length > int.MaxValue)
         {
             return string.Empty;
@@ -130,13 +121,34 @@ internal sealed class EnigmaCoreHandle : SafeHandle
         byte[] bytes = new byte[(int)length];
         fixed (byte* output = bytes)
         {
-            if (!copier(handle, output, length))
+            if (!EnigmaCoreNative.PairingUriCopy(handle, output, length))
             {
                 return string.Empty;
             }
         }
         return Encoding.UTF8.GetString(bytes);
     }
+
+    internal unsafe string ReadPairingSvg()
+    {
+        nuint length = EnigmaCoreNative.PairingSvgLength(handle);
+        if (length == 0 || length > int.MaxValue)
+        {
+            return string.Empty;
+        }
+
+        byte[] bytes = new byte[(int)length];
+        fixed (byte* output = bytes)
+        {
+            if (!EnigmaCoreNative.PairingSvgCopy(handle, output, length))
+            {
+                return string.Empty;
+            }
+        }
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    internal ulong PairingExpiresAtUnixMs => EnigmaCoreNative.PairingExpiresAtUnixMs(handle);
 
     protected override bool ReleaseHandle()
     {
