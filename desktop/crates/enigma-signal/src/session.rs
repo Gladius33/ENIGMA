@@ -125,6 +125,30 @@ impl LibsignalSessionBackend {
         self.store.export_snapshot()
     }
 
+    pub async fn sign_identity_proof<R>(
+        &self,
+        transcript: &[u8],
+        rng: &mut R,
+    ) -> Result<Vec<u8>, SignalAdapterError>
+    where
+        R: Rng + CryptoRng,
+    {
+        if transcript.is_empty() || transcript.len() > 64 * 1024 {
+            return Err(SignalAdapterError::InvalidBundle);
+        }
+        let identity = self
+            .store
+            .identity_store
+            .get_identity_key_pair()
+            .await
+            .map_err(|_| SignalAdapterError::CryptoFailure)?;
+        identity
+            .private_key()
+            .calculate_signature(transcript, rng)
+            .map(|signature| signature.to_vec())
+            .map_err(|_| SignalAdapterError::CryptoFailure)
+    }
+
     /// Generates, signs and stores the public pre-key material a desktop device publishes.
     ///
     /// All private material remains owned by libsignal inside the Rust backend. The returned
