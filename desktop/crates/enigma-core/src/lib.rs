@@ -216,7 +216,7 @@ fn canonical_pairing_candidate(
 ) -> String {
     format!(
         concat!(
-            "{PAIRING_CANDIDATE_DOMAIN}\n",
+            "{}\n",
             "pairing_session_id={}\n",
             "device_id={}\n",
             "display_name={}\n",
@@ -229,6 +229,7 @@ fn canonical_pairing_candidate(
             "target_identity_key={}\n",
             "claim_secret_hash={}\n"
         ),
+        PAIRING_CANDIDATE_DOMAIN,
         session_id.to_canonical_uuid(),
         device_id.to_canonical_uuid(),
         display_name,
@@ -450,12 +451,9 @@ mod tests {
 
     #[test]
     fn pairing_bootstrap_matches_android_qr_contract() {
-        let bootstrap = PairingBootstrap::generate(
-                1_700_000_000_000,
-                DEFAULT_PAIRING_TTL_MS,
-                &[0x51; 33],
-            )
-            .expect("pairing bootstrap");
+        let bootstrap =
+            PairingBootstrap::generate(1_700_000_000_000, DEFAULT_PAIRING_TTL_MS, &[0x51; 33])
+                .expect("pairing bootstrap");
 
         assert_eq!(
             bootstrap.payload().header.capabilities,
@@ -492,9 +490,8 @@ mod tests {
             Err(PairingBootstrapError::InvalidTtl)
         ));
 
-        let bootstrap =
-            PairingBootstrap::generate(1_000, DEFAULT_PAIRING_TTL_MS, &[0x51; 33])
-                .expect("pairing bootstrap");
+        let bootstrap = PairingBootstrap::generate(1_000, DEFAULT_PAIRING_TTL_MS, &[0x51; 33])
+            .expect("pairing bootstrap");
         let signature = bootstrap
             .sign_pairing_message(b"ENIGMA_PAIRING_CHANNEL_V1")
             .expect("pairing signature");
