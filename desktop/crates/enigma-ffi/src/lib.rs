@@ -490,11 +490,7 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
         let already_durable = core
             .desktop_inbox
             .as_ref()
-            .and_then(|inbox| {
-                inbox
-                    .contains_remote_message(&message.id)
-                    .ok()
-            })
+            .and_then(|inbox| inbox.contains_remote_message(&message.id).ok())
             .unwrap_or(false);
 
         if !already_durable {
@@ -581,9 +577,7 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
                 return false;
             };
             token
-                .with_read(|bytes| {
-                    client.acknowledge_message(bytes, &message.id, &device_id)
-                })
+                .with_read(|bytes| client.acknowledge_message(bytes, &message.id, &device_id))
                 .is_ok_and(|result| result.is_ok())
         };
         if !acknowledged {
@@ -1035,8 +1029,7 @@ fn encode_inbox_master_key_record(protected: &[u8]) -> Option<Vec<u8>> {
     if protected.is_empty() || protected.len() > MAX_PROTECTED_DEVICE_SESSION_BYTES {
         return None;
     }
-    let mut record =
-        Vec::with_capacity(INBOX_MASTER_KEY_RECORD_MAGIC.len() + protected.len());
+    let mut record = Vec::with_capacity(INBOX_MASTER_KEY_RECORD_MAGIC.len() + protected.len());
     record.extend_from_slice(INBOX_MASTER_KEY_RECORD_MAGIC);
     record.extend_from_slice(protected);
     Some(record)
@@ -1127,11 +1120,7 @@ fn load_or_create_desktop_inbox() -> Result<EncryptedDesktopInbox, ()> {
 }
 
 fn recover_inbox_journal(core: &mut EnigmaCoreHandle) -> Result<(), ()> {
-    let journal = core
-        .desktop_inbox
-        .as_ref()
-        .ok_or(())?
-        .read_journal()?;
+    let journal = core.desktop_inbox.as_ref().ok_or(())?.read_journal()?;
     let Some((entry, mut snapshot)) = journal else {
         return Ok(());
     };
