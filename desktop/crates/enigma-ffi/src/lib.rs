@@ -2961,7 +2961,7 @@ mod tests {
             InboundSenderContext {
                 sender_user_id: own_user_id,
                 sender_public_id: "me",
-                own_user_id: own_user_id,
+                own_user_id,
                 from_verified_sibling: true,
             },
         )
@@ -2985,7 +2985,7 @@ mod tests {
             InboundSenderContext {
                 sender_user_id: own_user_id,
                 sender_public_id: "me",
-                own_user_id: own_user_id,
+                own_user_id,
                 from_verified_sibling: false,
             },
         )
