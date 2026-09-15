@@ -52,6 +52,10 @@ internal static partial class EnigmaCoreNative
     [return: MarshalAs(UnmanagedType.I1)]
     internal static partial bool DeviceSessionReady(IntPtr handle);
 
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_device_initialize")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static partial bool DeviceInitialize(IntPtr handle);
+
     [LibraryImport(LibraryName, EntryPoint = "enigma_core_pairing_cancel")]
     internal static partial void PairingCancel(IntPtr handle);
 
@@ -124,6 +128,8 @@ internal sealed class EnigmaCoreHandle : SafeHandle
     internal uint ClaimPairing() => EnigmaCoreNative.PairingClaim(handle);
 
     internal bool DeviceSessionReady => EnigmaCoreNative.DeviceSessionReady(handle);
+
+    internal bool InitializeDevice() => EnigmaCoreNative.DeviceInitialize(handle);
 
     internal void CancelPairing() => EnigmaCoreNative.PairingCancel(handle);
 
@@ -278,6 +284,12 @@ public sealed class EnigmaCoreClient : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             return _handle.DeviceSessionReady;
         }
+    }
+
+    public bool InitializeDevice()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _handle.SignalIsReady && _handle.DeviceSessionReady && _handle.InitializeDevice();
     }
 
     public void CancelPairing()
