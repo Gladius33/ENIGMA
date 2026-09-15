@@ -78,10 +78,16 @@ int main(int argc, char* argv[]) {
         const bool sessionReady = signalReady && core->deviceSessionReady();
         const bool deviceReady = sessionReady && core->initializeDevice();
         coreReady = signalReady && sessionReady && deviceReady;
+        const bool inboxSynced = coreReady && core->syncPending();
+        const std::size_t inboxCount = coreReady ? core->inboxCount() : 0;
         if (coreReady) {
             coreStatus = QStringLiteral("Cœur sécurisé prêt • appareil lié");
-            coreDetail = QStringLiteral("Rust/libsignal • ABI %1 • prekeys publiées")
-                             .arg(enigma::linked_core_abi_version());
+            coreDetail = inboxSynced
+                ? QStringLiteral("Rust/libsignal • ABI %1 • %2 message(s) local(aux)")
+                      .arg(enigma::linked_core_abi_version())
+                      .arg(static_cast<qulonglong>(inboxCount))
+                : QStringLiteral("Rust/libsignal • ABI %1 • synchronisation à réessayer")
+                      .arg(enigma::linked_core_abi_version());
         } else if (signalReady && sessionReady) {
             coreStatus = QStringLiteral("Session liée • initialisation réseau requise");
             coreDetail = QStringLiteral(
@@ -226,7 +232,12 @@ int main(int argc, char* argv[]) {
                     pairingStatus->setText(
                         QStringLiteral("Session autorisée. Publication des clés libsignal…"));
                     if (core->initializeDevice()) {
-                        pairingStatus->setText(QStringLiteral("Ordinateur lié avec succès."));
+                        const bool synchronized = core->syncPending();
+                        pairingStatus->setText(
+                            synchronized
+                                ? QStringLiteral("Ordinateur lié et synchronisé avec succès.")
+                                : QStringLiteral(
+                                      "Ordinateur lié. La synchronisation sera réessayée."));
                         status->setText(QStringLiteral("Cœur sécurisé prêt • appareil lié"));
                         dialog.accept();
                     } else {
