@@ -50,6 +50,7 @@ data class PairDeviceQrPayload(
     val pairing_session_id: String,
     val expires_at_unix_ms: Long,
     val pairing_public_key: String,
+    val candidate_commitment: String,
 )
 
 sealed interface ParsedEnigmaQrPayload {
@@ -143,7 +144,14 @@ object EnigmaQrPayloads {
         val publicKey = runCatching { Base64.getDecoder().decode(pairing_public_key) }.getOrNull()
             ?: return false
         return try {
-            publicKey.isNotEmpty() && publicKey.size <= 4_096
+            if (publicKey.isEmpty() || publicKey.size > 4_096) return false
+            val commitment = runCatching { Base64.getDecoder().decode(candidate_commitment) }.getOrNull()
+                ?: return false
+            try {
+                commitment.size == 32
+            } finally {
+                commitment.fill(0)
+            }
         } finally {
             publicKey.fill(0)
         }
