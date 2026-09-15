@@ -49,9 +49,9 @@ Classes/fonctions restantes avant production :
 Blocage actuel :
 
 - les smoke tests instrumentes demarrent l'app reelle sur un telephone S35; le test debug deux appareils du flux message complet a ete effectue, mais le test release signee deux appareils reste a faire;
-- groupes/canaux n'ont pas de sender-key Signal.
+- groupes/canaux n'ont pas de sender-key Signal; ils restent donc experimentaux/post-1.0 et hors gate de la RC production actuelle.
 
-Conclusion : le texte 1-to-1 utilise maintenant libsignal et expose des empreintes minimales avec verification manuelle persistante, mais la release production reste bloquee tant que la validation release signee deux appareils, l'audit de confiance/fingerprint et FCM production ne sont pas termines.
+Conclusion : le texte 1-to-1 utilise libsignal 0.86.5 et l'interoperabilite Android <-> Rust est couverte par CI. La RC reste volontairement bloquee par la qualification humaine `REAL-LAB-001`, notamment pairing/multi-device, reseaux reels, P2P-first et fallback relais.
 
 ## WebRTC
 
@@ -87,4 +87,4 @@ Limites restantes :
 - release signee deux appareils non validee;
 - routage audio avance/Bluetooth et monitoring TURN a auditer.
 
-Conclusion : WebRTC media est integre dans Android et compile, mais le verdict maximal reste `PRÊT POUR AUDIT HUMAIN FINAL` tant que les appels audio/video reels ne sont pas valides sur deux appareils.
+Conclusion : WebRTC media est integre dans Android et compile, mais les appels audio/video sont une surface post-1.0 pour la production actuelle. Leur validation deux appareils reels reste necessaire avant toute activation production des appels, sans bloquer la RC 1.0 de messagerie 1-to-1/multi-device.
