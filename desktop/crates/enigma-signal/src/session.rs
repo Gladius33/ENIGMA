@@ -3,16 +3,13 @@ use std::time::SystemTime;
 use libsignal_protocol::{
     kem, message_decrypt_prekey, message_decrypt_signal, message_encrypt, process_prekey_bundle,
     CiphertextMessage, CiphertextMessageType, DeviceId, GenericSignedPreKey, IdentityKeyPair,
-    IdentityKeyStore, KeyPair, KyberPreKeyRecord, KyberPreKeyStore,
-    PreKeyBundle, PreKeyRecord, PreKeySignalMessage, PreKeyStore, ProtocolAddress, SignalMessage,
-    SignedPreKeyRecord, SignedPreKeyStore, Timestamp,
+    IdentityKeyStore, KeyPair, KyberPreKeyRecord, KyberPreKeyStore, PreKeyBundle, PreKeyRecord,
+    PreKeySignalMessage, PreKeyStore, ProtocolAddress, SignalMessage, SignedPreKeyRecord,
+    SignedPreKeyStore, Timestamp,
 };
 use rand::{CryptoRng, Rng};
 
-use crate::{
-    persistent_store::PersistentSignalProtocolStore,
-    SignalAdapterError,
-};
+use crate::{persistent_store::PersistentSignalProtocolStore, SignalAdapterError};
 
 /// Real desktop session backend backed exclusively by the pinned libsignal implementation.
 ///
@@ -314,7 +311,8 @@ impl LibsignalSessionBackend {
         }
         let protocol_device_id = DeviceId::new(envelope.sender_protocol_device_id)
             .map_err(|_| SignalAdapterError::InvalidWireEnvelope)?;
-        let remote = ProtocolAddress::new(envelope.sender_device_id.clone().into(), protocol_device_id);
+        let remote =
+            ProtocolAddress::new(envelope.sender_device_id.clone().into(), protocol_device_id);
         let ciphertext = SessionCiphertext {
             message_type: envelope.message_type,
             serialized: envelope.ciphertext,
@@ -413,9 +411,8 @@ impl LibsignalSessionBackend {
         remote: &ProtocolAddress,
         serialized: &[u8],
     ) -> Result<(), SignalAdapterError> {
-        let record =
-            libsignal_protocol::SessionRecord::deserialize(serialized)
-                .map_err(|_| SignalAdapterError::InvalidBundle)?;
+        let record = libsignal_protocol::SessionRecord::deserialize(serialized)
+            .map_err(|_| SignalAdapterError::InvalidBundle)?;
         self.store
             .session_store
             .store_session(remote, &record)
@@ -445,7 +442,6 @@ impl LibsignalSessionBackend {
     pub const fn registration_id(&self) -> u32 {
         self.registration_id
     }
-
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
