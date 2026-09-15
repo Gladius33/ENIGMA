@@ -21,7 +21,8 @@ public sealed partial class MainWindow : Window
         {
             _core = new EnigmaCoreClient();
             bool runtimeReady = _core.IsReady;
-            bool signalReady = runtimeReady && _core.SignalReady;
+            bool signalReady = runtimeReady &&
+                (_core.SignalReady || _core.EnsureDefaultSignalIdentity());
 
             CoreStatusText.Text = signalReady
                 ? "Cœur sécurisé prêt"
