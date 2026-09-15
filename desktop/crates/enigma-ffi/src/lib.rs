@@ -1402,6 +1402,8 @@ pub unsafe extern "C" fn enigma_core_send_text(
         contact_public_id: Some(recipient_public_id.clone()),
         contact_display_name: Some(recipient_display_name.clone()),
         original_created_at_unix_ms: Some(created_at),
+        delivery_status: Some("sent".to_owned()),
+        delivery_updated_at: None,
     };
 
     let mut snapshot = match working_backend.export_serialized_store() {
@@ -1621,6 +1623,12 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
                 contact_public_id: Some(normalized.contact_public_id),
                 contact_display_name: Some(normalized.contact_display_name),
                 original_created_at_unix_ms: normalized.original_created_at_unix_ms,
+                delivery_status: if normalized.direction == "inbound" {
+                    Some("delivered".to_owned())
+                } else {
+                    None
+                },
+                delivery_updated_at: None,
             };
 
             let mut snapshot = match core
@@ -1669,6 +1677,32 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
         };
         if !acknowledged {
             return false;
+        }
+    }
+
+    let receipts = {
+        let Some(token) = core.device_access_token.as_mut() else {
+            return false;
+        };
+        token
+            .with_read(|bytes| client.sent_receipts(bytes, &device_id))
+            .ok()
+            .and_then(Result::ok)
+    };
+    if let Some(receipts) = receipts {
+        let statuses: Vec<(String, String, String, String)> = receipts
+            .into_iter()
+            .map(|receipt| {
+                (
+                    receipt.bubble_id,
+                    receipt.client_message_id,
+                    receipt.status,
+                    receipt.delivered_at,
+                )
+            })
+            .collect();
+        if let Some(inbox) = core.desktop_inbox.as_ref() {
+            let _ = inbox.apply_outbound_receipts(&statuses);
         }
     }
 
