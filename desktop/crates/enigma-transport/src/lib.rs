@@ -159,6 +159,30 @@ struct ErrorResponse {
     error_code: Option<String>,
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct PublicSignedPreKey<'a> {
+    pub key_id: u32,
+    pub public_key: &'a str,
+    pub signature: &'a str,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PublicOneTimePreKey<'a> {
+    pub key_id: u32,
+    pub public_key: &'a str,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PublicKeyUpload<'a> {
+    pub device_id: &'a str,
+    pub identity_key: &'a str,
+    pub registration_id: u32,
+    pub protocol_device_id: u32,
+    pub signed_prekey: PublicSignedPreKey<'a>,
+    pub kyber_prekey: PublicSignedPreKey<'a>,
+    pub one_time_prekeys: Vec<PublicOneTimePreKey<'a>>,
+}
+
 pub struct PairingRendezvousClient {
     client: reqwest::blocking::Client,
     base_url: reqwest::Url,
@@ -211,6 +235,40 @@ impl PairingRendezvousClient {
             .client
             .post(endpoint)
             .json(candidate)
+            .send()
+            .map_err(|_| PairingRendezvousError::Transport)?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(PairingRendezvousError::Rejected(response.status().as_u16()))
+        }
+    }
+
+    pub fn upload_keys(
+        &self,
+        access_token: &[u8],
+        bundle: &PublicKeyUpload<'_>,
+    ) -> Result<(), PairingRendezvousError> {
+        if access_token.is_empty() || access_token.len() > 16 * 1024 {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        let endpoint = self
+            .base_url
+            .join("v1/keys/upload")
+            .map_err(|_| PairingRendezvousError::InvalidEndpoint)?;
+
+        let mut authorization = Vec::with_capacity(7 + access_token.len());
+        authorization.extend_from_slice(b"Bearer ");
+        authorization.extend_from_slice(access_token);
+        let header = reqwest::header::HeaderValue::from_bytes(&authorization)
+            .map_err(|_| PairingRendezvousError::InvalidResponse)?;
+        authorization.fill(0);
+
+        let response = self
+            .client
+            .post(endpoint)
+            .header(reqwest::header::AUTHORIZATION, header)
+            .json(bundle)
             .send()
             .map_err(|_| PairingRendezvousError::Transport)?;
         if response.status().is_success() {
