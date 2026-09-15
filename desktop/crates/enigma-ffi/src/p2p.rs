@@ -244,6 +244,7 @@ impl DesktopP2pManager {
                 match event {
                     P2pSignalingEvent::Signal {
                         bubble_id,
+                        sender_user_id: _,
                         sender_device_id,
                         session_id,
                         signal_kind,
