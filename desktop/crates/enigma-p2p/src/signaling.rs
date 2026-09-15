@@ -1,4 +1,4 @@
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Mutex};
 
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
