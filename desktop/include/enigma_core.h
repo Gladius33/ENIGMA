@@ -30,6 +30,24 @@ bool enigma_core_signal_initialize_protected(
     size_t protected_identity_len,
     uint32_t registration_id);
 
+/*
+ * Pairing bootstrap keeps its ephemeral private signing material inside Rust.
+ * Callers can retrieve only the public Android-compatible URI/SVG payload.
+ */
+bool enigma_core_pairing_start(EnigmaCoreHandle *handle);
+void enigma_core_pairing_cancel(EnigmaCoreHandle *handle);
+size_t enigma_core_pairing_uri_len(const EnigmaCoreHandle *handle);
+bool enigma_core_pairing_uri_copy(
+    const EnigmaCoreHandle *handle,
+    uint8_t *output,
+    size_t output_len);
+size_t enigma_core_pairing_svg_len(const EnigmaCoreHandle *handle);
+bool enigma_core_pairing_svg_copy(
+    const EnigmaCoreHandle *handle,
+    uint8_t *output,
+    size_t output_len);
+uint64_t enigma_core_pairing_expires_at_unix_ms(const EnigmaCoreHandle *handle);
+
 #ifdef __cplusplus
 }
 #endif
