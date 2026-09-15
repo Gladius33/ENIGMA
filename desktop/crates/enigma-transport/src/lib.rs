@@ -203,6 +203,90 @@ struct PendingRelayMessagesResponse {
     messages: Vec<PendingRelayMessage>,
 }
 
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq)]
+pub struct DeviceAuthorizationProof {
+    pub authorizing_device_id: String,
+    pub canonical_payload: String,
+    pub authorizer_signature: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq)]
+pub struct RemoteSignedPreKey {
+    pub key_id: i64,
+    pub public_key: String,
+    pub signature: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq)]
+pub struct RemoteOneTimePreKey {
+    pub key_id: i64,
+    pub public_key: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq)]
+pub struct RemoteDeviceKeyBundle {
+    pub device_id: String,
+    pub identity_key: String,
+    pub registration_id: Option<i32>,
+    pub protocol_device_id: Option<i32>,
+    pub signed_prekey: RemoteSignedPreKey,
+    pub kyber_prekey: Option<RemoteSignedPreKey>,
+    pub one_time_prekey_count: i64,
+    pub prekey_low: bool,
+    pub authorization: Option<DeviceAuthorizationProof>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct KeyDiscoveryResponse {
+    user_id: String,
+    devices: Vec<RemoteDeviceKeyBundle>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq)]
+pub struct ClaimedRemoteDeviceKeyBundle {
+    pub device_id: String,
+    pub identity_key: String,
+    pub registration_id: Option<i32>,
+    pub protocol_device_id: Option<i32>,
+    pub signed_prekey: RemoteSignedPreKey,
+    pub kyber_prekey: Option<RemoteSignedPreKey>,
+    pub one_time_prekey: Option<RemoteOneTimePreKey>,
+    pub one_time_prekey_count_after_claim: i64,
+    pub prekey_low: bool,
+    pub authorization: Option<DeviceAuthorizationProof>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ClaimPreKeyResponse {
+    user_id: String,
+    device: ClaimedRemoteDeviceKeyBundle,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AccountDevicesResponse {
+    user_id: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct RelayMessageSend<'a> {
+    pub bubble_id: &'a str,
+    pub sender_device_id: &'a str,
+    pub recipient_device_id: &'a str,
+    pub client_message_id: &'a str,
+    pub message_type: &'a str,
+    pub ciphertext: &'a str,
+    pub attachment_blob_ids: Vec<&'a str>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq)]
+pub struct RelayMessageSendResponse {
+    pub id: String,
+    pub bubble_id: String,
+    pub client_message_id: String,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
 #[derive(Debug, serde::Serialize)]
 struct ReceiptRequest<'a> {
     device_id: &'a str,
@@ -294,6 +378,177 @@ impl PairingRendezvousClient {
         } else {
             Err(PairingRendezvousError::Rejected(response.status().as_u16()))
         }
+    }
+
+    pub fn account_user_id(
+        &self,
+        access_token: &[u8],
+    ) -> Result<String, PairingRendezvousError> {
+        let endpoint = self
+            .base_url
+            .join("v1/devices")
+            .map_err(|_| PairingRendezvousError::InvalidEndpoint)?;
+        let header = bearer_header(access_token)?;
+        let response = self
+            .client
+            .get(endpoint)
+            .header(reqwest::header::AUTHORIZATION, header)
+            .send()
+            .map_err(|_| PairingRendezvousError::Transport)?;
+        if !response.status().is_success() {
+            return Err(PairingRendezvousError::Rejected(response.status().as_u16()));
+        }
+        let body = response
+            .json::<AccountDevicesResponse>()
+            .map_err(|_| PairingRendezvousError::InvalidResponse)?;
+        if !is_canonical_uuid(&body.user_id) {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        Ok(body.user_id)
+    }
+
+    pub fn discover_devices(
+        &self,
+        access_token: &[u8],
+        user_id: &str,
+    ) -> Result<Vec<RemoteDeviceKeyBundle>, PairingRendezvousError> {
+        if !is_canonical_uuid(user_id) {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        let endpoint = self
+            .base_url
+            .join(&format!("v1/keys/{user_id}/devices"))
+            .map_err(|_| PairingRendezvousError::InvalidEndpoint)?;
+        let header = bearer_header(access_token)?;
+        let response = self
+            .client
+            .get(endpoint)
+            .header(reqwest::header::AUTHORIZATION, header)
+            .send()
+            .map_err(|_| PairingRendezvousError::Transport)?;
+        if !response.status().is_success() {
+            return Err(PairingRendezvousError::Rejected(response.status().as_u16()));
+        }
+        let body = response
+            .json::<KeyDiscoveryResponse>()
+            .map_err(|_| PairingRendezvousError::InvalidResponse)?;
+        if body.user_id != user_id
+            || body.devices.len() > 128
+            || body.devices.iter().any(|device| {
+                !valid_remote_device_metadata(
+                    &device.device_id,
+                    &device.identity_key,
+                    device.registration_id,
+                    device.protocol_device_id,
+                    &device.signed_prekey,
+                    device.kyber_prekey.as_ref(),
+                )
+            })
+        {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        Ok(body.devices)
+    }
+
+    pub fn claim_prekey(
+        &self,
+        access_token: &[u8],
+        user_id: &str,
+        device_id: &str,
+    ) -> Result<ClaimedRemoteDeviceKeyBundle, PairingRendezvousError> {
+        if !is_canonical_uuid(user_id) || !is_canonical_uuid(device_id) {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        let endpoint = self
+            .base_url
+            .join(&format!(
+                "v1/keys/{user_id}/devices/{device_id}/claim-prekey"
+            ))
+            .map_err(|_| PairingRendezvousError::InvalidEndpoint)?;
+        let header = bearer_header(access_token)?;
+        let response = self
+            .client
+            .post(endpoint)
+            .header(reqwest::header::AUTHORIZATION, header)
+            .send()
+            .map_err(|_| PairingRendezvousError::Transport)?;
+        if !response.status().is_success() {
+            return Err(PairingRendezvousError::Rejected(response.status().as_u16()));
+        }
+        let body = response
+            .json::<ClaimPreKeyResponse>()
+            .map_err(|_| PairingRendezvousError::InvalidResponse)?;
+        let device = body.device;
+        if body.user_id != user_id
+            || device.device_id != device_id
+            || !valid_remote_device_metadata(
+                &device.device_id,
+                &device.identity_key,
+                device.registration_id,
+                device.protocol_device_id,
+                &device.signed_prekey,
+                device.kyber_prekey.as_ref(),
+            )
+            || device.one_time_prekey.as_ref().is_some_and(|prekey| {
+                !valid_key_id(prekey.key_id) || !valid_key_material(&prekey.public_key)
+            })
+        {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        Ok(device)
+    }
+
+    pub fn send_message(
+        &self,
+        access_token: &[u8],
+        message: &RelayMessageSend<'_>,
+    ) -> Result<RelayMessageSendResponse, PairingRendezvousError> {
+        if !is_canonical_uuid(message.bubble_id)
+            || !is_canonical_uuid(message.sender_device_id)
+            || !is_canonical_uuid(message.recipient_device_id)
+            || !is_canonical_uuid(message.client_message_id)
+            || message.sender_device_id == message.recipient_device_id
+            || message.message_type.is_empty()
+            || message.message_type.len() > 64
+            || message.ciphertext.is_empty()
+            || message.ciphertext.len() > 4 * 1024 * 1024
+            || message.attachment_blob_ids.len() > 128
+            || message
+                .attachment_blob_ids
+                .iter()
+                .any(|blob_id| !is_canonical_uuid(blob_id))
+        {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        let endpoint = self
+            .base_url
+            .join("v1/messages")
+            .map_err(|_| PairingRendezvousError::InvalidEndpoint)?;
+        let header = bearer_header(access_token)?;
+        let response = self
+            .client
+            .post(endpoint)
+            .header(reqwest::header::AUTHORIZATION, header)
+            .json(message)
+            .send()
+            .map_err(|_| PairingRendezvousError::Transport)?;
+        if !response.status().is_success() {
+            return Err(PairingRendezvousError::Rejected(response.status().as_u16()));
+        }
+        let body = response
+            .json::<RelayMessageSendResponse>()
+            .map_err(|_| PairingRendezvousError::InvalidResponse)?;
+        if !is_canonical_uuid(&body.id)
+            || body.bubble_id != message.bubble_id
+            || body.client_message_id != message.client_message_id
+            || body.created_at.is_empty()
+            || body.created_at.len() > 128
+            || body.expires_at.is_empty()
+            || body.expires_at.len() > 128
+        {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        Ok(body)
     }
 
     pub fn pending_messages(
@@ -422,6 +677,43 @@ impl PairingRendezvousClient {
         };
         Ok((state, None))
     }
+}
+
+fn valid_key_id(value: i64) -> bool {
+    (0..=i32::MAX as i64).contains(&value)
+}
+
+fn valid_key_material(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 16 * 1024
+}
+
+fn valid_remote_device_metadata(
+    device_id: &str,
+    identity_key: &str,
+    registration_id: Option<i32>,
+    protocol_device_id: Option<i32>,
+    signed_prekey: &RemoteSignedPreKey,
+    kyber_prekey: Option<&RemoteSignedPreKey>,
+) -> bool {
+    let Some(registration_id) = registration_id else {
+        return false;
+    };
+    let Some(protocol_device_id) = protocol_device_id else {
+        return false;
+    };
+    let Some(kyber_prekey) = kyber_prekey else {
+        return false;
+    };
+    is_canonical_uuid(device_id)
+        && valid_key_material(identity_key)
+        && (1..=16_380).contains(&registration_id)
+        && (1..=127).contains(&protocol_device_id)
+        && valid_key_id(signed_prekey.key_id)
+        && valid_key_material(&signed_prekey.public_key)
+        && valid_key_material(&signed_prekey.signature)
+        && valid_key_id(kyber_prekey.key_id)
+        && valid_key_material(&kyber_prekey.public_key)
+        && valid_key_material(&kyber_prekey.signature)
 }
 
 fn bearer_header(
