@@ -9,9 +9,8 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use enigma_signal::session::{LibsignalSessionBackend, SessionCiphertext, SessionMessageType};
 use futures_util::FutureExt;
 use libsignal_protocol::{
-    kem, DeviceId, GenericSignedPreKey, IdentityKeyPair, IdentityKeyStore, KeyPair,
-    KyberPreKeyRecord, PreKeyBundle, PreKeyRecord, ProtocolAddress, SessionRecord, SessionStore,
-    SignedPreKeyRecord, Timestamp,
+    kem, DeviceId, GenericSignedPreKey, IdentityKeyPair, KeyPair, KyberPreKeyRecord, PreKeyBundle,
+    PreKeyRecord, ProtocolAddress, SignedPreKeyRecord, Timestamp,
 };
 use rand::{rngs::StdRng, SeedableRng};
 
@@ -158,15 +157,11 @@ fn rust_emits_android_prekey_fixture() {
         .any(|window| window == first_plaintext));
 
     let alice_session = alice
-        .store()
-        .session_store
-        .load_session(&address("bob"))
+        .serialized_session(&address("bob"))
         .now_or_never()
-        .expect("in-memory session lookup is synchronous")
-        .expect("load Alice session")
-        .expect("Alice session must exist after encryption")
-        .serialize()
-        .expect("serialize canonical Alice libsignal session");
+        .expect("persistent session lookup is synchronous")
+        .expect("serialize Alice session")
+        .expect("Alice session must exist after encryption");
 
     write_properties(
         &fixture_path,
@@ -233,25 +228,20 @@ fn rust_decrypts_android_signal_reply() {
         LibsignalSessionBackend::from_serialized_identity(&alice_identity, alice_registration_id)
             .expect("restore Alice identity through canonical libsignal serialization");
 
-    let alice_session = SessionRecord::deserialize(&decode(required(&fixture, "alice_session")))
-        .expect("restore canonical Alice libsignal session");
+    let alice_session = decode(required(&fixture, "alice_session"));
     alice
-        .store_mut()
-        .session_store
-        .store_session(&address("bob"), &alice_session)
+        .restore_serialized_session(&address("bob"), &alice_session)
         .now_or_never()
-        .expect("in-memory session restore is synchronous")
+        .expect("persistent session restore is synchronous")
         .expect("store restored Alice session");
 
     let bob_identity =
         IdentityKeyPair::try_from(decode(required(&fixture, "bob_identity")).as_slice())
             .expect("restore Bob identity through canonical libsignal serialization");
     alice
-        .store_mut()
-        .identity_store
-        .save_identity(&address("bob"), bob_identity.identity_key())
+        .save_remote_identity(&address("bob"), bob_identity.identity_key())
         .now_or_never()
-        .expect("in-memory identity restore is synchronous")
+        .expect("persistent identity restore is synchronous")
         .expect("trust the Bob identity certified by the fixture transcript");
 
     let ciphertext = SessionCiphertext {
