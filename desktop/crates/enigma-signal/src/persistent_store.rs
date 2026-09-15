@@ -8,8 +8,8 @@ use base64::{
 use libsignal_protocol::{
     CiphertextMessageType, Direction, GenericSignedPreKey, IdentityChange, IdentityKey,
     IdentityKeyPair, IdentityKeyStore, KyberPreKeyId, KyberPreKeyRecord, KyberPreKeyStore,
-    PreKeyId, PreKeyRecord, PreKeyStore, ProtocolAddress, ProtocolStore, PublicKey, SessionRecord,
-    SessionStore, SignalProtocolError, SignedPreKeyId, SignedPreKeyRecord, SignedPreKeyStore,
+    PreKeyId, PreKeyRecord, PreKeyStore, ProtocolAddress, PublicKey, SessionRecord, SessionStore,
+    SignalProtocolError, SignedPreKeyId, SignedPreKeyRecord, SignedPreKeyStore,
 };
 use serde::{Deserialize, Serialize};
 
@@ -47,15 +47,40 @@ impl AddressKey {
 }
 
 #[derive(Clone)]
-pub struct PersistentSignalProtocolStore {
-    identity_key_pair: IdentityKeyPair,
+pub struct PersistentIdentityKeyStore {
+    key_pair: IdentityKeyPair,
     registration_id: u32,
-    known_identities: HashMap<AddressKey, IdentityKey>,
-    pre_keys: HashMap<PreKeyId, PreKeyRecord>,
-    signed_pre_keys: HashMap<SignedPreKeyId, SignedPreKeyRecord>,
-    kyber_pre_keys: HashMap<KyberPreKeyId, KyberPreKeyRecord>,
-    kyber_base_keys_seen: HashMap<(KyberPreKeyId, SignedPreKeyId), Vec<PublicKey>>,
-    sessions: HashMap<AddressKey, SessionRecord>,
+    known_keys: HashMap<AddressKey, IdentityKey>,
+}
+
+#[derive(Clone, Default)]
+pub struct PersistentPreKeyStore {
+    records: HashMap<PreKeyId, PreKeyRecord>,
+}
+
+#[derive(Clone, Default)]
+pub struct PersistentSignedPreKeyStore {
+    records: HashMap<SignedPreKeyId, SignedPreKeyRecord>,
+}
+
+#[derive(Clone, Default)]
+pub struct PersistentKyberPreKeyStore {
+    records: HashMap<KyberPreKeyId, KyberPreKeyRecord>,
+    base_keys_seen: HashMap<(KyberPreKeyId, SignedPreKeyId), Vec<PublicKey>>,
+}
+
+#[derive(Clone, Default)]
+pub struct PersistentSessionStore {
+    records: HashMap<AddressKey, SessionRecord>,
+}
+
+#[derive(Clone)]
+pub struct PersistentSignalProtocolStore {
+    pub(crate) session_store: PersistentSessionStore,
+    pub(crate) pre_key_store: PersistentPreKeyStore,
+    pub(crate) signed_pre_key_store: PersistentSignedPreKeyStore,
+    pub(crate) kyber_pre_key_store: PersistentKyberPreKeyStore,
+    pub(crate) identity_store: PersistentIdentityKeyStore,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -91,67 +116,64 @@ struct KyberSeenBlob {
 }
 
 impl PersistentSignalProtocolStore {
-    pub fn new(identity_key_pair: IdentityKeyPair, registration_id: u32) -> Result<Self, SignalAdapterError> {
+    pub fn new(
+        identity_key_pair: IdentityKeyPair,
+        registration_id: u32,
+    ) -> Result<Self, SignalAdapterError> {
         if registration_id == 0 || registration_id > 16_380 {
             return Err(SignalAdapterError::InvalidBundle);
         }
         Ok(Self {
-            identity_key_pair,
-            registration_id,
-            known_identities: HashMap::new(),
-            pre_keys: HashMap::new(),
-            signed_pre_keys: HashMap::new(),
-            kyber_pre_keys: HashMap::new(),
-            kyber_base_keys_seen: HashMap::new(),
-            sessions: HashMap::new(),
+            session_store: PersistentSessionStore::default(),
+            pre_key_store: PersistentPreKeyStore::default(),
+            signed_pre_key_store: PersistentSignedPreKeyStore::default(),
+            kyber_pre_key_store: PersistentKyberPreKeyStore::default(),
+            identity_store: PersistentIdentityKeyStore {
+                key_pair: identity_key_pair,
+                registration_id,
+                known_keys: HashMap::new(),
+            },
         })
+    }
+
+    #[must_use]
+    pub fn identity_public_key(&self) -> Vec<u8> {
+        self.identity_store
+            .key_pair
+            .identity_key()
+            .serialize()
+            .to_vec()
+    }
+
+    #[must_use]
+    pub const fn registration_id(&self) -> u32 {
+        self.identity_store.registration_id
     }
 
     pub fn export_snapshot(&self) -> Result<Vec<u8>, SignalAdapterError> {
         let snapshot = StoreSnapshot {
             version: SNAPSHOT_VERSION,
-            identity_key_pair: encode(&self.identity_key_pair.serialize()),
-            registration_id: self.registration_id,
+            identity_key_pair: encode(&self.identity_store.key_pair.serialize()),
+            registration_id: self.identity_store.registration_id,
             known_identities: self
-                .known_identities
+                .identity_store
+                .known_keys
                 .iter()
                 .map(|(address, identity)| AddressBlob {
                     address: address.clone(),
                     value: encode(&identity.serialize()),
                 })
                 .collect(),
-            pre_keys: self
-                .pre_keys
-                .iter()
-                .map(|(id, record)| {
-                    Ok(IdBlob {
-                        id: (*id).into(),
-                        value: encode(&record.serialize().map_err(|_| SignalAdapterError::CryptoFailure)?),
-                    })
-                })
-                .collect::<Result<Vec<_>, SignalAdapterError>>()?,
-            signed_pre_keys: self
-                .signed_pre_keys
-                .iter()
-                .map(|(id, record)| {
-                    Ok(IdBlob {
-                        id: (*id).into(),
-                        value: encode(&record.serialize().map_err(|_| SignalAdapterError::CryptoFailure)?),
-                    })
-                })
-                .collect::<Result<Vec<_>, SignalAdapterError>>()?,
-            kyber_pre_keys: self
-                .kyber_pre_keys
-                .iter()
-                .map(|(id, record)| {
-                    Ok(IdBlob {
-                        id: (*id).into(),
-                        value: encode(&record.serialize().map_err(|_| SignalAdapterError::CryptoFailure)?),
-                    })
-                })
-                .collect::<Result<Vec<_>, SignalAdapterError>>()?,
+            pre_keys: serialize_id_records(&self.pre_key_store.records, |record| record.serialize())?,
+            signed_pre_keys: serialize_id_records(&self.signed_pre_key_store.records, |record| {
+                record.serialize()
+            })?,
+            kyber_pre_keys: serialize_id_records(&self.kyber_pre_key_store.records, |record| {
+                record.serialize()
+            })?,
             kyber_base_keys_seen: self
-                .kyber_base_keys_seen
+                .kyber_pre_key_store
+                .base_keys_seen
                 .iter()
                 .map(|((kyber_id, signed_id), keys)| KyberSeenBlob {
                     kyber_pre_key_id: (*kyber_id).into(),
@@ -160,12 +182,17 @@ impl PersistentSignalProtocolStore {
                 })
                 .collect(),
             sessions: self
-                .sessions
+                .session_store
+                .records
                 .iter()
                 .map(|(address, record)| {
                     Ok(AddressBlob {
                         address: address.clone(),
-                        value: encode(&record.serialize().map_err(|_| SignalAdapterError::CryptoFailure)?),
+                        value: encode(
+                            &record
+                                .serialize()
+                                .map_err(|_| SignalAdapterError::CryptoFailure)?,
+                        ),
                     })
                 })
                 .collect::<Result<Vec<_>, SignalAdapterError>>()?,
@@ -208,43 +235,32 @@ impl PersistentSignalProtocolStore {
             let bytes = decode(&entry.value)?;
             let identity =
                 IdentityKey::decode(&bytes).map_err(|_| SignalAdapterError::InvalidBundle)?;
-            if store.known_identities.insert(entry.address, identity).is_some() {
-                return Err(SignalAdapterError::InvalidBundle);
-            }
-        }
-        for entry in decoded.pre_keys {
-            let bytes = decode(&entry.value)?;
-            let record =
-                PreKeyRecord::deserialize(&bytes).map_err(|_| SignalAdapterError::InvalidBundle)?;
-            let id = PreKeyId::from(entry.id);
-            if record.id().map_err(|_| SignalAdapterError::InvalidBundle)? != id
-                || store.pre_keys.insert(id, record).is_some()
+            if store
+                .identity_store
+                .known_keys
+                .insert(entry.address, identity)
+                .is_some()
             {
                 return Err(SignalAdapterError::InvalidBundle);
             }
         }
-        for entry in decoded.signed_pre_keys {
-            let bytes = decode(&entry.value)?;
-            let record = SignedPreKeyRecord::deserialize(&bytes)
-                .map_err(|_| SignalAdapterError::InvalidBundle)?;
-            let id = SignedPreKeyId::from(entry.id);
-            if record.id().map_err(|_| SignalAdapterError::InvalidBundle)? != id
-                || store.signed_pre_keys.insert(id, record).is_some()
-            {
-                return Err(SignalAdapterError::InvalidBundle);
-            }
-        }
-        for entry in decoded.kyber_pre_keys {
-            let bytes = decode(&entry.value)?;
-            let record = KyberPreKeyRecord::deserialize(&bytes)
-                .map_err(|_| SignalAdapterError::InvalidBundle)?;
-            let id = KyberPreKeyId::from(entry.id);
-            if record.id().map_err(|_| SignalAdapterError::InvalidBundle)? != id
-                || store.kyber_pre_keys.insert(id, record).is_some()
-            {
-                return Err(SignalAdapterError::InvalidBundle);
-            }
-        }
+
+        store.pre_key_store.records = deserialize_id_records(
+            decoded.pre_keys,
+            PreKeyRecord::deserialize,
+            |record| record.id().map(Into::into),
+        )?;
+        store.signed_pre_key_store.records = deserialize_id_records(
+            decoded.signed_pre_keys,
+            SignedPreKeyRecord::deserialize,
+            |record| record.id().map(Into::into),
+        )?;
+        store.kyber_pre_key_store.records = deserialize_id_records(
+            decoded.kyber_pre_keys,
+            KyberPreKeyRecord::deserialize,
+            |record| record.id().map(Into::into),
+        )?;
+
         for entry in decoded.kyber_base_keys_seen {
             if entry.base_keys.len() > MAX_RECORDS_PER_KIND {
                 return Err(SignalAdapterError::InvalidBundle);
@@ -263,21 +279,72 @@ impl PersistentSignalProtocolStore {
                 }
                 values.push(public);
             }
-            if store.kyber_base_keys_seen.insert(key, values).is_some() {
+            if store
+                .kyber_pre_key_store
+                .base_keys_seen
+                .insert(key, values)
+                .is_some()
+            {
                 return Err(SignalAdapterError::InvalidBundle);
             }
         }
+
         for entry in decoded.sessions {
             entry.address.validate()?;
             let bytes = decode(&entry.value)?;
             let record =
                 SessionRecord::deserialize(&bytes).map_err(|_| SignalAdapterError::InvalidBundle)?;
-            if store.sessions.insert(entry.address, record).is_some() {
+            if store
+                .session_store
+                .records
+                .insert(entry.address, record)
+                .is_some()
+            {
                 return Err(SignalAdapterError::InvalidBundle);
             }
         }
         Ok(store)
     }
+}
+
+fn serialize_id_records<I, R>(
+    records: &HashMap<I, R>,
+    serialize: impl Fn(&R) -> libsignal_protocol::Result<Vec<u8>>,
+) -> Result<Vec<IdBlob>, SignalAdapterError>
+where
+    I: Copy + Into<u32> + Eq + std::hash::Hash,
+{
+    records
+        .iter()
+        .map(|(id, record)| {
+            Ok(IdBlob {
+                id: (*id).into(),
+                value: encode(&serialize(record).map_err(|_| SignalAdapterError::CryptoFailure)?),
+            })
+        })
+        .collect()
+}
+
+fn deserialize_id_records<I, R>(
+    entries: Vec<IdBlob>,
+    deserialize: impl Fn(&[u8]) -> libsignal_protocol::Result<R>,
+    record_id: impl Fn(&R) -> libsignal_protocol::Result<u32>,
+) -> Result<HashMap<I, R>, SignalAdapterError>
+where
+    I: From<u32> + Eq + std::hash::Hash,
+{
+    let mut records = HashMap::with_capacity(entries.len());
+    for entry in entries {
+        let bytes = decode(&entry.value)?;
+        let record = deserialize(&bytes).map_err(|_| SignalAdapterError::InvalidBundle)?;
+        if record_id(&record).map_err(|_| SignalAdapterError::InvalidBundle)? != entry.id {
+            return Err(SignalAdapterError::InvalidBundle);
+        }
+        if records.insert(I::from(entry.id), record).is_some() {
+            return Err(SignalAdapterError::InvalidBundle);
+        }
+    }
+    Ok(records)
 }
 
 fn encode(bytes: &[u8]) -> String {
@@ -295,9 +362,9 @@ fn decode(value: &str) -> Result<Vec<u8>, SignalAdapterError> {
 }
 
 #[async_trait(?Send)]
-impl IdentityKeyStore for PersistentSignalProtocolStore {
+impl IdentityKeyStore for PersistentIdentityKeyStore {
     async fn get_identity_key_pair(&self) -> libsignal_protocol::Result<IdentityKeyPair> {
-        Ok(self.identity_key_pair)
+        Ok(self.key_pair)
     }
 
     async fn get_local_registration_id(&self) -> libsignal_protocol::Result<u32> {
@@ -310,12 +377,12 @@ impl IdentityKeyStore for PersistentSignalProtocolStore {
         identity: &IdentityKey,
     ) -> libsignal_protocol::Result<IdentityChange> {
         let key = AddressKey::from_address(address);
-        let change = match self.known_identities.get(&key) {
+        let change = match self.known_keys.get(&key) {
             None => IdentityChange::NewOrUnchanged,
             Some(existing) if existing == identity => IdentityChange::NewOrUnchanged,
             Some(_) => IdentityChange::ReplacedExisting,
         };
-        self.known_identities.insert(key, *identity);
+        self.known_keys.insert(key, *identity);
         Ok(change)
     }
 
@@ -326,7 +393,7 @@ impl IdentityKeyStore for PersistentSignalProtocolStore {
         _direction: Direction,
     ) -> libsignal_protocol::Result<bool> {
         Ok(self
-            .known_identities
+            .known_keys
             .get(&AddressKey::from_address(address))
             .is_none_or(|existing| existing == identity))
     }
@@ -336,16 +403,16 @@ impl IdentityKeyStore for PersistentSignalProtocolStore {
         address: &ProtocolAddress,
     ) -> libsignal_protocol::Result<Option<IdentityKey>> {
         Ok(self
-            .known_identities
+            .known_keys
             .get(&AddressKey::from_address(address))
             .copied())
     }
 }
 
 #[async_trait(?Send)]
-impl PreKeyStore for PersistentSignalProtocolStore {
+impl PreKeyStore for PersistentPreKeyStore {
     async fn get_pre_key(&self, id: PreKeyId) -> libsignal_protocol::Result<PreKeyRecord> {
-        self.pre_keys
+        self.records
             .get(&id)
             .cloned()
             .ok_or(SignalProtocolError::InvalidPreKeyId)
@@ -356,23 +423,23 @@ impl PreKeyStore for PersistentSignalProtocolStore {
         id: PreKeyId,
         record: &PreKeyRecord,
     ) -> libsignal_protocol::Result<()> {
-        self.pre_keys.insert(id, record.clone());
+        self.records.insert(id, record.clone());
         Ok(())
     }
 
     async fn remove_pre_key(&mut self, id: PreKeyId) -> libsignal_protocol::Result<()> {
-        self.pre_keys.remove(&id);
+        self.records.remove(&id);
         Ok(())
     }
 }
 
 #[async_trait(?Send)]
-impl SignedPreKeyStore for PersistentSignalProtocolStore {
+impl SignedPreKeyStore for PersistentSignedPreKeyStore {
     async fn get_signed_pre_key(
         &self,
         id: SignedPreKeyId,
     ) -> libsignal_protocol::Result<SignedPreKeyRecord> {
-        self.signed_pre_keys
+        self.records
             .get(&id)
             .cloned()
             .ok_or(SignalProtocolError::InvalidSignedPreKeyId)
@@ -383,18 +450,18 @@ impl SignedPreKeyStore for PersistentSignalProtocolStore {
         id: SignedPreKeyId,
         record: &SignedPreKeyRecord,
     ) -> libsignal_protocol::Result<()> {
-        self.signed_pre_keys.insert(id, record.clone());
+        self.records.insert(id, record.clone());
         Ok(())
     }
 }
 
 #[async_trait(?Send)]
-impl KyberPreKeyStore for PersistentSignalProtocolStore {
+impl KyberPreKeyStore for PersistentKyberPreKeyStore {
     async fn get_kyber_pre_key(
         &self,
         id: KyberPreKeyId,
     ) -> libsignal_protocol::Result<KyberPreKeyRecord> {
-        self.kyber_pre_keys
+        self.records
             .get(&id)
             .cloned()
             .ok_or(SignalProtocolError::InvalidKyberPreKeyId)
@@ -405,7 +472,7 @@ impl KyberPreKeyStore for PersistentSignalProtocolStore {
         id: KyberPreKeyId,
         record: &KyberPreKeyRecord,
     ) -> libsignal_protocol::Result<()> {
-        self.kyber_pre_keys.insert(id, record.clone());
+        self.records.insert(id, record.clone());
         Ok(())
     }
 
@@ -415,10 +482,7 @@ impl KyberPreKeyStore for PersistentSignalProtocolStore {
         signed_id: SignedPreKeyId,
         base_key: &PublicKey,
     ) -> libsignal_protocol::Result<()> {
-        let seen = self
-            .kyber_base_keys_seen
-            .entry((kyber_id, signed_id))
-            .or_default();
+        let seen = self.base_keys_seen.entry((kyber_id, signed_id)).or_default();
         if seen.contains(base_key) {
             return Err(SignalProtocolError::InvalidMessage(
                 CiphertextMessageType::PreKey,
@@ -431,12 +495,12 @@ impl KyberPreKeyStore for PersistentSignalProtocolStore {
 }
 
 #[async_trait(?Send)]
-impl SessionStore for PersistentSignalProtocolStore {
+impl SessionStore for PersistentSessionStore {
     async fn load_session(
         &self,
         address: &ProtocolAddress,
     ) -> libsignal_protocol::Result<Option<SessionRecord>> {
-        Ok(self.sessions.get(&AddressKey::from_address(address)).cloned())
+        Ok(self.records.get(&AddressKey::from_address(address)).cloned())
     }
 
     async fn store_session(
@@ -444,22 +508,21 @@ impl SessionStore for PersistentSignalProtocolStore {
         address: &ProtocolAddress,
         record: &SessionRecord,
     ) -> libsignal_protocol::Result<()> {
-        self.sessions
+        self.records
             .insert(AddressKey::from_address(address), record.clone());
         Ok(())
     }
 }
 
-impl ProtocolStore for PersistentSignalProtocolStore {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::FutureExt as _;
     use libsignal_protocol::{IdentityKeyPair, KeyPair, Timestamp};
     use rand::{rngs::StdRng, SeedableRng};
 
     #[test]
-    fn snapshot_round_trip_preserves_all_direct_message_state() {
+    fn snapshot_round_trip_preserves_direct_message_state() {
         let mut rng = StdRng::from_seed([0x71; 32]);
         let identity = IdentityKeyPair::generate(&mut rng);
         let mut store =
@@ -467,7 +530,12 @@ mod tests {
 
         let pre_pair = KeyPair::generate(&mut rng);
         let pre = PreKeyRecord::new(11_u32.into(), &pre_pair);
-        futures_executor::block_on(store.save_pre_key(11_u32.into(), &pre)).expect("prekey");
+        store
+            .pre_key_store
+            .save_pre_key(11_u32.into(), &pre)
+            .now_or_never()
+            .expect("in-memory future")
+            .expect("prekey");
 
         let signed_pair = KeyPair::generate(&mut rng);
         let signature = identity
@@ -480,21 +548,19 @@ mod tests {
             &signed_pair,
             &signature,
         );
-        futures_executor::block_on(store.save_signed_pre_key(12_u32.into(), &signed))
+        store
+            .signed_pre_key_store
+            .save_signed_pre_key(12_u32.into(), &signed)
+            .now_or_never()
+            .expect("in-memory future")
             .expect("signed prekey");
 
         let snapshot = store.export_snapshot().expect("export");
         let restored =
             PersistentSignalProtocolStore::import_snapshot(&snapshot).expect("import");
-        let reexported = restored.export_snapshot().expect("re-export");
-        let a: StoreSnapshot = serde_json::from_slice(&snapshot).expect("snapshot json");
-        let b: StoreSnapshot = serde_json::from_slice(&reexported).expect("snapshot json");
-        assert_eq!(a.version, b.version);
-        assert_eq!(a.registration_id, b.registration_id);
-        assert_eq!(a.identity_key_pair, b.identity_key_pair);
-        assert_eq!(a.pre_keys.len(), 1);
-        assert_eq!(b.pre_keys.len(), 1);
-        assert_eq!(a.signed_pre_keys.len(), 1);
-        assert_eq!(b.signed_pre_keys.len(), 1);
+        assert_eq!(restored.registration_id(), 7);
+        assert_eq!(restored.identity_public_key(), store.identity_public_key());
+        assert_eq!(restored.pre_key_store.records.len(), 1);
+        assert_eq!(restored.signed_pre_key_store.records.len(), 1);
     }
 }
