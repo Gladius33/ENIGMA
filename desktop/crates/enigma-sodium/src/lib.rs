@@ -189,7 +189,6 @@ impl Drop for SecureBytes {
     }
 }
 
-#[must_use]
 pub fn random_public_bytes<const N: usize>() -> Result<[u8; N], SodiumError> {
     ensure_sodium()?;
     let mut output = [0_u8; N];
