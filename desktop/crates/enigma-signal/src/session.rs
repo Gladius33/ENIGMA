@@ -16,6 +16,7 @@ use crate::{persistent_store::PersistentSignalProtocolStore, SignalAdapterError}
 /// ENIGMA deliberately does not reproduce Signal session, ratchet, pre-key or PQ cryptography
 /// here. This type owns libsignal's stores and delegates session establishment, encryption and
 /// decryption to libsignal-protocol.
+#[derive(Clone)]
 pub struct LibsignalSessionBackend {
     store: PersistentSignalProtocolStore,
     identity_public_key: Vec<u8>,
