@@ -685,6 +685,371 @@ pub unsafe extern "C" fn enigma_core_device_initialize(handle: *mut EnigmaCoreHa
         .is_ok_and(|result| result.is_ok())
 }
 
+fn flush_desktop_outbox(
+    core: &mut EnigmaCoreHandle,
+    client: &PairingRendezvousClient,
+) -> Result<bool, ()> {
+    if core.desktop_outbox.is_none() {
+        core.desktop_outbox = Some(load_or_create_desktop_outbox()?);
+    }
+    recover_outbox_journal(core)?;
+    let pending = core.desktop_outbox.as_ref().ok_or(())?.pending()?;
+    let mut all_sent = true;
+
+    for delivery in pending {
+        let request = RelayMessageSend {
+            bubble_id: &delivery.bubble_id,
+            sender_device_id: &delivery.sender_device_id,
+            recipient_device_id: &delivery.recipient_device_id,
+            client_message_id: &delivery.client_message_id,
+            message_type: &delivery.message_type,
+            ciphertext: &delivery.ciphertext,
+            attachment_blob_ids: Vec::new(),
+        };
+        let sent = {
+            let token = core.device_access_token.as_mut().ok_or(())?;
+            token
+                .with_read(|bytes| client.send_message(bytes, &request))
+                .map_err(|_| ())?
+                .is_ok()
+        };
+        if sent {
+            core.desktop_outbox.as_ref().ok_or(())?.remove(
+                &delivery.sender_device_id,
+                &delivery.recipient_device_id,
+                &delivery.client_message_id,
+            )?;
+        } else {
+            all_sent = false;
+        }
+    }
+
+    Ok(all_sent)
+}
+
+fn discover_devices_for(
+    core: &mut EnigmaCoreHandle,
+    client: &PairingRendezvousClient,
+    user_id: &str,
+) -> Result<Vec<RemoteDeviceKeyBundle>, ()> {
+    let token = core.device_access_token.as_mut().ok_or(())?;
+    token
+        .with_read(|bytes| client.discover_devices(bytes, user_id))
+        .map_err(|_| ())?
+        .map_err(|_| ())
+}
+
+fn prepare_outbound_delivery(
+    backend: &mut LibsignalSessionBackend,
+    client: &PairingRendezvousClient,
+    token: &mut SecureBytes,
+    sender_device_id: &str,
+    recipient_user_id: &str,
+    recipient: &RemoteDeviceKeyBundle,
+    bubble_id: &str,
+    client_message_id: &str,
+    message_type: &str,
+    plaintext: &str,
+    sender_sync: bool,
+    now: SystemTime,
+) -> Result<DurableOutboundDelivery, ()> {
+    if recipient.device_id == sender_device_id {
+        return Err(());
+    }
+    let protocol_device_id =
+        prepare_remote_session(backend, client, token, recipient_user_id, recipient, now)?;
+    let mut rng = rand::rng();
+    let ciphertext = block_on(backend.encrypt_wire_for_device(
+        sender_device_id,
+        V1_PROTOCOL_DEVICE_ID,
+        &recipient.device_id,
+        protocol_device_id,
+        plaintext.as_bytes(),
+        now,
+        &mut rng,
+    ))
+    .map_err(|_| ())?;
+
+    Ok(DurableOutboundDelivery {
+        bubble_id: bubble_id.to_owned(),
+        sender_device_id: sender_device_id.to_owned(),
+        recipient_device_id: recipient.device_id.clone(),
+        client_message_id: client_message_id.to_owned(),
+        message_type: message_type.to_owned(),
+        ciphertext,
+        sender_sync,
+    })
+}
+
+/// Encrypts and durably queues one text message for every active recipient device and every
+/// sibling device required for sender-sync. The function returns true once the exact ciphertext
+/// fanout and the advanced libsignal state are durably committed locally. Relay delivery is
+/// attempted immediately but may complete later through enigma_core_retry_outbox.
+///
+/// # Safety
+///
+/// handle and request must be live, non-null and exclusively accessed for this call. Every request
+/// pointer must reference the declared number of readable bytes and remain valid until return.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_send_text(
+    handle: *mut EnigmaCoreHandle,
+    request: *const EnigmaSendTextRequest,
+) -> bool {
+    if handle.is_null() || request.is_null() {
+        return false;
+    }
+
+    // SAFETY: the caller contract guarantees a live request structure for this call.
+    let request = unsafe { &*request };
+    // SAFETY: request fields are caller-owned readable buffers covered by the FFI contract.
+    let Some(recipient_user_id) = (unsafe {
+        read_utf8_input(request.recipient_user_id, request.recipient_user_id_len, 36)
+    }) else {
+        return false;
+    };
+    // SAFETY: request fields are caller-owned readable buffers covered by the FFI contract.
+    let Some(recipient_public_id) = (unsafe {
+        read_utf8_input(
+            request.recipient_public_id,
+            request.recipient_public_id_len,
+            MAX_CONTACT_PUBLIC_ID_BYTES,
+        )
+    }) else {
+        return false;
+    };
+    // SAFETY: request fields are caller-owned readable buffers covered by the FFI contract.
+    let Some(recipient_display_name) = (unsafe {
+        read_utf8_input(
+            request.recipient_display_name,
+            request.recipient_display_name_len,
+            MAX_CONTACT_DISPLAY_NAME_BYTES,
+        )
+    }) else {
+        return false;
+    };
+    // SAFETY: request fields are caller-owned readable buffers covered by the FFI contract.
+    let Some(bubble_id) =
+        (unsafe { read_utf8_input(request.bubble_id, request.bubble_id_len, 36) })
+    else {
+        return false;
+    };
+    // SAFETY: request fields are caller-owned readable buffers covered by the FFI contract.
+    let Some(plaintext) = (unsafe {
+        read_utf8_input(
+            request.plaintext,
+            request.plaintext_len,
+            MAX_OUTBOUND_TEXT_BYTES,
+        )
+    }) else {
+        return false;
+    };
+
+    if !is_canonical_device_uuid(&recipient_user_id)
+        || !is_canonical_device_uuid(&bubble_id)
+        || recipient_public_id.trim().is_empty()
+        || recipient_display_name.trim().is_empty()
+    {
+        return false;
+    }
+
+    let Some(client) = pairing_client() else {
+        return false;
+    };
+    // SAFETY: caller guarantees exclusive live access to the core handle.
+    let core = unsafe { &mut *handle };
+    let Some(sender_device_id) = core.device_id.clone() else {
+        return false;
+    };
+    if core.device_access_token.is_none() || core.signal_backend.is_none() {
+        return false;
+    }
+    if core.desktop_outbox.is_none() {
+        core.desktop_outbox = load_or_create_desktop_outbox().ok();
+    }
+    if core.desktop_outbox.is_none() || recover_outbox_journal(core).is_err() {
+        return false;
+    }
+
+    let own_user_id = {
+        let Some(token) = core.device_access_token.as_mut() else {
+            return false;
+        };
+        match token.with_read(|bytes| client.account_user_id(bytes)) {
+            Ok(Ok(user_id)) => user_id,
+            Ok(Err(_)) | Err(_) => return false,
+        }
+    };
+    if recipient_user_id == own_user_id {
+        return false;
+    }
+
+    let recipient_devices = match discover_devices_for(core, &client, &recipient_user_id) {
+        Ok(devices) if !devices.is_empty() => devices,
+        Ok(_) | Err(_) => return false,
+    };
+    let sibling_devices = match discover_devices_for(core, &client, &own_user_id) {
+        Ok(devices) => devices,
+        Err(()) => return false,
+    };
+    let encoded_payload = match encode_text_payload(&plaintext) {
+        Ok(payload) => payload,
+        Err(()) => return false,
+    };
+    let client_message_id = match random_uuid_v4() {
+        Ok(value) => value,
+        Err(()) => return false,
+    };
+    let created_at = match current_unix_ms().and_then(|value| i64::try_from(value).ok()) {
+        Some(value) => value,
+        None => return false,
+    };
+    let sender_sync_payload = match encode_sender_sync_payload(
+        &recipient_user_id,
+        &recipient_public_id,
+        &recipient_display_name,
+        &bubble_id,
+        &client_message_id,
+        created_at,
+        &encoded_payload,
+    ) {
+        Ok(payload) => payload,
+        Err(()) => return false,
+    };
+
+    let Some(mut working_backend) = core.signal_backend.clone() else {
+        return false;
+    };
+    let now = SystemTime::now();
+    let mut deliveries = Vec::with_capacity(recipient_devices.len() + sibling_devices.len());
+
+    for recipient in &recipient_devices {
+        let delivery = {
+            let Some(token) = core.device_access_token.as_mut() else {
+                return false;
+            };
+            prepare_outbound_delivery(
+                &mut working_backend,
+                &client,
+                token,
+                &sender_device_id,
+                &recipient_user_id,
+                recipient,
+                &bubble_id,
+                &client_message_id,
+                "text",
+                &encoded_payload,
+                false,
+                now,
+            )
+        };
+        match delivery {
+            Ok(delivery) => deliveries.push(delivery),
+            Err(()) => return false,
+        }
+    }
+
+    for sibling in sibling_devices
+        .iter()
+        .filter(|device| device.device_id != sender_device_id)
+    {
+        let delivery = {
+            let Some(token) = core.device_access_token.as_mut() else {
+                return false;
+            };
+            prepare_outbound_delivery(
+                &mut working_backend,
+                &client,
+                token,
+                &sender_device_id,
+                &own_user_id,
+                sibling,
+                &bubble_id,
+                &client_message_id,
+                "opaque",
+                &sender_sync_payload,
+                true,
+                now,
+            )
+        };
+        match delivery {
+            Ok(delivery) => deliveries.push(delivery),
+            Err(()) => return false,
+        }
+    }
+    if deliveries.is_empty() {
+        return false;
+    }
+
+    let mut snapshot = match working_backend.export_serialized_store() {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let journal_written = core
+        .desktop_outbox
+        .as_ref()
+        .is_some_and(|outbox| outbox.write_journal(&deliveries, &snapshot).is_ok());
+    snapshot.fill(0);
+    if !journal_written {
+        return false;
+    }
+    if persist_default_signal_store(&working_backend).is_err() {
+        return false;
+    }
+    if core
+        .desktop_outbox
+        .as_ref()
+        .is_none_or(|outbox| outbox.enqueue_batch(&deliveries).is_err())
+    {
+        return false;
+    }
+
+    core.signal_backend = Some(working_backend);
+    if let Some(outbox) = core.desktop_outbox.as_ref() {
+        let _ = outbox.clear_journal();
+    }
+    let _ = flush_desktop_outbox(core, &client);
+    true
+}
+
+/// Retries all durably encrypted outbound deliveries without re-encrypting or advancing ratchets.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create and exclusively accessed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_retry_outbox(handle: *mut EnigmaCoreHandle) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let Some(client) = pairing_client() else {
+        return false;
+    };
+    // SAFETY: caller guarantees exclusive live access for this call.
+    let core = unsafe { &mut *handle };
+    if core.device_access_token.is_none() || core.signal_backend.is_none() {
+        return false;
+    }
+    flush_desktop_outbox(core, &client).unwrap_or(false)
+}
+
+/// Returns the number of durably queued outbound device deliveries.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create and immutably accessed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_outbox_count(handle: *const EnigmaCoreHandle) -> usize {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: caller guarantees immutable live access for this read.
+    let core = unsafe { &*handle };
+    core.desktop_outbox
+        .as_ref()
+        .and_then(|outbox| outbox.pending().ok())
+        .map_or(0, |pending| pending.len())
+}
+
 /// Pulls encrypted pending messages, decrypts them entirely inside Rust, persists the
 /// updated libsignal ratchet and encrypted local inbox durably, then acknowledges the relay.
 ///
