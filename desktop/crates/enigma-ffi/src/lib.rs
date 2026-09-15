@@ -4,10 +4,11 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use enigma_platform::{PlatformKeyError, PlatformKeyProtector};
-use enigma_runtime_core::CoreRuntime;
+use enigma_runtime_core::{CoreRuntime, PairingBootstrap, DEFAULT_PAIRING_TTL_MS};
 use enigma_signal::session::LibsignalSessionBackend;
 
 pub const ENIGMA_CORE_ABI_VERSION: u32 = 1;
@@ -20,6 +21,7 @@ const LINUX_SIGNAL_IDENTITY_SLOT: &str = "signal-identity-primary";
 pub struct EnigmaCoreHandle {
     _runtime: CoreRuntime,
     signal_backend: Option<LibsignalSessionBackend>,
+    pairing_bootstrap: Option<PairingBootstrap>,
 }
 
 #[no_mangle]
@@ -32,6 +34,7 @@ pub extern "C" fn enigma_core_create() -> *mut EnigmaCoreHandle {
     Box::into_raw(Box::new(EnigmaCoreHandle {
         _runtime: CoreRuntime::new(DEFAULT_DEDUP_CAPACITY),
         signal_backend: None,
+        pairing_bootstrap: None,
     }))
 }
 
@@ -109,6 +112,179 @@ pub unsafe extern "C" fn enigma_core_signal_is_ready(handle: *const EnigmaCoreHa
     // SAFETY: caller contract requires a live handle for the duration of this
     // immutable read and forbids concurrent destruction/mutation.
     unsafe { (*handle).signal_backend.is_some() }
+}
+
+fn current_unix_ms() -> Option<u64> {
+    let millis = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_millis();
+    u64::try_from(millis).ok()
+}
+
+/// Starts a fresh short-lived desktop pairing bootstrap.
+///
+/// The ephemeral pairing secret remains inside Rust/libsodium. Only the public QR payload can be
+/// retrieved through the read-only copy functions below.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create. The same handle must not
+/// be destroyed or accessed concurrently for mutation during this call.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_pairing_start(handle: *mut EnigmaCoreHandle) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    // SAFETY: caller guarantees a live, exclusively accessed handle for this call.
+    if unsafe { (*handle).signal_backend.is_none() } {
+        return false;
+    }
+    let Some(now_unix_ms) = current_unix_ms() else {
+        return false;
+    };
+    let pairing = match PairingBootstrap::generate(now_unix_ms, DEFAULT_PAIRING_TTL_MS) {
+        Ok(pairing) => pairing,
+        Err(_) => return false,
+    };
+    // SAFETY: caller guarantees exclusive live access to handle for this call.
+    unsafe {
+        (*handle).pairing_bootstrap = Some(pairing);
+    }
+    true
+}
+
+/// Cancels and destroys the current ephemeral pairing bootstrap.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create and exclusively accessed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_pairing_cancel(handle: *mut EnigmaCoreHandle) {
+    if handle.is_null() {
+        return;
+    }
+    // SAFETY: caller guarantees exclusive live access; dropping the bootstrap wipes its guarded
+    // libsodium secret-key allocation through SecureBytes.
+    unsafe {
+        (*handle).pairing_bootstrap = None;
+    }
+}
+
+/// Returns the UTF-8 byte length of the current pairing URI.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create and not concurrently
+/// mutated or destroyed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_pairing_uri_len(handle: *const EnigmaCoreHandle) -> usize {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: caller guarantees immutable live access for this read.
+    unsafe {
+        (*handle)
+            .pairing_bootstrap
+            .as_ref()
+            .map_or(0, |pairing| pairing.uri().len())
+    }
+}
+
+/// Copies the exact UTF-8 pairing URI bytes to a caller-owned buffer.
+///
+/// # Safety
+///
+/// handle must be live or null. output must reference at least output_len writable bytes and must
+/// not overlap Rust-owned storage. The same handle must not be concurrently mutated or destroyed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_pairing_uri_copy(
+    handle: *const EnigmaCoreHandle,
+    output: *mut u8,
+    output_len: usize,
+) -> bool {
+    if handle.is_null() || output.is_null() {
+        return false;
+    }
+    // SAFETY: caller guarantees immutable live handle access.
+    let Some(pairing) = (unsafe { (*handle).pairing_bootstrap.as_ref() }) else {
+        return false;
+    };
+    copy_pairing_bytes(pairing.uri().as_bytes(), output, output_len)
+}
+
+/// Returns the UTF-8 byte length of the current SVG QR image.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create and not concurrently
+/// mutated or destroyed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_pairing_svg_len(handle: *const EnigmaCoreHandle) -> usize {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: caller guarantees immutable live access for this read.
+    unsafe {
+        (*handle)
+            .pairing_bootstrap
+            .as_ref()
+            .map_or(0, |pairing| pairing.svg().len())
+    }
+}
+
+/// Copies the exact UTF-8 SVG QR image to a caller-owned buffer.
+///
+/// # Safety
+///
+/// handle must be live or null. output must reference at least output_len writable bytes and must
+/// not overlap Rust-owned storage. The same handle must not be concurrently mutated or destroyed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_pairing_svg_copy(
+    handle: *const EnigmaCoreHandle,
+    output: *mut u8,
+    output_len: usize,
+) -> bool {
+    if handle.is_null() || output.is_null() {
+        return false;
+    }
+    // SAFETY: caller guarantees immutable live handle access.
+    let Some(pairing) = (unsafe { (*handle).pairing_bootstrap.as_ref() }) else {
+        return false;
+    };
+    copy_pairing_bytes(pairing.svg().as_bytes(), output, output_len)
+}
+
+/// Returns the current pairing expiration timestamp in Unix milliseconds, or zero when absent.
+///
+/// # Safety
+///
+/// handle must be null or a live pointer returned by enigma_core_create and not concurrently
+/// mutated or destroyed.
+#[no_mangle]
+pub unsafe extern "C" fn enigma_core_pairing_expires_at_unix_ms(
+    handle: *const EnigmaCoreHandle,
+) -> u64 {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: caller guarantees immutable live access for this read.
+    unsafe {
+        (*handle)
+            .pairing_bootstrap
+            .as_ref()
+            .map_or(0, |pairing| pairing.payload().expires_at_unix_ms)
+    }
+}
+
+fn copy_pairing_bytes(source: &[u8], output: *mut u8, output_len: usize) -> bool {
+    if source.is_empty() || output.is_null() || output_len < source.len() {
+        return false;
+    }
+    // SAFETY: callers of the exported copy functions guarantee output references a writable,
+    // non-overlapping region of at least output_len bytes. The bound above proves source.len()
+    // bytes fit in that region.
+    unsafe {
+        std::ptr::copy_nonoverlapping(source.as_ptr(), output, source.len());
+    }
+    true
 }
 
 /// Restores a canonical serialized libsignal identity from platform-protected storage.
@@ -315,6 +491,49 @@ fn unprotect_signal_identity(_protected: &[u8]) -> Result<Vec<u8>, PlatformKeyEr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pairing_exports_only_public_uri_and_svg_bytes() {
+        let handle = enigma_core_create();
+        assert!(!handle.is_null());
+
+        let pairing = PairingBootstrap::generate(1_700_000_000_000, DEFAULT_PAIRING_TTL_MS)
+            .expect("pairing bootstrap");
+        // SAFETY: handle is live and exclusively owned by this test.
+        unsafe {
+            (*handle).pairing_bootstrap = Some(pairing);
+        }
+
+        // SAFETY: handle remains live and exclusively owned.
+        let uri_len = unsafe { enigma_core_pairing_uri_len(handle) };
+        assert!(uri_len > 0);
+        let mut uri = vec![0_u8; uri_len];
+        // SAFETY: uri owns uri_len writable bytes and handle is live.
+        assert!(unsafe { enigma_core_pairing_uri_copy(handle, uri.as_mut_ptr(), uri.len()) });
+        let uri = String::from_utf8(uri).expect("UTF-8 URI");
+        assert!(uri.starts_with("enigma://pair-device?payload="));
+
+        // SAFETY: handle remains live and exclusively owned.
+        let svg_len = unsafe { enigma_core_pairing_svg_len(handle) };
+        assert!(svg_len > 0);
+        let mut svg = vec![0_u8; svg_len];
+        // SAFETY: svg owns svg_len writable bytes and handle is live.
+        assert!(unsafe { enigma_core_pairing_svg_copy(handle, svg.as_mut_ptr(), svg.len()) });
+        let svg = String::from_utf8(svg).expect("UTF-8 SVG");
+        assert!(svg.contains("<svg"));
+
+        // SAFETY: handle is live and destroyed exactly once here.
+        unsafe { enigma_core_destroy(handle) };
+    }
+
+    #[test]
+    fn pairing_start_requires_initialized_signal_identity() {
+        let handle = enigma_core_create();
+        // SAFETY: handle is live and exclusively owned.
+        assert!(!unsafe { enigma_core_pairing_start(handle) });
+        // SAFETY: handle is live and destroyed exactly once here.
+        unsafe { enigma_core_destroy(handle) };
+    }
 
     #[test]
     fn protected_identity_record_round_trips_and_rejects_corruption() {
