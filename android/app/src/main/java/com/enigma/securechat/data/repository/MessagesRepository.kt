@@ -21,6 +21,7 @@ import com.enigma.securechat.domain.model.MessageDirection
 import com.enigma.securechat.domain.model.MessagePeerIdentityState
 import com.enigma.securechat.domain.model.MessageStatus
 import com.enigma.securechat.domain.model.MessageTransport
+import com.enigma.securechat.multidevice.DeviceLinkAuthorization
 import com.enigma.securechat.network.RelayScopedApiProvider
 import com.enigma.securechat.network.dto.DeviceKeyBundleDto
 import com.enigma.securechat.network.dto.P2pAttachmentCommitRequestDto
@@ -48,6 +49,7 @@ import com.enigma.securechat.storage.LocalCipher
 import com.enigma.securechat.storage.RelaySettingsStore
 import com.enigma.securechat.storage.SecureSessionStore
 import java.time.Instant
+import java.util.Base64
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -145,6 +147,54 @@ class MessagesRepository(
             if (primaryDevice == null) {
                 primaryDevice = prepared
                 primaryCiphertext = ciphertext
+            }
+        }
+
+        val ownSession = sessionStore?.session?.firstOrNull()
+        if (ownSession != null) {
+            val authorizerIdentityKey = cryptoEngine.ensureIdentity().identityPublicKey
+            val senderSyncPayload = SenderSyncPayloadCodec.encode(
+                SenderSyncPayload(
+                    contactUserId = contact.userId,
+                    contactPublicId = contact.publicId,
+                    contactDisplayName = contact.displayName,
+                    bubbleId = conversation.bubbleId,
+                    clientMessageId = localId,
+                    originalCreatedAt = createdAt.toEpochMilli(),
+                    encodedMessagePayload = encodedPayload,
+                ),
+            )
+            val siblings = apiProvider.withActiveApi { it.discoverKeys(ownSession.userId) }
+                .devices
+                .distinctBy { it.deviceId }
+                .filter { it.deviceId != senderDeviceId }
+            for (sibling in siblings) {
+                val proof = sibling.authorization ?: continue
+                require(
+                    verifySiblingAuthorization(
+                        accountId = ownSession.userId,
+                        currentDeviceId = senderDeviceId,
+                        authorizerIdentityKey = authorizerIdentityKey,
+                        sibling = sibling,
+                    ),
+                ) {
+                    "Linked sibling authorization proof is invalid"
+                }
+                val preparedSibling = prepareSiblingDevice(ownSession.userId, sibling)
+                val siblingRef = requireNotNull(preparedSibling.toRemoteRef()) {
+                    "Sibling device is missing libsignal protocol metadata"
+                }
+                val syncCiphertext = cryptoEngine.encryptText(senderSyncPayload, siblingRef)
+                messageDeliveryOutboxStore.enqueue(
+                    bubbleId = conversation.bubbleId,
+                    senderDeviceId = senderDeviceId,
+                    recipientUserId = ownSession.userId,
+                    recipientDeviceId = preparedSibling.deviceId,
+                    clientMessageId = localId,
+                    messageType = "opaque",
+                    ciphertext = syncCiphertext,
+                    senderSync = true,
+                )
             }
         }
 
@@ -564,6 +614,63 @@ class MessagesRepository(
         }
         return device
     }
+
+    private suspend fun prepareSiblingDevice(
+        accountId: String,
+        bundle: DeviceKeyBundleDto,
+    ): ContactDeviceEntity {
+        storeRemoteBundle(accountId, bundle)
+        var device = requireNotNull(contactDeviceDao.findByDevice(bundle.deviceId)) {
+            "Sibling device was not stored"
+        }
+        var remoteRef = device.toRemoteRef()
+        if (remoteRef == null || !cryptoEngine.hasSession(remoteRef)) {
+            val claimed = apiProvider.withActiveApi {
+                it.claimPreKey(accountId, bundle.deviceId)
+            }.device
+            require(claimed.identityKey == bundle.identityKey) {
+                "Sibling identity changed during prekey claim"
+            }
+            storeRemoteBundle(accountId, claimed)
+            device = requireNotNull(contactDeviceDao.findByDevice(claimed.deviceId)) {
+                "Claimed sibling device was not stored"
+            }
+            cryptoEngine.ensureSession(claimed.toRemoteBundle())
+            remoteRef = requireNotNull(device.toRemoteRef()) {
+                "Sibling device is missing libsignal protocol metadata"
+            }
+        }
+        require(cryptoEngine.hasSession(requireNotNull(remoteRef))) {
+            "Sibling libsignal session was not established"
+        }
+        return device
+    }
+
+    private fun verifySiblingAuthorization(
+        accountId: String,
+        currentDeviceId: String,
+        authorizerIdentityKey: String,
+        sibling: DeviceKeyBundleDto,
+    ): Boolean = runCatching {
+        val proof = requireNotNull(sibling.authorization)
+        require(proof.authorizingDeviceId == currentDeviceId)
+        val parsed = DeviceLinkAuthorization.parseCanonicalPayload(proof.canonicalPayload)
+        require(parsed.accountId == accountId)
+        require(parsed.newDeviceId == sibling.deviceId)
+        require(parsed.authorizingDeviceId == currentDeviceId)
+        require(parsed.targetIdentityKey == sibling.identityKey)
+        require(parsed.authorizerIdentityKey == authorizerIdentityKey)
+        val signature = Base64.getDecoder().decode(proof.authorizerSignature)
+        try {
+            cryptoEngine.verifyIdentityProof(
+                identityPublicKey = authorizerIdentityKey,
+                transcript = proof.canonicalPayload.toByteArray(Charsets.UTF_8),
+                signature = signature,
+            )
+        } finally {
+            signature.fill(0)
+        }
+    }.getOrDefault(false)
 
     private suspend fun flushMessageDeliveries(
         clientMessageId: String,
