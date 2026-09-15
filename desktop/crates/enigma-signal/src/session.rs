@@ -377,7 +377,7 @@ impl LibsignalSessionBackend {
             .get_identity(&remote)
             .await
             .map_err(|_| SignalAdapterError::CryptoFailure)?
-            .is_none_or(|known| known == expected))
+            .is_some_and(|known| known == expected))
     }
 
     pub async fn has_session_for(
