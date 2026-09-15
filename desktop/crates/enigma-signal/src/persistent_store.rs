@@ -310,7 +310,7 @@ impl PersistentSignalProtocolStore {
 
 fn serialize_id_records<I, R>(
     records: &HashMap<I, R>,
-    serialize: impl Fn(&R) -> libsignal_protocol::Result<Vec<u8>>,
+    serialize: impl Fn(&R) -> libsignal_protocol::error::Result<Vec<u8>>,
 ) -> Result<Vec<IdBlob>, SignalAdapterError>
 where
     I: Copy + Into<u32> + Eq + std::hash::Hash,
@@ -328,8 +328,8 @@ where
 
 fn deserialize_id_records<I, R>(
     entries: Vec<IdBlob>,
-    deserialize: impl Fn(&[u8]) -> libsignal_protocol::Result<R>,
-    record_id: impl Fn(&R) -> libsignal_protocol::Result<u32>,
+    deserialize: impl Fn(&[u8]) -> libsignal_protocol::error::Result<R>,
+    record_id: impl Fn(&R) -> libsignal_protocol::error::Result<u32>,
 ) -> Result<HashMap<I, R>, SignalAdapterError>
 where
     I: From<u32> + Eq + std::hash::Hash,
@@ -364,11 +364,11 @@ fn decode(value: &str) -> Result<Vec<u8>, SignalAdapterError> {
 
 #[async_trait(?Send)]
 impl IdentityKeyStore for PersistentIdentityKeyStore {
-    async fn get_identity_key_pair(&self) -> libsignal_protocol::Result<IdentityKeyPair> {
+    async fn get_identity_key_pair(&self) -> libsignal_protocol::error::Result<IdentityKeyPair> {
         Ok(self.key_pair)
     }
 
-    async fn get_local_registration_id(&self) -> libsignal_protocol::Result<u32> {
+    async fn get_local_registration_id(&self) -> libsignal_protocol::error::Result<u32> {
         Ok(self.registration_id)
     }
 
@@ -376,7 +376,7 @@ impl IdentityKeyStore for PersistentIdentityKeyStore {
         &mut self,
         address: &ProtocolAddress,
         identity: &IdentityKey,
-    ) -> libsignal_protocol::Result<IdentityChange> {
+    ) -> libsignal_protocol::error::Result<IdentityChange> {
         let key = AddressKey::from_address(address);
         let change = match self.known_keys.get(&key) {
             None => IdentityChange::NewOrUnchanged,
@@ -392,7 +392,7 @@ impl IdentityKeyStore for PersistentIdentityKeyStore {
         address: &ProtocolAddress,
         identity: &IdentityKey,
         _direction: Direction,
-    ) -> libsignal_protocol::Result<bool> {
+    ) -> libsignal_protocol::error::Result<bool> {
         Ok(self
             .known_keys
             .get(&AddressKey::from_address(address))
@@ -402,7 +402,7 @@ impl IdentityKeyStore for PersistentIdentityKeyStore {
     async fn get_identity(
         &self,
         address: &ProtocolAddress,
-    ) -> libsignal_protocol::Result<Option<IdentityKey>> {
+    ) -> libsignal_protocol::error::Result<Option<IdentityKey>> {
         Ok(self
             .known_keys
             .get(&AddressKey::from_address(address))
@@ -412,7 +412,7 @@ impl IdentityKeyStore for PersistentIdentityKeyStore {
 
 #[async_trait(?Send)]
 impl PreKeyStore for PersistentPreKeyStore {
-    async fn get_pre_key(&self, id: PreKeyId) -> libsignal_protocol::Result<PreKeyRecord> {
+    async fn get_pre_key(&self, id: PreKeyId) -> libsignal_protocol::error::Result<PreKeyRecord> {
         self.records
             .get(&id)
             .cloned()
@@ -423,12 +423,12 @@ impl PreKeyStore for PersistentPreKeyStore {
         &mut self,
         id: PreKeyId,
         record: &PreKeyRecord,
-    ) -> libsignal_protocol::Result<()> {
+    ) -> libsignal_protocol::error::Result<()> {
         self.records.insert(id, record.clone());
         Ok(())
     }
 
-    async fn remove_pre_key(&mut self, id: PreKeyId) -> libsignal_protocol::Result<()> {
+    async fn remove_pre_key(&mut self, id: PreKeyId) -> libsignal_protocol::error::Result<()> {
         self.records.remove(&id);
         Ok(())
     }
@@ -439,7 +439,7 @@ impl SignedPreKeyStore for PersistentSignedPreKeyStore {
     async fn get_signed_pre_key(
         &self,
         id: SignedPreKeyId,
-    ) -> libsignal_protocol::Result<SignedPreKeyRecord> {
+    ) -> libsignal_protocol::error::Result<SignedPreKeyRecord> {
         self.records
             .get(&id)
             .cloned()
@@ -450,7 +450,7 @@ impl SignedPreKeyStore for PersistentSignedPreKeyStore {
         &mut self,
         id: SignedPreKeyId,
         record: &SignedPreKeyRecord,
-    ) -> libsignal_protocol::Result<()> {
+    ) -> libsignal_protocol::error::Result<()> {
         self.records.insert(id, record.clone());
         Ok(())
     }
@@ -461,7 +461,7 @@ impl KyberPreKeyStore for PersistentKyberPreKeyStore {
     async fn get_kyber_pre_key(
         &self,
         id: KyberPreKeyId,
-    ) -> libsignal_protocol::Result<KyberPreKeyRecord> {
+    ) -> libsignal_protocol::error::Result<KyberPreKeyRecord> {
         self.records
             .get(&id)
             .cloned()
@@ -472,7 +472,7 @@ impl KyberPreKeyStore for PersistentKyberPreKeyStore {
         &mut self,
         id: KyberPreKeyId,
         record: &KyberPreKeyRecord,
-    ) -> libsignal_protocol::Result<()> {
+    ) -> libsignal_protocol::error::Result<()> {
         self.records.insert(id, record.clone());
         Ok(())
     }
@@ -482,7 +482,7 @@ impl KyberPreKeyStore for PersistentKyberPreKeyStore {
         kyber_id: KyberPreKeyId,
         signed_id: SignedPreKeyId,
         base_key: &PublicKey,
-    ) -> libsignal_protocol::Result<()> {
+    ) -> libsignal_protocol::error::Result<()> {
         let seen = self
             .base_keys_seen
             .entry((kyber_id, signed_id))
@@ -503,7 +503,7 @@ impl SessionStore for PersistentSessionStore {
     async fn load_session(
         &self,
         address: &ProtocolAddress,
-    ) -> libsignal_protocol::Result<Option<SessionRecord>> {
+    ) -> libsignal_protocol::error::Result<Option<SessionRecord>> {
         Ok(self
             .records
             .get(&AddressKey::from_address(address))
@@ -514,7 +514,7 @@ impl SessionStore for PersistentSessionStore {
         &mut self,
         address: &ProtocolAddress,
         record: &SessionRecord,
-    ) -> libsignal_protocol::Result<()> {
+    ) -> libsignal_protocol::error::Result<()> {
         self.records
             .insert(AddressKey::from_address(address), record.clone());
         Ok(())
