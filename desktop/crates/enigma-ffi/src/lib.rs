@@ -137,13 +137,17 @@ pub unsafe extern "C" fn enigma_core_pairing_start(handle: *mut EnigmaCoreHandle
         return false;
     }
     // SAFETY: caller guarantees a live, exclusively accessed handle for this call.
-    if unsafe { (*handle).signal_backend.is_none() } {
+    let Some(signal_backend) = (unsafe { (*handle).signal_backend.as_ref() }) else {
         return false;
-    }
+    };
     let Some(now_unix_ms) = current_unix_ms() else {
         return false;
     };
-    let pairing = match PairingBootstrap::generate(now_unix_ms, DEFAULT_PAIRING_TTL_MS) {
+    let pairing = match PairingBootstrap::generate(
+        now_unix_ms,
+        DEFAULT_PAIRING_TTL_MS,
+        signal_backend.identity_public_key(),
+    ) {
         Ok(pairing) => pairing,
         Err(_) => return false,
     };
@@ -500,7 +504,11 @@ mod tests {
         let handle = enigma_core_create();
         assert!(!handle.is_null());
 
-        let pairing = PairingBootstrap::generate(1_700_000_000_000, DEFAULT_PAIRING_TTL_MS)
+        let pairing = PairingBootstrap::generate(
+                1_700_000_000_000,
+                DEFAULT_PAIRING_TTL_MS,
+                &[0x51; 33],
+            )
             .expect("pairing bootstrap");
         // SAFETY: handle is live and exclusively owned by this test.
         unsafe {
