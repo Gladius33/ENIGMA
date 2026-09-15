@@ -181,6 +181,7 @@ jobs:
         run: |
           echo "ENIGMA_ANDROID_INTEROP_FIXTURE=${RUNNER_TEMP}/enigma-android-rust-libsignal.properties" >> "${GITHUB_ENV}"
           echo "ENIGMA_ANDROID_INTEROP_REPLY=${RUNNER_TEMP}/enigma-android-rust-libsignal-reply.properties" >> "${GITHUB_ENV}"
+          echo "ENIGMA_ANDROID_PAIRING_URI=${RUNNER_TEMP}/enigma-android-rust-pairing-uri.txt" >> "${GITHUB_ENV}"
       - name: Install pinned protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
@@ -202,6 +203,14 @@ jobs:
           cache-cleanup: on-success
       - name: Make Gradle wrapper executable
         run: chmod +x android/gradlew
+      - name: Rust emits Android pairing bootstrap
+        working-directory: desktop
+        run: cargo +1.94.1 test -p enigma-core --test pairing_android_interop rust_emits_android_pairing_uri -- --ignored --exact
+      - name: Require desktop pairing fixture
+        run: test -s "${ENIGMA_ANDROID_PAIRING_URI}"
+      - name: Android parses desktop pairing bootstrap
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest --tests 'com.enigma.securechat.qr.EnigmaQrPayloadsTest.parsesDesktopRustPairingBootstrapFromInteropFixture'
       - name: Rust emits canonical libsignal pre-key transcript
         working-directory: desktop
         run: cargo +1.94.1 test -p enigma-signal --test cross_runtime_interop rust_emits_android_prekey_fixture -- --ignored --exact
