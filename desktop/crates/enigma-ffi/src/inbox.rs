@@ -225,9 +225,9 @@ fn validate_uuid(value: &str) -> Result<(), ()> {
 }
 
 fn persist_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "inbox path has no parent")
-    })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "inbox path has no parent"))?;
     fs::create_dir_all(parent)?;
     let temporary = path.with_extension("tmp");
     let mut file = fs::OpenOptions::new()
