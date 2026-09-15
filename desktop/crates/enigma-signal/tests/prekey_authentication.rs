@@ -38,7 +38,7 @@ fn public_backend_rejects_identity_substitution_without_creating_session() {
     // pre-keys and signatures. Session establishment must authenticate the bundle as one
     // transcript and reject this identity/pre-key mismatch.
     let substituted_bundle = PreKeyBundle::new(
-        0x9202,
+        0x3202,
         DeviceId::new(1).expect("valid device id"),
         Some((41u32.into(), pre_key_pair.public_key)),
         42u32.into(),
@@ -52,7 +52,7 @@ fn public_backend_rejects_identity_substitution_without_creating_session() {
     .expect("construct syntactically valid identity-substituted bundle");
 
     let mut alice =
-        LibsignalSessionBackend::new(alice_identity, 0x9101).expect("initialize alice backend");
+        LibsignalSessionBackend::new(alice_identity, 0x3101).expect("initialize alice backend");
 
     let rejected = alice
         .process_remote_prekey_bundle(&address("bob"), &substituted_bundle, now, &mut alice_rng)
