@@ -16,6 +16,7 @@ const OUTBOX_AAD: &[u8] = b"ENIGMA_DESKTOP_OUTBOX_V1";
 const OUTBOX_JOURNAL_AAD: &[u8] = b"ENIGMA_DESKTOP_OUTBOX_JOURNAL_V1";
 const MAX_OUTBOX_ENTRIES: usize = 16_384;
 const MAX_OUTBOX_FILE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_RELAY_CIPHERTEXT_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub(crate) struct DurableOutboundDelivery {
@@ -250,7 +251,7 @@ fn validate_delivery(delivery: &DurableOutboundDelivery) -> Result<(), ()> {
         || delivery.message_type.is_empty()
         || delivery.message_type.len() > 64
         || delivery.ciphertext.is_empty()
-        || delivery.ciphertext.len() > 4 * 1024 * 1024
+        || delivery.ciphertext.len() > MAX_RELAY_CIPHERTEXT_BYTES
         || delivery
             .recipient_identity_key
             .as_ref()
@@ -319,6 +320,15 @@ mod tests {
         assert_eq!(validate_delivery(&sample()), Ok(()));
         assert!(validate_delivery(&DurableOutboundDelivery {
             recipient_device_id: "bad".into(),
+            ..sample()
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_ciphertext_that_cannot_use_default_relay_fallback() {
+        assert!(validate_delivery(&DurableOutboundDelivery {
+            ciphertext: "x".repeat(MAX_RELAY_CIPHERTEXT_BYTES + 1),
             ..sample()
         })
         .is_err());
