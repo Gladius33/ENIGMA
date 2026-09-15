@@ -88,6 +88,25 @@ internal static partial class EnigmaCoreNative
     [LibraryImport(LibraryName, EntryPoint = "enigma_core_outbox_count")]
     internal static partial nuint OutboxCount(IntPtr handle);
 
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_contacts_json_len")]
+    internal static partial nuint ContactsJsonLength(IntPtr handle);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_contacts_json_copy")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static unsafe partial bool ContactsJsonCopy(
+        IntPtr handle,
+        byte* output,
+        nuint outputLength);
+
+    [LibraryImport(LibraryName, EntryPoint = "enigma_core_send_text_to_contact")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    internal static unsafe partial bool SendTextToContact(
+        IntPtr handle,
+        byte* recipientUserId,
+        nuint recipientUserIdLength,
+        byte* plaintext,
+        nuint plaintextLength);
+
     [LibraryImport(LibraryName, EntryPoint = "enigma_core_inbox_count")]
     internal static partial nuint InboxCount(IntPtr handle);
 
@@ -182,6 +201,41 @@ internal sealed class EnigmaCoreHandle : SafeHandle
     internal bool RetryOutbox() => EnigmaCoreNative.RetryOutbox(handle);
 
     internal nuint OutboxCount => EnigmaCoreNative.OutboxCount(handle);
+
+    internal unsafe string ReadContactsJson()
+    {
+        nuint length = EnigmaCoreNative.ContactsJsonLength(handle);
+        if (length == 0 || length > int.MaxValue)
+        {
+            return "[]";
+        }
+
+        byte[] bytes = new byte[(int)length];
+        fixed (byte* output = bytes)
+        {
+            if (!EnigmaCoreNative.ContactsJsonCopy(handle, output, length))
+            {
+                return "[]";
+            }
+        }
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    internal unsafe bool SendTextToContact(string recipientUserId, string plaintext)
+    {
+        byte[] userIdBytes = Encoding.UTF8.GetBytes(recipientUserId);
+        byte[] plaintextBytes = Encoding.UTF8.GetBytes(plaintext);
+        fixed (byte* userId = userIdBytes)
+        fixed (byte* message = plaintextBytes)
+        {
+            return EnigmaCoreNative.SendTextToContact(
+                handle,
+                userId,
+                checked((nuint)userIdBytes.Length),
+                message,
+                checked((nuint)plaintextBytes.Length));
+        }
+    }
 
     internal unsafe bool SendText(
         string recipientUserId,
@@ -438,6 +492,20 @@ public sealed class EnigmaCoreClient : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             return _handle.OutboxCount;
         }
+    }
+
+    public string ReadContactsJson()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _handle.ReadContactsJson();
+    }
+
+    public bool SendTextToContact(string recipientUserId, string plaintext)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _handle.SignalIsReady
+            && _handle.DeviceSessionReady
+            && _handle.SendTextToContact(recipientUserId, plaintext);
     }
 
     public nuint InboxCount
