@@ -14,6 +14,7 @@ pub const ENIGMA_CORE_ABI_VERSION: u32 = 1;
 const DEFAULT_DEDUP_CAPACITY: usize = 16_384;
 const MAX_PROTECTED_SIGNAL_IDENTITY_BYTES: usize = 64 * 1024;
 const SIGNAL_IDENTITY_RECORD_MAGIC: &[u8] = b"ENIGMA-SIGNAL-IDENTITY\0v1\0";
+#[cfg(target_os = "linux")]
 const LINUX_SIGNAL_IDENTITY_SLOT: &str = "signal-identity-primary";
 
 pub struct EnigmaCoreHandle {
@@ -319,7 +320,10 @@ mod tests {
     fn protected_identity_record_round_trips_and_rejects_corruption() {
         let protected = b"opaque-protected-identity";
         let record = encode_signal_identity_record(7, protected);
-        assert_eq!(decode_signal_identity_record(&record), Some((7, protected.as_slice())));
+        assert_eq!(
+            decode_signal_identity_record(&record),
+            Some((7, protected.as_slice()))
+        );
 
         assert_eq!(decode_signal_identity_record(b"not-an-enigma-record"), None);
         assert_eq!(
