@@ -22,8 +22,10 @@ use rand::Rng as _;
 pub const ENIGMA_CORE_ABI_VERSION: u32 = 1;
 const DEFAULT_DEDUP_CAPACITY: usize = 16_384;
 const MAX_PROTECTED_SIGNAL_IDENTITY_BYTES: usize = 64 * 1024;
+const MAX_PROTECTED_SIGNAL_STORE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PROTECTED_DEVICE_SESSION_BYTES: usize = 64 * 1024;
 const SIGNAL_IDENTITY_RECORD_MAGIC: &[u8] = b"ENIGMA-SIGNAL-IDENTITY\0v1\0";
+const SIGNAL_STORE_RECORD_MAGIC: &[u8] = b"ENIGMA-SIGNAL-STORE\0v2\0";
 const DEVICE_SESSION_RECORD_MAGIC: &[u8] = b"ENIGMA-DEVICE-SESSION\0v1\0";
 const V1_PROTOCOL_DEVICE_ID: u32 = 1;
 const DESKTOP_PREKEY_UPLOAD_COUNT: u32 = 50;
@@ -35,6 +37,8 @@ const PAIRING_CLAIM_EXPIRED: u32 = 4;
 const PAIRING_CLAIM_MISSING: u32 = 5;
 #[cfg(target_os = "linux")]
 const LINUX_SIGNAL_IDENTITY_SLOT: &str = "signal-identity-primary";
+#[cfg(target_os = "linux")]
+const LINUX_SIGNAL_STORE_SLOT: &str = "signal-store-primary-v2";
 #[cfg(target_os = "linux")]
 const LINUX_DEVICE_SESSION_SLOT: &str = "device-session-primary";
 
@@ -401,6 +405,10 @@ pub unsafe extern "C" fn enigma_core_device_initialize(handle: *mut EnigmaCoreHa
             public_key,
         })
         .collect();
+
+    if persist_default_signal_store(signal_backend).is_err() {
+        return false;
+    }
 
     let upload = PublicKeyUpload {
         device_id: &device_id,
@@ -791,6 +799,110 @@ fn decode_signal_identity_record(record: &[u8]) -> Option<(u32, &[u8])> {
     Some((registration_id, protected))
 }
 
+fn encode_signal_store_record(protected: &[u8]) -> Option<Vec<u8>> {
+    if protected.is_empty() || protected.len() > MAX_PROTECTED_SIGNAL_STORE_BYTES {
+        return None;
+    }
+    let mut record = Vec::with_capacity(SIGNAL_STORE_RECORD_MAGIC.len() + protected.len());
+    record.extend_from_slice(SIGNAL_STORE_RECORD_MAGIC);
+    record.extend_from_slice(protected);
+    Some(record)
+}
+
+fn decode_signal_store_record(record: &[u8]) -> Option<&[u8]> {
+    let protected = record.strip_prefix(SIGNAL_STORE_RECORD_MAGIC)?;
+    if protected.is_empty() || protected.len() > MAX_PROTECTED_SIGNAL_STORE_BYTES {
+        return None;
+    }
+    Some(protected)
+}
+
+#[cfg(windows)]
+fn default_signal_store_path() -> Option<PathBuf> {
+    let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"))?;
+    Some(
+        PathBuf::from(base)
+            .join("ENIGMA")
+            .join("signal-store-v2.bin"),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn default_signal_store_path() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+    Some(base.join("ENIGMA").join("signal-store-v2.bin"))
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn default_signal_store_path() -> Option<PathBuf> {
+    None
+}
+
+fn persist_default_signal_store(backend: &LibsignalSessionBackend) -> Result<(), ()> {
+    let mut snapshot = backend.export_serialized_store().map_err(|_| ())?;
+    let protected_result = protect_signal_store(&snapshot);
+    snapshot.fill(0);
+    let protected = protected_result.map_err(|_| ())?;
+    let record = encode_signal_store_record(&protected).ok_or(())?;
+    let path = default_signal_store_path().ok_or(())?;
+    persist_protected_record(&path, &record).map_err(|_| ())
+}
+
+fn restore_signal_backend_from_store_record(
+    record: &[u8],
+) -> Result<LibsignalSessionBackend, ()> {
+    let protected = decode_signal_store_record(record).ok_or(())?;
+    let mut snapshot = unprotect_signal_store(protected).map_err(|_| ())?;
+    if snapshot.is_empty() || snapshot.len() > 16 * 1024 * 1024 {
+        snapshot.fill(0);
+        return Err(());
+    }
+    let backend = LibsignalSessionBackend::from_serialized_store(&snapshot).map_err(|_| ());
+    snapshot.fill(0);
+    backend
+}
+
+#[cfg(windows)]
+fn protect_signal_store(snapshot: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::WindowsDpapiProtector;
+
+    WindowsDpapiProtector.protect(snapshot)
+}
+
+#[cfg(target_os = "linux")]
+fn protect_signal_store(snapshot: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::LinuxSecretServiceProtector;
+
+    LinuxSecretServiceProtector::new(LINUX_SIGNAL_STORE_SLOT)?.protect(snapshot)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn protect_signal_store(_snapshot: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    Err(PlatformKeyError::BackendUnavailable)
+}
+
+#[cfg(windows)]
+fn unprotect_signal_store(protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::WindowsDpapiProtector;
+
+    WindowsDpapiProtector.unprotect(protected)
+}
+
+#[cfg(target_os = "linux")]
+fn unprotect_signal_store(protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    use enigma_platform::LinuxSecretServiceProtector;
+
+    let protector = LinuxSecretServiceProtector::from_locator(protected)?;
+    protector.unprotect(protected)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn unprotect_signal_store(_protected: &[u8]) -> Result<Vec<u8>, PlatformKeyError> {
+    Err(PlatformKeyError::BackendUnavailable)
+}
+
 #[cfg(windows)]
 fn default_signal_identity_path() -> Option<PathBuf> {
     let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"))?;
@@ -833,9 +945,16 @@ fn restore_signal_backend_from_record(record: &[u8]) -> Result<LibsignalSessionB
 }
 
 fn load_or_create_default_signal_backend() -> Result<LibsignalSessionBackend, ()> {
-    let path = default_signal_identity_path().ok_or(())?;
-    match fs::read(&path) {
-        Ok(record) => restore_signal_backend_from_record(&record),
+    let store_path = default_signal_store_path().ok_or(())?;
+    match fs::read(&store_path) {
+        Ok(record) => return restore_signal_backend_from_store_record(&record),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(_) => return Err(()),
+    }
+
+    let identity_path = default_signal_identity_path().ok_or(())?;
+    let backend = match fs::read(&identity_path) {
+        Ok(record) => restore_signal_backend_from_record(&record)?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let (backend, mut serialized_identity, registration_id) =
                 LibsignalSessionBackend::generate_for_new_device().map_err(|_| ())?;
@@ -847,11 +966,14 @@ fn load_or_create_default_signal_backend() -> Result<LibsignalSessionBackend, ()
             }
 
             let record = encode_signal_identity_record(registration_id, &protected);
-            persist_signal_identity_record(&path, &record).map_err(|_| ())?;
-            Ok(backend)
+            persist_signal_identity_record(&identity_path, &record).map_err(|_| ())?;
+            backend
         }
-        Err(_) => Err(()),
-    }
+        Err(_) => return Err(()),
+    };
+
+    persist_default_signal_store(&backend)?;
+    Ok(backend)
 }
 
 #[cfg(windows)]
@@ -896,6 +1018,18 @@ fn unprotect_signal_identity(_protected: &[u8]) -> Result<Vec<u8>, PlatformKeyEr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signal_store_record_is_versioned_and_bounded() {
+        let protected = vec![0x51_u8; 128];
+        let record = encode_signal_store_record(&protected).expect("store record");
+        assert!(record.starts_with(SIGNAL_STORE_RECORD_MAGIC));
+        assert_eq!(
+            decode_signal_store_record(&record).expect("decode"),
+            protected.as_slice()
+        );
+        assert!(encode_signal_store_record(&[]).is_none());
+    }
 
     #[test]
     fn pairing_exports_only_public_uri_and_svg_bytes() {
