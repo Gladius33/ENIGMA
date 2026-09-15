@@ -246,11 +246,9 @@ int main(int argc, char* argv[]) {
 
             const QString plaintext =
                 entry.value(QStringLiteral("plaintext")).toString();
-            constexpr auto kPayloadPrefix = "ENIGMA_PAYLOAD_V1:";
-            if (!plaintext.startsWith(QLatin1String(kPayloadPrefix))) continue;
-            const QByteArray payloadJson =
-                plaintext.mid(static_cast<int>(std::char_traits<char>::length(kPayloadPrefix)))
-                    .toUtf8();
+            const QString payloadPrefix = QStringLiteral("ENIGMA_PAYLOAD_V1:");
+            if (!plaintext.startsWith(payloadPrefix)) continue;
+            const QByteArray payloadJson = plaintext.mid(payloadPrefix.size()).toUtf8();
             const QJsonDocument payloadDocument = QJsonDocument::fromJson(payloadJson);
             if (!payloadDocument.isObject()) continue;
             const QString body =
