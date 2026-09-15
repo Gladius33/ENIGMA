@@ -4,8 +4,8 @@ use libsignal_protocol::{
     kem, message_decrypt_prekey, message_decrypt_signal, message_encrypt, process_prekey_bundle,
     CiphertextMessage, CiphertextMessageType, DeviceId, GenericSignedPreKey, IdentityKeyPair,
     IdentityKeyStore, KeyPair, KyberPreKeyRecord, KyberPreKeyStore, PreKeyBundle, PreKeyRecord,
-    PreKeySignalMessage, PreKeyStore, ProtocolAddress, SignalMessage, SignedPreKeyRecord,
-    SignedPreKeyStore, Timestamp,
+    PreKeySignalMessage, PreKeyStore, ProtocolAddress, SessionStore, SignalMessage,
+    SignedPreKeyRecord, SignedPreKeyStore, Timestamp,
 };
 use rand::{CryptoRng, Rng};
 
@@ -309,7 +309,7 @@ impl LibsignalSessionBackend {
         if envelope.recipient_protocol_device_id != expected_recipient_protocol_device_id {
             return Err(SignalAdapterError::InvalidWireEnvelope);
         }
-        let protocol_device_id = DeviceId::new(envelope.sender_protocol_device_id)
+        let protocol_device_id = DeviceId::try_from(envelope.sender_protocol_device_id)
             .map_err(|_| SignalAdapterError::InvalidWireEnvelope)?;
         let remote =
             ProtocolAddress::new(envelope.sender_device_id.clone().into(), protocol_device_id);
