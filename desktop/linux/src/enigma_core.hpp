@@ -100,6 +100,13 @@ public:
             && enigma_core_retry_outbox(handle_);
     }
 
+    [[nodiscard]] bool pollP2p() noexcept {
+        return handle_ != nullptr
+            && signalReady()
+            && deviceSessionReady()
+            && enigma_core_poll_p2p(handle_);
+    }
+
     [[nodiscard]] bool sendText(
         const std::string& recipientUserId,
         const std::string& recipientPublicId,
