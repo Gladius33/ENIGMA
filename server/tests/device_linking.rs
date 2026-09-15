@@ -131,7 +131,7 @@ async fn certified_desktop_linking_is_bound_replay_safe_and_revocable() {
         app.clone(),
         Method::GET,
         &format!("/v1/devices/link/candidate/{pairing_session_id}"),
-        None,
+        Some(android_token),
         None,
     )
     .await;
