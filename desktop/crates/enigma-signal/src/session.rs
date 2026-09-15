@@ -18,6 +18,8 @@ use crate::SignalAdapterError;
 /// decryption to libsignal-protocol.
 pub struct LibsignalSessionBackend {
     store: InMemSignalProtocolStore,
+    identity_public_key: Vec<u8>,
+    registration_id: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,9 +49,14 @@ impl LibsignalSessionBackend {
         identity: IdentityKeyPair,
         registration_id: u32,
     ) -> Result<Self, SignalAdapterError> {
+        let identity_public_key = identity.identity_key().serialize().to_vec();
         let store = InMemSignalProtocolStore::new(identity, registration_id)
             .map_err(|_| SignalAdapterError::CryptoFailure)?;
-        Ok(Self { store })
+        Ok(Self {
+            store,
+            identity_public_key,
+            registration_id,
+        })
     }
 
     /// Generates a fresh desktop Signal identity and registration id entirely inside Rust.
@@ -339,6 +346,16 @@ impl LibsignalSessionBackend {
         )
         .await
         .map_err(|_| SignalAdapterError::CryptoFailure)
+    }
+
+    #[must_use]
+    pub fn identity_public_key(&self) -> &[u8] {
+        &self.identity_public_key
+    }
+
+    #[must_use]
+    pub const fn registration_id(&self) -> u32 {
+        self.registration_id
     }
 
     #[must_use]
