@@ -76,6 +76,7 @@ pub struct EnigmaCoreHandle {
     device_access_token: Option<SecureBytes>,
     desktop_inbox: Option<EncryptedDesktopInbox>,
     desktop_outbox: Option<EncryptedDesktopOutbox>,
+    desktop_p2p: Option<DesktopP2pManager>,
     contacts_json_cache: Option<Vec<u8>>,
 }
 
@@ -170,6 +171,7 @@ pub extern "C" fn enigma_core_create() -> *mut EnigmaCoreHandle {
         device_access_token,
         desktop_inbox: None,
         desktop_outbox: None,
+        desktop_p2p: None,
         contacts_json_cache: None,
     }))
 }
@@ -592,6 +594,23 @@ fn pairing_client() -> Option<PairingRendezvousClient> {
     PairingRendezvousClient::new(&base_url, allow_insecure_http).ok()
 }
 
+fn ensure_desktop_p2p_manager(core: &mut EnigmaCoreHandle) -> Result<(), ()> {
+    if core.desktop_p2p.is_some() {
+        return Ok(());
+    }
+    let (base_url, _) = pairing_server_config().ok_or(())?;
+    let device_id = core.device_id.clone().ok_or(())?;
+    let manager = {
+        let token = core.device_access_token.as_mut().ok_or(())?;
+        token
+            .with_read(|bytes| DesktopP2pManager::connect(&base_url, &device_id, bytes))
+            .map_err(|_| ())?
+            .map_err(|_| ())?
+    };
+    core.desktop_p2p = Some(manager);
+    Ok(())
+}
+
 fn recover_crypto_transactions(core: &mut EnigmaCoreHandle) -> Result<(), ()> {
     if core.desktop_outbox.is_none() {
         core.desktop_outbox = Some(load_or_create_desktop_outbox()?);
@@ -693,6 +712,7 @@ pub unsafe extern "C" fn enigma_core_pairing_claim(handle: *mut EnigmaCoreHandle
             unsafe {
                 (*handle).device_id = Some(device_id);
                 (*handle).device_access_token = Some(secure_token);
+                (*handle).desktop_p2p = None;
                 (*handle).pairing_bootstrap = None;
             }
             if persisted {
@@ -850,15 +870,8 @@ fn flush_desktop_outbox(
     }
 
     let sender_device_id = core.device_id.clone().ok_or(())?;
-    let (base_url, _) = pairing_server_config().ok_or(())?;
-
-    let mut p2p_manager = {
-        let token = core.device_access_token.as_mut().ok_or(())?;
-        token
-            .with_read(|bytes| DesktopP2pManager::connect(&base_url, &sender_device_id, bytes))
-            .ok()
-            .and_then(Result::ok)
-    };
+    let _ = ensure_desktop_p2p_manager(core);
+    let p2p_auth_backend = core.signal_backend.clone();
 
     let ice_servers = {
         let token = core.device_access_token.as_mut().ok_or(())?;
@@ -881,9 +894,9 @@ fn flush_desktop_outbox(
     for delivery in pending {
         let mut delivered_p2p = false;
         if let (Some(manager), Some(identity_key), Some(backend)) = (
-            p2p_manager.as_mut(),
+            core.desktop_p2p.as_mut(),
             delivery.recipient_identity_key.as_deref(),
-            core.signal_backend.as_ref(),
+            p2p_auth_backend.as_ref(),
         ) {
             if let Ok(remote_identity_key) = decode_signal_key(identity_key) {
                 if let Ok(session_id) = random_uuid_v4() {
