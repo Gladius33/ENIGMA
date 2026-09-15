@@ -198,19 +198,23 @@ int main(int argc, char* argv[]) {
     sendMessage->setAccessibleName(QStringLiteral("Envoyer le message"));
     sendMessage->setEnabled(coreReady);
 
-    if (coreReady && core) {
+    const auto refreshContacts = [&core, contactSelector]() {
+        contactSelector->clear();
+        if (!core || !core->deviceSessionReady()) return;
         const QByteArray contactsJson = QByteArray::fromStdString(core->contactsJson());
         const QJsonDocument contactsDocument = QJsonDocument::fromJson(contactsJson);
-        if (contactsDocument.isArray()) {
-            for (const QJsonValue& value : contactsDocument.array()) {
-                const QJsonObject contact = value.toObject();
-                const QString userId = contact.value(QStringLiteral("user_id")).toString();
-                const QString publicId = contact.value(QStringLiteral("public_id")).toString();
-                if (!userId.isEmpty() && !publicId.isEmpty()) {
-                    contactSelector->addItem(publicId, userId);
-                }
+        if (!contactsDocument.isArray()) return;
+        for (const QJsonValue& value : contactsDocument.array()) {
+            const QJsonObject contact = value.toObject();
+            const QString userId = contact.value(QStringLiteral("user_id")).toString();
+            const QString publicId = contact.value(QStringLiteral("public_id")).toString();
+            if (!userId.isEmpty() && !publicId.isEmpty()) {
+                contactSelector->addItem(publicId, userId);
             }
         }
+    };
+    if (coreReady) {
+        refreshContacts();
     }
 
     QObject::connect(
@@ -246,7 +250,17 @@ int main(int argc, char* argv[]) {
             sendMessage->setEnabled(true);
         });
 
-    QObject::connect(pairDevice, &QPushButton::clicked, [&window, &core, status]() {
+    QObject::connect(
+        pairDevice,
+        &QPushButton::clicked,
+        [&window,
+         &core,
+         status,
+         detail,
+         contactSelector,
+         messageComposer,
+         sendMessage,
+         &refreshContacts]() {
         if (!core || !core->signalReady() || !core->startPairing()) return;
 
         const std::string svg = core->pairingSvg();
@@ -289,7 +303,19 @@ int main(int argc, char* argv[]) {
         pairingStatus->setWordWrap(true);
 
         auto* finalize = new QPushButton(QStringLiteral("Finaliser la liaison"), &dialog);
-        QObject::connect(finalize, &QPushButton::clicked, [&dialog, &core, pairingStatus, finalize, status]() {
+        QObject::connect(
+            finalize,
+            &QPushButton::clicked,
+            [&dialog,
+             &core,
+             pairingStatus,
+             finalize,
+             status,
+             detail,
+             contactSelector,
+             messageComposer,
+             sendMessage,
+             &refreshContacts]() {
             if (!core) return;
             finalize->setEnabled(false);
             const std::uint32_t claimState = core->deviceSessionReady()
@@ -308,6 +334,14 @@ int main(int argc, char* argv[]) {
                                 : QStringLiteral(
                                       "Ordinateur lié. La synchronisation sera réessayée."));
                         status->setText(QStringLiteral("Cœur sécurisé prêt • appareil lié"));
+                        contactSelector->setEnabled(true);
+                        messageComposer->setEnabled(true);
+                        sendMessage->setEnabled(true);
+                        refreshContacts();
+                        detail->setText(
+                            synchronized && outboundFlushed
+                                ? QStringLiteral("Rust/libsignal • synchronisation à jour")
+                                : QStringLiteral("Rust/libsignal • synchronisation à réessayer"));
                         dialog.accept();
                     } else {
                         pairingStatus->setText(QStringLiteral(
