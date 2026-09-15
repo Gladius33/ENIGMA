@@ -328,6 +328,16 @@ pub struct RelayMessageSendResponse {
     pub expires_at: String,
 }
 
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq)]
+pub struct TurnCredentials {
+    pub username: String,
+    pub credential: String,
+    pub ttl_seconds: u64,
+    pub expires_at: String,
+    pub uris: Vec<String>,
+    pub realm: String,
+}
+
 #[derive(Debug, serde::Serialize)]
 struct ReceiptRequest<'a> {
     device_id: &'a str,
@@ -660,6 +670,50 @@ impl PairingRendezvousClient {
             || body.created_at.len() > 128
             || body.expires_at.is_empty()
             || body.expires_at.len() > 128
+        {
+            return Err(PairingRendezvousError::InvalidResponse);
+        }
+        Ok(body)
+    }
+
+    pub fn turn_credentials(
+        &self,
+        access_token: &[u8],
+    ) -> Result<TurnCredentials, PairingRendezvousError> {
+        let endpoint = self
+            .base_url
+            .join("v1/turn/credentials")
+            .map_err(|_| PairingRendezvousError::InvalidEndpoint)?;
+        let header = bearer_header(access_token)?;
+        let response = self
+            .client
+            .post(endpoint)
+            .header(reqwest::header::AUTHORIZATION, header)
+            .send()
+            .map_err(|_| PairingRendezvousError::Transport)?;
+        if !response.status().is_success() {
+            return Err(PairingRendezvousError::Rejected(response.status().as_u16()));
+        }
+        let body = response
+            .json::<TurnCredentials>()
+            .map_err(|_| PairingRendezvousError::InvalidResponse)?;
+        if body.username.is_empty()
+            || body.username.len() > 2048
+            || body.credential.is_empty()
+            || body.credential.len() > 4096
+            || body.ttl_seconds == 0
+            || body.ttl_seconds > 86_400
+            || body.expires_at.is_empty()
+            || body.expires_at.len() > 128
+            || body.realm.is_empty()
+            || body.realm.len() > 512
+            || body.uris.is_empty()
+            || body.uris.len() > 16
+            || body.uris.iter().any(|uri| {
+                uri.is_empty()
+                    || uri.len() > 2048
+                    || !(uri.starts_with("turn:") || uri.starts_with("turns:"))
+            })
         {
             return Err(PairingRendezvousError::InvalidResponse);
         }
