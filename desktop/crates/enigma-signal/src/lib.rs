@@ -68,6 +68,60 @@ struct SignalWireEnvelopeDto {
     ciphertext: String,
 }
 
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SignalWireEnvelopeOut<'a> {
+    version: u16,
+    algorithm: &'a str,
+    message_type: &'a str,
+    sender_device_id: &'a str,
+    sender_protocol_device_id: u32,
+    recipient_device_id: &'a str,
+    recipient_protocol_device_id: u32,
+    ciphertext: String,
+}
+
+pub fn encode_signal_wire_envelope(
+    sender_device_id: &str,
+    sender_protocol_device_id: u32,
+    recipient_device_id: &str,
+    recipient_protocol_device_id: u32,
+    ciphertext: &session::SessionCiphertext,
+) -> Result<String, SignalAdapterError> {
+    const MAX_WIRE_BYTES: usize = 2 * 1024 * 1024;
+    if !is_canonical_uuid(sender_device_id)
+        || !is_canonical_uuid(recipient_device_id)
+        || sender_device_id == recipient_device_id
+        || !(1..=127).contains(&sender_protocol_device_id)
+        || !(1..=127).contains(&recipient_protocol_device_id)
+        || ciphertext.serialized.is_empty()
+        || ciphertext.serialized.len() > MAX_WIRE_BYTES
+    {
+        return Err(SignalAdapterError::InvalidWireEnvelope);
+    }
+
+    let message_type = match ciphertext.message_type {
+        session::SessionMessageType::PreKey => "prekey",
+        session::SessionMessageType::Signal => "signal",
+    };
+    let envelope = SignalWireEnvelopeOut {
+        version: SIGNAL_ENVELOPE_VERSION,
+        algorithm: SIGNAL_ENVELOPE_ALGORITHM,
+        message_type,
+        sender_device_id,
+        sender_protocol_device_id,
+        recipient_device_id,
+        recipient_protocol_device_id,
+        ciphertext: STANDARD_NO_PAD.encode(&ciphertext.serialized),
+    };
+    let json =
+        serde_json::to_vec(&envelope).map_err(|_| SignalAdapterError::InvalidWireEnvelope)?;
+    if json.is_empty() || json.len() > MAX_WIRE_BYTES {
+        return Err(SignalAdapterError::InvalidWireEnvelope);
+    }
+    Ok(STANDARD_NO_PAD.encode(json))
+}
+
 pub fn parse_signal_wire_envelope(
     value: &str,
     expected_recipient_device_id: &str,
@@ -486,6 +540,35 @@ mod tests {
             verifier.verify_identity_proof(&[1, 2, 3], b"transcript", &[7; 64]),
             Err(SignalAdapterError::CryptoFailure)
         );
+    }
+
+    #[test]
+    fn signal_wire_encoder_round_trips_through_android_compatible_parser() {
+        let ciphertext = session::SessionCiphertext {
+            message_type: session::SessionMessageType::PreKey,
+            serialized: vec![1, 2, 3, 4],
+        };
+        let encoded = encode_signal_wire_envelope(
+            "11111111-1111-4111-8111-111111111111",
+            1,
+            "22222222-2222-4222-8222-222222222222",
+            1,
+            &ciphertext,
+        )
+        .expect("encode signal envelope");
+        let parsed = parse_signal_wire_envelope(
+            &encoded,
+            "22222222-2222-4222-8222-222222222222",
+        )
+        .expect("parse encoded signal envelope");
+        assert_eq!(
+            parsed.sender_device_id,
+            "11111111-1111-4111-8111-111111111111"
+        );
+        assert_eq!(parsed.sender_protocol_device_id, 1);
+        assert_eq!(parsed.recipient_protocol_device_id, 1);
+        assert_eq!(parsed.message_type, session::SessionMessageType::PreKey);
+        assert_eq!(parsed.ciphertext, vec![1, 2, 3, 4]);
     }
 
     #[test]
