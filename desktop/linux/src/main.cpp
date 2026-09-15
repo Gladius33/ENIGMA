@@ -78,16 +78,19 @@ int main(int argc, char* argv[]) {
         const bool sessionReady = signalReady && core->deviceSessionReady();
         const bool deviceReady = sessionReady && core->initializeDevice();
         coreReady = signalReady && sessionReady && deviceReady;
+        const bool outboxFlushed = coreReady && core->retryOutbox();
         const bool inboxSynced = coreReady && core->syncPending();
         const std::size_t inboxCount = coreReady ? core->inboxCount() : 0;
+        const std::size_t outboxCount = coreReady ? core->outboxCount() : 0;
         if (coreReady) {
             coreStatus = QStringLiteral("Cœur sécurisé prêt • appareil lié");
-            coreDetail = inboxSynced
+            coreDetail = inboxSynced && outboxFlushed
                 ? QStringLiteral("Rust/libsignal • ABI %1 • %2 message(s) local(aux)")
                       .arg(enigma::linked_core_abi_version())
                       .arg(static_cast<qulonglong>(inboxCount))
-                : QStringLiteral("Rust/libsignal • ABI %1 • synchronisation à réessayer")
-                      .arg(enigma::linked_core_abi_version());
+                : QStringLiteral("Rust/libsignal • ABI %1 • %2 livraison(s) en attente")
+                      .arg(enigma::linked_core_abi_version())
+                      .arg(static_cast<qulonglong>(outboxCount));
         } else if (signalReady && sessionReady) {
             coreStatus = QStringLiteral("Session liée • initialisation réseau requise");
             coreDetail = QStringLiteral(
@@ -232,9 +235,10 @@ int main(int argc, char* argv[]) {
                     pairingStatus->setText(
                         QStringLiteral("Session autorisée. Publication des clés libsignal…"));
                     if (core->initializeDevice()) {
+                        const bool outboundFlushed = core->retryOutbox();
                         const bool synchronized = core->syncPending();
                         pairingStatus->setText(
-                            synchronized
+                            synchronized && outboundFlushed
                                 ? QStringLiteral("Ordinateur lié et synchronisé avec succès.")
                                 : QStringLiteral(
                                       "Ordinateur lié. La synchronisation sera réessayée."));
