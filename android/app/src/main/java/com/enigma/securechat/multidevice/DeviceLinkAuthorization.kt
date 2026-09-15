@@ -1,5 +1,6 @@
 package com.enigma.securechat.multidevice
 
+import java.security.MessageDigest
 import java.util.Base64
 import java.util.UUID
 
@@ -11,14 +12,17 @@ data class DesktopLinkCandidate(
     val protocolVersion: Int,
     val minSupportedVersion: Int,
     val capabilities: Long,
+    val expiresAtUnixMs: Long,
+    val pairingPublicKey: String,
     val targetIdentityKey: String,
+    val claimSecretHash: String,
+    val candidateCommitment: String,
 )
 
 data class AuthorizedDesktopLink(
     val deviceId: String,
     val displayName: String,
     val platform: String,
-    val accessToken: String,
     val canonicalPayload: String,
     val authorizerSignature: String,
 )
@@ -50,14 +54,33 @@ object DeviceLinkAuthorization {
         canonicalUuid(candidate.pairingSessionId)
         require(newDeviceId != authorizerId) { "A device cannot authorize itself" }
 
+        require(candidate.expiresAtUnixMs > System.currentTimeMillis()) {
+            "Pairing candidate has expired"
+        }
+        require(candidate.claimSecretHash.length == 64 &&
+            candidate.claimSecretHash.all { it.isDigit() || it in 'a'..'f' }) {
+            "Invalid pairing claim secret hash"
+        }
+
+        val pairingKey = runCatching { Base64.getDecoder().decode(candidate.pairingPublicKey) }
+            .getOrElse { throw IllegalArgumentException("Invalid pairing public key", it) }
         val identity = runCatching { Base64.getDecoder().decode(candidate.targetIdentityKey) }
             .getOrElse { throw IllegalArgumentException("Invalid target Signal identity key", it) }
+        val commitment = runCatching { Base64.getDecoder().decode(candidate.candidateCommitment) }
+            .getOrElse { throw IllegalArgumentException("Invalid candidate commitment", it) }
         try {
+            require(pairingKey.size == 32) { "Invalid pairing public key length" }
             require(identity.isNotEmpty() && identity.size <= MAX_IDENTITY_KEY_BYTES) {
                 "Invalid target Signal identity key length"
             }
+            require(commitment.size == 32) { "Invalid candidate commitment length" }
+            require(candidateCommitment(candidate) == candidate.candidateCommitment) {
+                "Pairing candidate commitment mismatch"
+            }
         } finally {
+            pairingKey.fill(0)
             identity.fill(0)
+            commitment.fill(0)
         }
     }
 
@@ -72,6 +95,7 @@ object DeviceLinkAuthorization {
         capabilities: Long,
         issuedAtUnixMs: Long,
         targetIdentityKey: String,
+        candidateCommitment: String,
         authorizerIdentityKey: String,
     ): String {
         val account = canonicalUuid(accountId)
@@ -90,7 +114,32 @@ object DeviceLinkAuthorization {
             append("capabilities=").append(capabilities).append('\n')
             append("issued_at_unix_ms=").append(issuedAtUnixMs).append('\n')
             append("target_identity_key=").append(targetIdentityKey).append('\n')
+            append("candidate_commitment=").append(candidateCommitment).append('\n')
             append("authorizer_identity_key=").append(authorizerIdentityKey).append('\n')
+        }
+    }
+
+    fun candidateCommitment(candidate: DesktopLinkCandidate): String {
+        val canonical = buildString {
+            append("ENIGMA_PAIRING_CANDIDATE_V1\n")
+            append("pairing_session_id=").append(canonicalUuid(candidate.pairingSessionId)).append('\n')
+            append("device_id=").append(canonicalUuid(candidate.deviceId)).append('\n')
+            append("display_name=").append(candidate.displayName).append('\n')
+            append("platform=").append(candidate.platform).append('\n')
+            append("protocol_version=").append(candidate.protocolVersion).append('\n')
+            append("min_supported_version=").append(candidate.minSupportedVersion).append('\n')
+            append("capabilities=").append(candidate.capabilities).append('\n')
+            append("expires_at_unix_ms=").append(candidate.expiresAtUnixMs).append('\n')
+            append("pairing_public_key=").append(candidate.pairingPublicKey).append('\n')
+            append("target_identity_key=").append(candidate.targetIdentityKey).append('\n')
+            append("claim_secret_hash=").append(candidate.claimSecretHash).append('\n')
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray(Charsets.UTF_8))
+        return try {
+            Base64.getEncoder().withoutPadding().encodeToString(digest)
+        } finally {
+            digest.fill(0)
         }
     }
 
