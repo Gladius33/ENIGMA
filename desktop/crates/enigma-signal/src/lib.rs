@@ -122,46 +122,6 @@ pub fn encode_signal_wire_envelope(
     Ok(STANDARD_NO_PAD.encode(json))
 }
 
-pub fn encode_signal_wire_envelope(
-    sender_device_id: &str,
-    sender_protocol_device_id: u32,
-    recipient_device_id: &str,
-    recipient_protocol_device_id: u32,
-    ciphertext: &session::SessionCiphertext,
-) -> Result<String, SignalAdapterError> {
-    if !is_canonical_uuid(sender_device_id)
-        || !is_canonical_uuid(recipient_device_id)
-        || sender_device_id == recipient_device_id
-        || !(1..=127).contains(&sender_protocol_device_id)
-        || !(1..=127).contains(&recipient_protocol_device_id)
-        || ciphertext.serialized.is_empty()
-        || ciphertext.serialized.len() > 2 * 1024 * 1024
-    {
-        return Err(SignalAdapterError::InvalidWireEnvelope);
-    }
-
-    let message_type = match ciphertext.message_type {
-        session::SessionMessageType::PreKey => "prekey",
-        session::SessionMessageType::Signal => "signal",
-    };
-    let dto = SignalWireEnvelopeDto {
-        version: SIGNAL_ENVELOPE_VERSION,
-        algorithm: SIGNAL_ENVELOPE_ALGORITHM.to_owned(),
-        message_type: message_type.to_owned(),
-        sender_device_id: sender_device_id.to_owned(),
-        sender_protocol_device_id,
-        recipient_device_id: recipient_device_id.to_owned(),
-        recipient_protocol_device_id,
-        ciphertext: STANDARD_NO_PAD.encode(&ciphertext.serialized),
-    };
-    let encoded =
-        serde_json::to_vec(&dto).map_err(|_| SignalAdapterError::CryptoFailure)?;
-    if encoded.len() > 2 * 1024 * 1024 {
-        return Err(SignalAdapterError::InvalidWireEnvelope);
-    }
-    Ok(STANDARD_NO_PAD.encode(encoded))
-}
-
 pub fn parse_signal_wire_envelope(
     value: &str,
     expected_recipient_device_id: &str,
