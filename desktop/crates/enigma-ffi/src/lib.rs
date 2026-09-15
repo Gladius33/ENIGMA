@@ -863,6 +863,16 @@ fn flush_desktop_outbox(
                 .is_ok()
         };
         if sent {
+            if !delivery.sender_sync {
+                core.desktop_inbox
+                    .as_ref()
+                    .ok_or(())?
+                    .mark_outbound_relay_sent(
+                        &delivery.bubble_id,
+                        &delivery.client_message_id,
+                        &delivery.recipient_device_id,
+                    )?;
+            }
             core.desktop_outbox.as_ref().ok_or(())?.remove(
                 &delivery.sender_device_id,
                 &delivery.recipient_device_id,
@@ -1385,6 +1395,11 @@ pub unsafe extern "C" fn enigma_core_send_text(
     else {
         return false;
     };
+    let delivery_recipient_device_ids: Vec<String> = deliveries
+        .iter()
+        .filter(|delivery| !delivery.sender_sync)
+        .map(|delivery| delivery.recipient_device_id.clone())
+        .collect();
     let local_entry = DurableInboxEntry {
         remote_message_id: client_message_id.clone(),
         bubble_id: bubble_id.clone(),
@@ -1402,8 +1417,9 @@ pub unsafe extern "C" fn enigma_core_send_text(
         contact_public_id: Some(recipient_public_id.clone()),
         contact_display_name: Some(recipient_display_name.clone()),
         original_created_at_unix_ms: Some(created_at),
-        delivery_status: Some("sent".to_owned()),
+        delivery_status: Some("queued".to_owned()),
         delivery_updated_at: None,
+        delivery_recipient_device_ids,
     };
 
     let mut snapshot = match working_backend.export_serialized_store() {
@@ -1629,6 +1645,7 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
                     None
                 },
                 delivery_updated_at: None,
+                delivery_recipient_device_ids: Vec::new(),
             };
 
             let mut snapshot = match core
@@ -1690,12 +1707,13 @@ pub unsafe extern "C" fn enigma_core_sync_pending(handle: *mut EnigmaCoreHandle)
             .and_then(Result::ok)
     };
     if let Some(receipts) = receipts {
-        let statuses: Vec<(String, String, String, String)> = receipts
+        let statuses: Vec<(String, String, String, String, String)> = receipts
             .into_iter()
             .map(|receipt| {
                 (
                     receipt.bubble_id,
                     receipt.client_message_id,
+                    receipt.recipient_device_id,
                     receipt.status,
                     receipt.delivered_at,
                 )
