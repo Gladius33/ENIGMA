@@ -56,6 +56,11 @@ public sealed partial class MainWindow : Window
         ContactSelector.PlaceholderText = T("contact.choose");
         MessageComposer.PlaceholderText = T("message.placeholder");
         SendButton.Content = T("send");
+        if (_core is null)
+        {
+            CoreStatusText.Text = T("status.initializing");
+            CoreDetailText.Text = T("detail.core_not_ready");
+        }
     }
 
     private void OnLanguageSelectionChanged(object sender, SelectionChangedEventArgs args)

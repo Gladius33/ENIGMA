@@ -121,6 +121,8 @@
                             x:Name="DevicesButton"
                             Content="Appareils"
                             Click="OnManageDevicesClick"
+                            Background="{ThemeResource EnigmaPrimaryBrush}"
+                            Foreground="White"
                             AutomationProperties.Name="Gérer les appareils liés" />
                     </StackPanel>
                 </Grid>
