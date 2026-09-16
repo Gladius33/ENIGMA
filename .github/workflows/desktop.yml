@@ -106,7 +106,8 @@ jobs:
           $root = "windows/Enigma.Desktop.WinUI/artifacts/win-x64"
           if (-not (Test-Path "$root/Enigma.Desktop.WinUI.exe")) { throw "Windows publish output is missing the ENIGMA executable" }
           if (-not (Test-Path "$root/enigma_core.dll")) { throw "Windows publish output is missing enigma_core.dll" }
-          if (-not (Test-Path "$root/Assets/enigma_logo.png")) { throw "Windows publish output is missing the canonical Android ENIGMA logo" }\n          if (-not (Test-Path "$root/Assets/enigma.ico")) { throw "Windows publish output is missing the ENIGMA application icon" }
+          if (-not (Test-Path "$root/Assets/enigma_logo.png")) { throw "Windows publish output is missing the canonical Android ENIGMA logo" }
+          if (-not (Test-Path "$root/Assets/enigma.ico")) { throw "Windows publish output is missing the ENIGMA application icon" }
           Compress-Archive -Path "$root/*" -DestinationPath "windows/Enigma.Desktop.WinUI/artifacts/ENIGMA-1.0.0-win-x64.zip" -Force
           if (-not (Test-Path "windows/Enigma.Desktop.WinUI/artifacts/ENIGMA-1.0.0-win-x64.zip")) { throw "Windows distributable archive was not created" }
       - name: Upload Windows distributable
