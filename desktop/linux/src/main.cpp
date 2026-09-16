@@ -773,6 +773,15 @@ int main(int argc, char* argv[]) {
                     l10n(language, "Rust/libsignal • ABI %1 • %2 message(s) local(aux)", "Rust/libsignal • ABI %1 • %2 local message(s)")
                         .arg(enigma::linked_core_abi_version())
                         .arg(static_cast<qulonglong>(core ? core->inboxCount() : 0)));
+            } else if (signalReadyForPairing && core && core->deviceSessionReady()) {
+                status->setText(l10n(
+                    language,
+                    "Session liée • initialisation réseau requise",
+                    "Linked session • network initialization required"));
+                detail->setText(l10n(
+                    language,
+                    "Session restaurée • utilisez Réessayer la connexion",
+                    "Session restored • use Retry connection"));
             } else if (signalReadyForPairing) {
                 status->setText(l10n(language, "Appairage Android requis", "Android pairing required"));
                 detail->setText(l10n(language, "Identité libsignal prête • liez cet ordinateur depuis Android", "Libsignal identity ready • link this computer from Android"));
