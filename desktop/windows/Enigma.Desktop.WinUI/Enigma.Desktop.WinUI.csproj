@@ -23,6 +23,12 @@
     <Content Include="..\..\..\android\app\src\main\res\drawable-nodpi\enigma_logo.png">
       <Link>Assets\enigma_logo.png</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="Assets\enigma.ico">
+      <Link>Assets\enigma.ico</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
     <Content Include="$(EnigmaCoreNativePath)">
       <Link>enigma_core.dll</Link>
