@@ -1,10 +1,10 @@
 # Plan de test prive V1
 
-Ce plan sert a valider une installation serveur locale et des APK installees sur plusieurs telephones. Il ne remplace pas les checks automatises et ne doit pas etre utilise pour declarer la branche prod-ready si une section reste non testee ou non implementee.
+Ce plan couvre les validations privees Android et serveur. Le gate final de la branche 1.0 desktop/multi-device est `docs/V1_REAL_WORLD_TEST_PLAN.md` (`REAL-LAB-001`) et doit etre execute sur Android, Windows et Linux apres CI verte. Pour la V1 production, les fonctions exposees dans le perimetre 1-to-1/multi-device sont bloquantes; groupes, canaux et appels WebRTC restent experimentaux/post-1.0 et ne bloquent pas la RC tant qu'ils ne sont pas exposes comme fonctions production.
 
 ## Pre-requis
 
-- Serveur local demarre avec PostgreSQL, Redis, MinIO et TURN si les appels sont testes.
+- Serveur local demarre avec PostgreSQL, Redis et MinIO. TURN n'est requis que pour les essais WebRTC post-1.0.
 - APK debug ou release installee sur au moins deux telephones physiques.
 - URL du relais serveur configuree depuis l'app, puis validee par le test de serveur visible.
 - Comptes distincts A et B, chacun avec un appareil enregistre et des prekeys publiees.
@@ -52,8 +52,12 @@ Ce plan sert a valider une installation serveur locale et des APK installees sur
 9. Envoyer/recevoir un message et confirmer que le `bubble_id` reste celui de la bulle isolated.
 10. Envoyer une piece jointe et verifier qu'aucun appel au relais officiel n'est effectue.
 11. Verifier que l'upload et le download de piece jointe portent le `bubble_id` isolated.
-12. Tester groupes, canaux et appels dans cette bulle uniquement.
+12. Optionnel : tester groupes, canaux et appels dans cette bulle; ces scenarios sont hors gate production 1.0.
 13. Couper le relais prive et verifier qu'il n'y a aucun fallback officiel.
+
+## Scenarios avances hors gate production 1.0
+
+Les sections Groupes, Canaux et Appels servent a la qualification experimentale/post-1.0. Elles ne doivent pas etre utilisees pour bloquer la RC 1.0 tant que ces surfaces ne sont pas annoncees comme production.
 
 ## Groupes
 
@@ -101,7 +105,7 @@ Ce plan sert a valider une installation serveur locale et des APK installees sur
 17. Recuperer les credentials TURN depuis le relais actif sans journaliser credential/SDP/ICE.
 18. Verifier NAT difficile avec TURN si possible.
 
-Si WebRTC audio/video complet n'est pas testable sur deux appareils, verdict V1 : `NON PRET V1 PROD-READY`.
+L'absence de validation WebRTC audio/video ne bloque pas la V1 production actuelle : les appels restent hors perimetre production 1.0. Une future activation production des appels devra rendre ce gate obligatoire.
 
 ## QR
 
@@ -140,7 +144,7 @@ Si WebRTC audio/video complet n'est pas testable sur deux appareils, verdict V1 
 
 ## Verdict manuel
 
-- Tous les scenarios automatises et manuels passes : candidat pour audit humain.
-- Un scenario groupe/canal/attachment/QR/update incomplet : `NON PRET V1 PROD-READY`.
-- Appels sans WebRTC 1-to-1 reel sur deux appareils : `NON PRET V1 PROD-READY`.
+- CI obligatoire verte + scenarios production exposes passes + `REAL-LAB-001` passe : candidat RC 1.0.
+- Messagerie 1-to-1, multi-device, P2P/relay fallback, attachements exposes, QR/device-link ou update exposes incomplets : `NON PRET V1 PROD-READY`.
+- Groupes, canaux ou appels WebRTC incomplets : non bloquant pour la V1 actuelle tant que ces surfaces restent experimentales/post-1.0.
 - Token officiel envoye aveuglement a un relais prive : `NON PRET V1 PROD-READY`.

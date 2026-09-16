@@ -1,0 +1,736 @@
+#![forbid(unsafe_code)]
+
+pub mod persistent_store;
+pub mod session;
+
+use base64::{
+    engine::general_purpose::{STANDARD, STANDARD_NO_PAD},
+    Engine as _,
+};
+use enigma_protocol::CanonicalDeviceAuthorization;
+use libsignal_protocol::IdentityKey;
+
+pub const ANDROID_LIBSIGNAL_VERSION: &str = "0.86.5";
+pub const DESKTOP_LIBSIGNAL_TAG: &str = "v0.86.5";
+pub const DESKTOP_LIBSIGNAL_SOURCE_PIN: &str = "b39e93f1a5e6531044dfcdf5876585cbcf08f884";
+pub const SIGNAL_ENVELOPE_VERSION: u16 = 1;
+pub const SIGNAL_ENVELOPE_ALGORITHM: &str = "Signal-Protocol-libsignal-0.86.5";
+pub const SIGNAL_ENVELOPE_LEGACY_ALGORITHM_076: &str = "Signal-Protocol-libsignal-0.76";
+pub const DESKTOP_LIBSIGNAL_INTEROP_VERIFIED: bool = true;
+
+#[must_use]
+pub fn signal_envelope_algorithm_supported(value: &str) -> bool {
+    matches!(
+        value,
+        SIGNAL_ENVELOPE_ALGORITHM | SIGNAL_ENVELOPE_LEGACY_ALGORITHM_076
+    )
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SignalPublicBundle {
+    pub identity_public: Vec<u8>,
+    pub signed_prekey: Vec<u8>,
+    pub signed_prekey_signature: Vec<u8>,
+    pub one_time_prekey: Option<Vec<u8>>,
+    pub kyber_prekey: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum SignalAdapterError {
+    BackendNotPinned,
+    InvalidBundle,
+    SessionUnavailable,
+    CryptoFailure,
+    InvalidDeviceAuthorizationProof,
+    InvalidWireEnvelope,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParsedSignalWireEnvelope {
+    pub sender_device_id: String,
+    pub sender_protocol_device_id: u32,
+    pub recipient_device_id: String,
+    pub recipient_protocol_device_id: u32,
+    pub message_type: session::SessionMessageType,
+    pub ciphertext: Vec<u8>,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SignalWireEnvelopeDto {
+    version: u16,
+    algorithm: String,
+    message_type: String,
+    sender_device_id: String,
+    sender_protocol_device_id: u32,
+    recipient_device_id: String,
+    recipient_protocol_device_id: u32,
+    ciphertext: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SignalWireEnvelopeOut<'a> {
+    version: u16,
+    algorithm: &'a str,
+    message_type: &'a str,
+    sender_device_id: &'a str,
+    sender_protocol_device_id: u32,
+    recipient_device_id: &'a str,
+    recipient_protocol_device_id: u32,
+    ciphertext: String,
+}
+
+pub fn encode_signal_wire_envelope(
+    sender_device_id: &str,
+    sender_protocol_device_id: u32,
+    recipient_device_id: &str,
+    recipient_protocol_device_id: u32,
+    ciphertext: &session::SessionCiphertext,
+) -> Result<String, SignalAdapterError> {
+    const MAX_WIRE_BYTES: usize = 2 * 1024 * 1024;
+    if !is_canonical_uuid(sender_device_id)
+        || !is_canonical_uuid(recipient_device_id)
+        || sender_device_id == recipient_device_id
+        || !(1..=127).contains(&sender_protocol_device_id)
+        || !(1..=127).contains(&recipient_protocol_device_id)
+        || ciphertext.serialized.is_empty()
+        || ciphertext.serialized.len() > MAX_WIRE_BYTES
+    {
+        return Err(SignalAdapterError::InvalidWireEnvelope);
+    }
+
+    let message_type = match ciphertext.message_type {
+        session::SessionMessageType::PreKey => "prekey",
+        session::SessionMessageType::Signal => "signal",
+    };
+    let envelope = SignalWireEnvelopeOut {
+        version: SIGNAL_ENVELOPE_VERSION,
+        algorithm: SIGNAL_ENVELOPE_ALGORITHM,
+        message_type,
+        sender_device_id,
+        sender_protocol_device_id,
+        recipient_device_id,
+        recipient_protocol_device_id,
+        ciphertext: STANDARD_NO_PAD.encode(&ciphertext.serialized),
+    };
+    let json =
+        serde_json::to_vec(&envelope).map_err(|_| SignalAdapterError::InvalidWireEnvelope)?;
+    if json.is_empty() || json.len() > MAX_WIRE_BYTES {
+        return Err(SignalAdapterError::InvalidWireEnvelope);
+    }
+    Ok(STANDARD_NO_PAD.encode(json))
+}
+
+pub fn parse_signal_wire_envelope(
+    value: &str,
+    expected_recipient_device_id: &str,
+) -> Result<ParsedSignalWireEnvelope, SignalAdapterError> {
+    const MAX_WIRE_BYTES: usize = 2 * 1024 * 1024;
+
+    if value.is_empty()
+        || value.len() > MAX_WIRE_BYTES * 2
+        || !is_canonical_uuid(expected_recipient_device_id)
+    {
+        return Err(SignalAdapterError::InvalidWireEnvelope);
+    }
+
+    let outer = decode_base64_compat(value).ok_or(SignalAdapterError::InvalidWireEnvelope)?;
+    if outer.is_empty() || outer.len() > MAX_WIRE_BYTES {
+        return Err(SignalAdapterError::InvalidWireEnvelope);
+    }
+    let dto = serde_json::from_slice::<SignalWireEnvelopeDto>(&outer)
+        .map_err(|_| SignalAdapterError::InvalidWireEnvelope)?;
+
+    if dto.version != SIGNAL_ENVELOPE_VERSION
+        || !signal_envelope_algorithm_supported(&dto.algorithm)
+        || !is_canonical_uuid(&dto.sender_device_id)
+        || !is_canonical_uuid(&dto.recipient_device_id)
+        || dto.sender_device_id == dto.recipient_device_id
+        || dto.recipient_device_id != expected_recipient_device_id
+        || dto.sender_protocol_device_id == 0
+        || dto.sender_protocol_device_id > 127
+        || dto.recipient_protocol_device_id == 0
+        || dto.recipient_protocol_device_id > 127
+    {
+        return Err(SignalAdapterError::InvalidWireEnvelope);
+    }
+
+    let message_type = match dto.message_type.as_str() {
+        "prekey" => session::SessionMessageType::PreKey,
+        "signal" => session::SessionMessageType::Signal,
+        _ => return Err(SignalAdapterError::InvalidWireEnvelope),
+    };
+    let ciphertext =
+        decode_base64_compat(&dto.ciphertext).ok_or(SignalAdapterError::InvalidWireEnvelope)?;
+    if ciphertext.is_empty() || ciphertext.len() > MAX_WIRE_BYTES {
+        return Err(SignalAdapterError::InvalidWireEnvelope);
+    }
+
+    Ok(ParsedSignalWireEnvelope {
+        sender_device_id: dto.sender_device_id,
+        sender_protocol_device_id: dto.sender_protocol_device_id,
+        recipient_device_id: dto.recipient_device_id,
+        recipient_protocol_device_id: dto.recipient_protocol_device_id,
+        message_type,
+        ciphertext,
+    })
+}
+
+fn decode_base64_compat(value: &str) -> Option<Vec<u8>> {
+    STANDARD_NO_PAD
+        .decode(value)
+        .or_else(|_| STANDARD.decode(value))
+        .ok()
+}
+
+fn is_canonical_uuid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
+        })
+}
+
+pub trait SignalAdapter {
+    fn public_bundle(&self) -> Result<SignalPublicBundle, SignalAdapterError>;
+    fn encrypt_for_device(
+        &mut self,
+        remote_device_id: &[u8],
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, SignalAdapterError>;
+    fn decrypt_from_device(
+        &mut self,
+        remote_device_id: &[u8],
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, SignalAdapterError>;
+    fn sign_identity_proof(&self, transcript: &[u8]) -> Result<Vec<u8>, SignalAdapterError>;
+    fn verify_identity_proof(
+        &self,
+        remote_identity_public: &[u8],
+        transcript: &[u8],
+        signature: &[u8],
+    ) -> Result<bool, SignalAdapterError>;
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct LibsignalIdentityProofVerifier;
+
+impl SignalAdapter for LibsignalIdentityProofVerifier {
+    fn public_bundle(&self) -> Result<SignalPublicBundle, SignalAdapterError> {
+        Err(SignalAdapterError::SessionUnavailable)
+    }
+
+    fn encrypt_for_device(
+        &mut self,
+        _remote_device_id: &[u8],
+        _plaintext: &[u8],
+    ) -> Result<Vec<u8>, SignalAdapterError> {
+        Err(SignalAdapterError::SessionUnavailable)
+    }
+
+    fn decrypt_from_device(
+        &mut self,
+        _remote_device_id: &[u8],
+        _ciphertext: &[u8],
+    ) -> Result<Vec<u8>, SignalAdapterError> {
+        Err(SignalAdapterError::SessionUnavailable)
+    }
+
+    fn sign_identity_proof(&self, _transcript: &[u8]) -> Result<Vec<u8>, SignalAdapterError> {
+        Err(SignalAdapterError::SessionUnavailable)
+    }
+
+    fn verify_identity_proof(
+        &self,
+        remote_identity_public: &[u8],
+        transcript: &[u8],
+        signature: &[u8],
+    ) -> Result<bool, SignalAdapterError> {
+        let identity = IdentityKey::decode(remote_identity_public)
+            .map_err(|_| SignalAdapterError::CryptoFailure)?;
+        Ok(identity
+            .public_key()
+            .verify_signature(transcript, signature))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DeviceAuthorizationExpectation<'a> {
+    pub account_id: &'a str,
+    pub new_device_id: &'a str,
+    pub authorizing_device_id: &'a str,
+    pub pairing_session_id: &'a str,
+    pub platform: &'a str,
+    pub protocol_version: u16,
+    pub min_supported_version: u16,
+    pub capabilities: u64,
+    pub issued_at_unix_ms: u64,
+    pub target_identity_key: &'a str,
+    pub authorizer_identity_key: &'a str,
+}
+
+pub fn verify_linked_device_authorization_binding<A: SignalAdapter>(
+    adapter: &A,
+    known_authorizer_identity_public: &[u8],
+    canonical_payload: &str,
+    authorizer_signature: &[u8],
+    account_id: &str,
+    target_device_id: &str,
+    expected_authorizer_device_id: &str,
+    target_identity_key: &str,
+) -> Result<(), SignalAdapterError> {
+    if known_authorizer_identity_public.is_empty()
+        || authorizer_signature.is_empty()
+        || authorizer_signature.len() > 4096
+        || account_id.is_empty()
+        || target_device_id.is_empty()
+        || expected_authorizer_device_id.is_empty()
+        || target_identity_key.is_empty()
+    {
+        return Err(SignalAdapterError::InvalidDeviceAuthorizationProof);
+    }
+
+    let parsed = CanonicalDeviceAuthorization::parse(canonical_payload)
+        .map_err(|_| SignalAdapterError::InvalidDeviceAuthorizationProof)?;
+    if parsed.account_id != account_id
+        || parsed.new_device_id != target_device_id
+        || parsed.authorizing_device_id != expected_authorizer_device_id
+        || parsed.target_identity_key != target_identity_key
+        || parsed.authorizer_identity_key
+            != STANDARD_NO_PAD.encode(known_authorizer_identity_public)
+        || parsed.protocol_version != 1
+        || parsed.min_supported_version > 1
+        || parsed.min_supported_version == 0
+    {
+        return Err(SignalAdapterError::InvalidDeviceAuthorizationProof);
+    }
+
+    match adapter.verify_identity_proof(
+        known_authorizer_identity_public,
+        canonical_payload.as_bytes(),
+        authorizer_signature,
+    )? {
+        true => Ok(()),
+        false => Err(SignalAdapterError::InvalidDeviceAuthorizationProof),
+    }
+}
+
+pub fn verify_device_authorization_proof<A: SignalAdapter>(
+    adapter: &A,
+    known_authorizer_identity_public: &[u8],
+    canonical_payload: &str,
+    authorizer_signature: &[u8],
+    expected: DeviceAuthorizationExpectation<'_>,
+) -> Result<(), SignalAdapterError> {
+    if known_authorizer_identity_public.is_empty()
+        || authorizer_signature.is_empty()
+        || authorizer_signature.len() > 4096
+    {
+        return Err(SignalAdapterError::InvalidDeviceAuthorizationProof);
+    }
+
+    let parsed = CanonicalDeviceAuthorization::parse(canonical_payload)
+        .map_err(|_| SignalAdapterError::InvalidDeviceAuthorizationProof)?;
+    if parsed.account_id != expected.account_id
+        || parsed.new_device_id != expected.new_device_id
+        || parsed.authorizing_device_id != expected.authorizing_device_id
+        || parsed.pairing_session_id != expected.pairing_session_id
+        || parsed.platform != expected.platform
+        || parsed.protocol_version != expected.protocol_version
+        || parsed.min_supported_version != expected.min_supported_version
+        || parsed.capabilities != expected.capabilities
+        || parsed.issued_at_unix_ms != expected.issued_at_unix_ms
+        || parsed.target_identity_key != expected.target_identity_key
+        || parsed.authorizer_identity_key != expected.authorizer_identity_key
+        || STANDARD_NO_PAD.encode(known_authorizer_identity_public)
+            != parsed.authorizer_identity_key
+    {
+        return Err(SignalAdapterError::InvalidDeviceAuthorizationProof);
+    }
+
+    match adapter.verify_identity_proof(
+        known_authorizer_identity_public,
+        canonical_payload.as_bytes(),
+        authorizer_signature,
+    )? {
+        true => Ok(()),
+        false => Err(SignalAdapterError::InvalidDeviceAuthorizationProof),
+    }
+}
+
+#[must_use]
+pub fn desktop_backend_release_ready() -> bool {
+    is_full_lower_hex_sha(DESKTOP_LIBSIGNAL_SOURCE_PIN) && DESKTOP_LIBSIGNAL_INTEROP_VERIFIED
+}
+
+fn is_full_lower_hex_sha(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libsignal_protocol::PrivateKey;
+    use rand::{rngs::StdRng, SeedableRng};
+
+    const GOLDEN_IDENTITY_PRIVATE_V1: [u8; 32] = [0x42; 32];
+    const GOLDEN_IDENTITY_PUBLIC_V1: [u8; 33] = [
+        0x05, 0x13, 0x2c, 0x44, 0x2b, 0xe0, 0x10, 0xfb, 0xd5, 0x7e, 0x72, 0x60, 0x33, 0x28, 0xaa,
+        0x76, 0xe7, 0x1f, 0xcc, 0xc1, 0x50, 0x3a, 0xae, 0x21, 0x93, 0x27, 0xd1, 0x4d, 0x9c, 0x99,
+        0x93, 0xf4, 0x72,
+    ];
+
+    struct ProofVerifier {
+        accepts_signature: bool,
+    }
+
+    impl SignalAdapter for ProofVerifier {
+        fn public_bundle(&self) -> Result<SignalPublicBundle, SignalAdapterError> {
+            Err(SignalAdapterError::SessionUnavailable)
+        }
+
+        fn encrypt_for_device(
+            &mut self,
+            _remote_device_id: &[u8],
+            _plaintext: &[u8],
+        ) -> Result<Vec<u8>, SignalAdapterError> {
+            Err(SignalAdapterError::SessionUnavailable)
+        }
+
+        fn decrypt_from_device(
+            &mut self,
+            _remote_device_id: &[u8],
+            _ciphertext: &[u8],
+        ) -> Result<Vec<u8>, SignalAdapterError> {
+            Err(SignalAdapterError::SessionUnavailable)
+        }
+
+        fn sign_identity_proof(&self, _transcript: &[u8]) -> Result<Vec<u8>, SignalAdapterError> {
+            Err(SignalAdapterError::SessionUnavailable)
+        }
+
+        fn verify_identity_proof(
+            &self,
+            remote_identity_public: &[u8],
+            transcript: &[u8],
+            signature: &[u8],
+        ) -> Result<bool, SignalAdapterError> {
+            Ok(self.accepts_signature
+                && remote_identity_public == [2; 33]
+                && transcript.starts_with(b"ENIGMA_DEVICE_LINK_V1\n")
+                && signature == [7, 7])
+        }
+    }
+
+    fn certified_transcript() -> &'static str {
+        concat!(
+            "ENIGMA_DEVICE_LINK_V1\n",
+            "account_id=33333333-3333-4333-8333-333333333333\n",
+            "new_device_id=11111111-1111-4111-8111-111111111111\n",
+            "authorizing_device_id=44444444-4444-4444-8444-444444444444\n",
+            "pairing_session_id=22222222-2222-4222-8222-222222222222\n",
+            "platform=linux\n",
+            "protocol_version=1\n",
+            "min_supported_version=1\n",
+            "capabilities=127\n",
+            "issued_at_unix_ms=1700000000000\n",
+            "target_identity_key=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB\n",
+            "authorizer_identity_key=AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC\n",
+        )
+    }
+
+    fn expectation() -> DeviceAuthorizationExpectation<'static> {
+        DeviceAuthorizationExpectation {
+            account_id: "33333333-3333-4333-8333-333333333333",
+            new_device_id: "11111111-1111-4111-8111-111111111111",
+            authorizing_device_id: "44444444-4444-4444-8444-444444444444",
+            pairing_session_id: "22222222-2222-4222-8222-222222222222",
+            platform: "linux",
+            protocol_version: 1,
+            min_supported_version: 1,
+            capabilities: 127,
+            issued_at_unix_ms: 1_700_000_000_000,
+            target_identity_key: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB",
+            authorizer_identity_key: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC",
+        }
+    }
+
+    #[test]
+    fn linked_device_binding_rejects_wrong_authorizer_or_target() {
+        let verifier = ProofVerifier {
+            accepts_signature: true,
+        };
+        assert_eq!(
+            verify_linked_device_authorization_binding(
+                &verifier,
+                &[2; 33],
+                certified_transcript(),
+                &[7, 7],
+                "33333333-3333-4333-8333-333333333333",
+                "11111111-1111-4111-8111-111111111111",
+                "44444444-4444-4444-8444-444444444444",
+                "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB",
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            verify_linked_device_authorization_binding(
+                &verifier,
+                &[2; 33],
+                certified_transcript(),
+                &[7, 7],
+                "33333333-3333-4333-8333-333333333333",
+                "11111111-1111-4111-8111-111111111111",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB",
+            ),
+            Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
+        );
+    }
+
+    #[test]
+    fn device_authorization_requires_matching_metadata_and_signal_signature() {
+        let verifier = ProofVerifier {
+            accepts_signature: true,
+        };
+        assert_eq!(
+            verify_device_authorization_proof(
+                &verifier,
+                &[2; 33],
+                certified_transcript(),
+                &[7, 7],
+                expectation(),
+            ),
+            Ok(())
+        );
+
+        let mut wrong_device = expectation();
+        wrong_device.new_device_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        assert_eq!(
+            verify_device_authorization_proof(
+                &verifier,
+                &[2; 33],
+                certified_transcript(),
+                &[7, 7],
+                wrong_device,
+            ),
+            Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
+        );
+
+        let mut wrong_capabilities = expectation();
+        wrong_capabilities.capabilities = 4;
+        assert_eq!(
+            verify_device_authorization_proof(
+                &verifier,
+                &[2; 33],
+                certified_transcript(),
+                &[7, 7],
+                wrong_capabilities,
+            ),
+            Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
+        );
+
+        let mut wrong_issued_at = expectation();
+        wrong_issued_at.issued_at_unix_ms += 1;
+        assert_eq!(
+            verify_device_authorization_proof(
+                &verifier,
+                &[2; 33],
+                certified_transcript(),
+                &[7, 7],
+                wrong_issued_at,
+            ),
+            Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
+        );
+
+        assert_eq!(
+            verify_device_authorization_proof(
+                &verifier,
+                &[3; 33],
+                certified_transcript(),
+                &[7, 7],
+                expectation(),
+            ),
+            Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
+        );
+
+        let rejecting = ProofVerifier {
+            accepts_signature: false,
+        };
+        assert_eq!(
+            verify_device_authorization_proof(
+                &rejecting,
+                &[2; 33],
+                certified_transcript(),
+                &[7, 7],
+                expectation(),
+            ),
+            Err(SignalAdapterError::InvalidDeviceAuthorizationProof)
+        );
+    }
+
+    #[test]
+    fn libsignal_identity_serialization_matches_golden_vector_v1() {
+        let private_key =
+            PrivateKey::deserialize(&GOLDEN_IDENTITY_PRIVATE_V1).expect("fixed private key");
+        let public_key = private_key.public_key().expect("derive public key");
+        let identity = IdentityKey::new(public_key);
+
+        assert_eq!(identity.serialize().as_ref(), &GOLDEN_IDENTITY_PUBLIC_V1);
+        assert_eq!(
+            IdentityKey::decode(&GOLDEN_IDENTITY_PUBLIC_V1)
+                .expect("golden identity must decode")
+                .serialize()
+                .as_ref(),
+            &GOLDEN_IDENTITY_PUBLIC_V1
+        );
+    }
+
+    #[test]
+    fn libsignal_verifier_accepts_valid_signature_and_rejects_tampering() {
+        let private_key = PrivateKey::deserialize(&[0x42; 32]).expect("fixed private key");
+        let public_key = private_key.public_key().expect("derive public key");
+        let identity = IdentityKey::new(public_key);
+        let transcript = b"ENIGMA_DEVICE_LINK_V1\ninterop-proof";
+        let mut rng = StdRng::from_seed([0x24; 32]);
+        let signature = private_key
+            .calculate_signature(transcript, &mut rng)
+            .expect("libsignal signature");
+        let verifier = LibsignalIdentityProofVerifier;
+
+        let valid = verifier.verify_identity_proof(&identity.serialize(), transcript, &signature);
+        assert_eq!(valid, Ok(true));
+
+        let tampered = verifier.verify_identity_proof(
+            &identity.serialize(),
+            b"ENIGMA_DEVICE_LINK_V1\ninterop-proof-tampered",
+            &signature,
+        );
+        assert_eq!(tampered, Ok(false));
+    }
+
+    #[test]
+    fn libsignal_verifier_rejects_malformed_identity_keys() {
+        let verifier = LibsignalIdentityProofVerifier;
+        assert_eq!(
+            verifier.verify_identity_proof(&[1, 2, 3], b"transcript", &[7; 64]),
+            Err(SignalAdapterError::CryptoFailure)
+        );
+    }
+
+    #[test]
+    fn signal_wire_encoder_round_trips_through_android_compatible_parser() {
+        let ciphertext = session::SessionCiphertext {
+            message_type: session::SessionMessageType::PreKey,
+            serialized: vec![1, 2, 3, 4],
+        };
+        let encoded = encode_signal_wire_envelope(
+            "11111111-1111-4111-8111-111111111111",
+            1,
+            "22222222-2222-4222-8222-222222222222",
+            1,
+            &ciphertext,
+        )
+        .expect("encode signal envelope");
+        let parsed = parse_signal_wire_envelope(&encoded, "22222222-2222-4222-8222-222222222222")
+            .expect("parse encoded signal envelope");
+        assert_eq!(
+            parsed.sender_device_id,
+            "11111111-1111-4111-8111-111111111111"
+        );
+        assert_eq!(parsed.sender_protocol_device_id, 1);
+        assert_eq!(parsed.recipient_protocol_device_id, 1);
+        assert_eq!(parsed.message_type, session::SessionMessageType::PreKey);
+        assert_eq!(parsed.ciphertext, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn signal_wire_encoder_round_trips_android_contract() {
+        let ciphertext = session::SessionCiphertext {
+            message_type: session::SessionMessageType::Signal,
+            serialized: vec![1, 2, 3, 4],
+        };
+        let wire = encode_signal_wire_envelope(
+            "11111111-1111-4111-8111-111111111111",
+            1,
+            "22222222-2222-4222-8222-222222222222",
+            1,
+            &ciphertext,
+        )
+        .expect("encode wire");
+        let parsed = parse_signal_wire_envelope(&wire, "22222222-2222-4222-8222-222222222222")
+            .expect("parse wire");
+        assert_eq!(
+            parsed.sender_device_id,
+            "11111111-1111-4111-8111-111111111111"
+        );
+        assert_eq!(parsed.message_type, session::SessionMessageType::Signal);
+        assert_eq!(parsed.ciphertext, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn android_signal_wire_envelope_parser_is_strict_and_device_bound() {
+        let json = r#"{"version":1,"algorithm":"Signal-Protocol-libsignal-0.86.5","messageType":"prekey","senderDeviceId":"11111111-1111-4111-8111-111111111111","senderProtocolDeviceId":1,"recipientDeviceId":"22222222-2222-4222-8222-222222222222","recipientProtocolDeviceId":1,"ciphertext":"AQID"}"#;
+        let outer = STANDARD_NO_PAD.encode(json.as_bytes());
+        let parsed = parse_signal_wire_envelope(&outer, "22222222-2222-4222-8222-222222222222")
+            .expect("valid Android wire envelope");
+        assert_eq!(
+            parsed.sender_device_id,
+            "11111111-1111-4111-8111-111111111111"
+        );
+        assert_eq!(parsed.sender_protocol_device_id, 1);
+        assert_eq!(parsed.message_type, session::SessionMessageType::PreKey);
+        assert_eq!(parsed.ciphertext, vec![1, 2, 3]);
+
+        assert_eq!(
+            parse_signal_wire_envelope(&outer, "33333333-3333-4333-8333-333333333333"),
+            Err(SignalAdapterError::InvalidWireEnvelope)
+        );
+
+        let tampered = STANDARD_NO_PAD.encode(
+            json.replace("\"messageType\":\"prekey\"", "\"messageType\":\"unknown\"")
+                .as_bytes(),
+        );
+        assert_eq!(
+            parse_signal_wire_envelope(&tampered, "22222222-2222-4222-8222-222222222222"),
+            Err(SignalAdapterError::InvalidWireEnvelope)
+        );
+    }
+
+    #[test]
+    fn signal_envelope_contract_matches_android_and_accepts_legacy_076() {
+        assert_eq!(SIGNAL_ENVELOPE_VERSION, 1);
+        assert_eq!(
+            SIGNAL_ENVELOPE_ALGORITHM,
+            "Signal-Protocol-libsignal-0.86.5"
+        );
+        assert!(signal_envelope_algorithm_supported(
+            SIGNAL_ENVELOPE_ALGORITHM
+        ));
+        assert!(signal_envelope_algorithm_supported(
+            SIGNAL_ENVELOPE_LEGACY_ALGORITHM_076
+        ));
+        assert!(!signal_envelope_algorithm_supported(
+            "Signal-Protocol-libsignal-unknown"
+        ));
+    }
+
+    #[test]
+    fn desktop_libsignal_source_is_pinned_to_full_immutable_sha() {
+        assert_eq!(DESKTOP_LIBSIGNAL_TAG, "v0.86.5");
+        assert!(is_full_lower_hex_sha(DESKTOP_LIBSIGNAL_SOURCE_PIN));
+        assert_eq!(
+            DESKTOP_LIBSIGNAL_SOURCE_PIN,
+            "b39e93f1a5e6531044dfcdf5876585cbcf08f884"
+        );
+    }
+
+    #[test]
+    fn desktop_backend_is_release_ready_after_cross_runtime_interop_verification() {
+        assert!(desktop_backend_release_ready());
+    }
+}

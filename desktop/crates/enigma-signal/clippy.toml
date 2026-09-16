@@ -1,0 +1,5 @@
+# This crate exposes protocol-boundary functions that must bind all Signal device
+# identifiers, protocol IDs, ciphertext/plaintext context and verification material
+# explicitly. Eight parameters is intentional for these two narrow crypto boundaries;
+# the rest of the workspace keeps the default Clippy threshold.
+too-many-arguments-threshold = 8

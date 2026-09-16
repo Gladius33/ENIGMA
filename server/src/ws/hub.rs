@@ -40,6 +40,7 @@ pub enum WsEvent {
     },
     P2pSignal {
         bubble_id: Uuid,
+        sender_user_id: Uuid,
         sender_device_id: Uuid,
         session_id: Uuid,
         signal_kind: String,
@@ -155,10 +156,12 @@ impl WsHub {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn notify_p2p_signal(
         &self,
         recipient_device_id: Uuid,
         bubble_id: Uuid,
+        sender_user_id: Uuid,
         sender_device_id: Uuid,
         session_id: Uuid,
         signal_kind: String,
@@ -171,6 +174,7 @@ impl WsHub {
         sender
             .send(WsEvent::P2pSignal {
                 bubble_id,
+                sender_user_id,
                 sender_device_id,
                 session_id,
                 signal_kind,
@@ -228,10 +232,12 @@ mod tests {
     #[test]
     fn p2p_signal_serializes_only_signaling_metadata() {
         let bubble_id = Uuid::parse_str("00000000-0000-0000-0000-000000000010").unwrap();
+        let sender_user_id = Uuid::parse_str("00000000-0000-0000-0000-000000000013").unwrap();
         let sender_device_id = Uuid::parse_str("00000000-0000-0000-0000-000000000011").unwrap();
         let session_id = Uuid::parse_str("00000000-0000-0000-0000-000000000012").unwrap();
         let json = serde_json::to_value(WsEvent::P2pSignal {
             bubble_id,
+            sender_user_id,
             sender_device_id,
             session_id,
             signal_kind: "offer".into(),
@@ -240,6 +246,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(json["type"], "p2p_signal");
+        assert_eq!(json["sender_user_id"], sender_user_id.to_string());
         assert_eq!(json["sender_device_id"], sender_device_id.to_string());
         assert_eq!(json["session_id"], session_id.to_string());
         assert_eq!(json["signal_kind"], "offer");

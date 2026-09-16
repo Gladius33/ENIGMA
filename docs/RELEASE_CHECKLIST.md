@@ -69,6 +69,15 @@ GRADLE_USER_HOME=/tmp/gradle-home \
 - Parcours stable verifie en FR et EN : onboarding, creation, recuperation, contacts, conversation, parametres, suppression.
 - Tests instrumentes : `compileDebugAndroidTestKotlin` vert, puis `connectedDebugAndroidTest` vert sur appareil/emulateur avant publication.
 
+## Gates desktop et multi-device
+
+- `desktop-ci` est vert sur Ubuntu et Windows : format, check, Clippy `-D warnings`, tests debug/release et documentation.
+- Le client Linux Qt6 compile contre l'ABI Rust et produit un paquet `.deb` dont le layout est valide.
+- Le client Windows WinUI 3 compile contre la meme ABI Rust et produit le livrable self-contained attendu.
+- Le gate Android <-> Rust libsignal valide pairing, PREKEY puis WHISPER dans les deux sens.
+- La policy `unsafe` desktop reste verte et aucune exception de securite n'est ajoutee pour faire passer la CI.
+- Le gate final manuel est `docs/V1_REAL_WORLD_TEST_PLAN.md` (`REAL-LAB-001`) sur Android, Windows et Linux : multi-device, P2P-first, NAT/CGNAT/TURN, relay fallback temporaire, ACK/TTL, changements reseau, sleep/wake et resilience processus.
+
 ## Gates produit
 
 - Deux appareils creent deux identites, s'ajoutent en contact et echangent A vers B puis B vers A.
@@ -76,8 +85,8 @@ GRADLE_USER_HOME=/tmp/gradle-home \
 - Les deux appareils affichent le meme code de securite pour la conversation; le marquage `verifie` persiste apres relance et se reinitialise si la cle distante change.
 - Discovery des cles ne consomme pas de one-time prekey; seul `claim-prekey` consomme et Android ne claim pas quand `hasSession` est vrai.
 - Les attachements ne sont telechargeables qu'apres `complete`/verification S3.
-- Groupes/canaux utilisent en V1 une enveloppe opaque chiffree par destinataire/device; sender-key Signal reste absent et doit etre annonce comme tel.
-- Appels audio/video WebRTC 1-to-1 passent sur deux appareils reels, avec offer/answer/ICE automatiques, micro/camera/speaker et aucun media transporte par le serveur applicatif.
+- Groupes/canaux restent experimentaux/post-1.0 tant qu'un protocole de groupe/sender-key et leur qualification production ne sont pas finalises; ils ne bloquent pas la RC 1.0 actuelle s'ils ne sont pas exposes comme production.
+- Les appels audio/video WebRTC restent post-1.0 pour la surface production. Leur validation deux appareils reels devient bloquante uniquement avant activation production de cette fonction.
 - Recuperation ajoute un nouvel appareil et avertit que les anciens messages peuvent etre perdus.
 - Suppression revoque sessions, appareils et prekeys, puis reserve le handle.
 - WebSocket livre les evenements en foreground; polling fallback recupere les messages apres relance.
@@ -85,4 +94,4 @@ GRADLE_USER_HOME=/tmp/gradle-home \
 
 ## Verdict release
 
-Declarer la V1 production-ready uniquement si tous les gates ci-dessus sont verts. Sinon publier comme beta testable ou release interne.
+Declarer la RC 1.0 qualifiee uniquement lorsque les gates automatises applicables sont verts et que `REAL-LAB-001` est passe. Les scenarios explicitement marques experimentaux/post-1.0 ne bloquent pas cette RC. Tant que `REAL-LAB-001` n'est pas passe, le statut maximal est `PRET POUR REAL LAB`, pas production-ready.

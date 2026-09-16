@@ -190,6 +190,19 @@ async fn core_endpoint_flow() {
         .expect("bob device token");
     assert_eq!(bob_device["token_type"], "Bearer");
 
+    let bob_second_login = login_user(app.clone(), &bob_public_id).await;
+    let bob_second_token = bob_second_login["access_token"]
+        .as_str()
+        .expect("bob second bootstrap token");
+    let bob_second_device = register_device(app.clone(), bob_second_token, "Bob Desktop").await;
+    let bob_second_device_id = bob_second_device["device"]["id"]
+        .as_str()
+        .expect("bob second device id");
+    let bob_second_device_token = bob_second_device["access_token"]
+        .as_str()
+        .expect("bob second device token");
+    assert_ne!(bob_second_device_id, bob_device_id);
+
     let (status, fcm) = request_json(
         app.clone(),
         Method::POST,
@@ -463,6 +476,81 @@ async fn core_endpoint_flow() {
     assert_eq!(sent["bubble_id"], main_bubble_id);
     assert_eq!(sent["client_message_id"], client_message_id);
 
+    let second_ciphertext = "b3BhcXVlLWNsaWVudC1lbmNyeXB0ZWQtZW52ZWxvcGUtYjI=";
+    let (status, second_sent) = request_json(
+        app.clone(),
+        Method::POST,
+        "/v1/messages",
+        Some(alice_device_token),
+        Some(json!({
+            "bubble_id": main_bubble_id,
+            "sender_device_id": alice_device_id,
+            "recipient_device_id": bob_second_device_id,
+            "client_message_id": client_message_id,
+            "message_type": "text",
+            "ciphertext": second_ciphertext
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second_sent}");
+    let second_message_id = second_sent["id"].as_str().expect("second message id");
+    assert_ne!(second_message_id, message_id);
+    assert_eq!(second_sent["client_message_id"], client_message_id);
+
+    let (status, second_retry) = request_json(
+        app.clone(),
+        Method::POST,
+        "/v1/messages",
+        Some(alice_device_token),
+        Some(json!({
+            "bubble_id": main_bubble_id,
+            "sender_device_id": alice_device_id,
+            "recipient_device_id": bob_second_device_id,
+            "client_message_id": client_message_id,
+            "message_type": "text",
+            "ciphertext": second_ciphertext
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second_retry}");
+    assert_eq!(second_retry["id"], second_message_id);
+
+    let (status, divergent_retry) = request_json(
+        app.clone(),
+        Method::POST,
+        "/v1/messages",
+        Some(alice_device_token),
+        Some(json!({
+            "bubble_id": main_bubble_id,
+            "sender_device_id": alice_device_id,
+            "recipient_device_id": bob_second_device_id,
+            "client_message_id": client_message_id,
+            "message_type": "text",
+            "ciphertext": "ZGl2ZXJnZW50LWNpcGhlcnRleHQ="
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{divergent_retry}");
+
+    let (status, second_pending) = request_json(
+        app.clone(),
+        Method::GET,
+        &format!("/v1/messages/pending?device_id={bob_second_device_id}"),
+        Some(bob_second_device_token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second_pending}");
+    assert_eq!(second_pending["messages"][0]["id"], second_message_id);
+    assert_eq!(
+        second_pending["messages"][0]["client_message_id"],
+        client_message_id
+    );
+    assert_eq!(
+        second_pending["messages"][0]["ciphertext"],
+        second_ciphertext
+    );
+
     let (status, pending) = request_json(
         app.clone(),
         Method::GET,
@@ -603,6 +691,30 @@ async fn core_endpoint_flow() {
             .len(),
         0
     );
+
+    let (status, second_device_receipt) = request_json(
+        app.clone(),
+        Method::POST,
+        &format!("/v1/messages/{second_message_id}/receipt"),
+        Some(bob_second_device_token),
+        Some(json!({"device_id": bob_second_device_id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second_device_receipt}");
+
+    let (status, second_pending_after_ack) = request_json(
+        app.clone(),
+        Method::GET,
+        &format!("/v1/messages/pending?device_id={bob_second_device_id}"),
+        Some(bob_second_device_token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second_pending_after_ack}");
+    assert!(second_pending_after_ack["messages"]
+        .as_array()
+        .expect("second device messages")
+        .is_empty());
 
     for message_type in ["text", "image", "file", "audio_message"] {
         send_and_ack_direct_message_type(

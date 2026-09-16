@@ -41,6 +41,12 @@ data class KeyBundleResponseDto(
     val devices: List<DeviceKeyBundleDto>,
 )
 
+data class DeviceAuthorizationProofDto(
+    @Json(name = "authorizing_device_id") val authorizingDeviceId: String,
+    @Json(name = "canonical_payload") val canonicalPayload: String,
+    @Json(name = "authorizer_signature") val authorizerSignature: String,
+)
+
 data class DeviceKeyBundleDto(
     @Json(name = "device_id") val deviceId: String,
     @Json(name = "identity_key") val identityKey: String,
@@ -52,6 +58,7 @@ data class DeviceKeyBundleDto(
     @Json(name = "one_time_prekey_count") val oneTimePreKeyCount: Int? = null,
     @Json(name = "one_time_prekey_count_after_claim") val oneTimePreKeyCountAfterClaim: Int? = null,
     @Json(name = "prekey_low") val prekeyLow: Boolean = false,
+    val authorization: DeviceAuthorizationProofDto? = null,
 )
 
 data class ClaimPreKeyResponseDto(

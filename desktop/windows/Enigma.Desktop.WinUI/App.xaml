@@ -1,0 +1,33 @@
+<Application
+    x:Class="Enigma.Desktop.WinUI.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="EnigmaBackgroundBrush" Color="#F7F8FA" />
+                    <SolidColorBrush x:Key="EnigmaSurfaceBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="EnigmaSurfaceVariantBrush" Color="#E9ECF3" />
+                    <SolidColorBrush x:Key="EnigmaPrimaryBrush" Color="#3157FF" />
+                    <SolidColorBrush x:Key="EnigmaSecondaryBrush" Color="#00B8D9" />
+                    <SolidColorBrush x:Key="EnigmaSecureBrush" Color="#00C896" />
+                    <SolidColorBrush x:Key="EnigmaWarningBrush" Color="#F5A524" />
+                    <SolidColorBrush x:Key="EnigmaDangerBrush" Color="#E5484D" />
+                    <SolidColorBrush x:Key="EnigmaTextBrush" Color="#101318" />
+                    <SolidColorBrush x:Key="EnigmaMutedTextBrush" Color="#5D6470" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="EnigmaBackgroundBrush" Color="#101318" />
+                    <SolidColorBrush x:Key="EnigmaSurfaceBrush" Color="#171B22" />
+                    <SolidColorBrush x:Key="EnigmaSurfaceVariantBrush" Color="#232936" />
+                    <SolidColorBrush x:Key="EnigmaPrimaryBrush" Color="#8EA2FF" />
+                    <SolidColorBrush x:Key="EnigmaSecondaryBrush" Color="#00B8D9" />
+                    <SolidColorBrush x:Key="EnigmaSecureBrush" Color="#00C896" />
+                    <SolidColorBrush x:Key="EnigmaTextBrush" Color="#F7F8FA" />
+                    <SolidColorBrush x:Key="EnigmaMutedTextBrush" Color="#AAB2C0" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

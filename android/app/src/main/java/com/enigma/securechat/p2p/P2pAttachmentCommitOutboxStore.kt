@@ -54,7 +54,9 @@ class P2pAttachmentCommitOutboxStore(
             validateEntry(candidate)
             val entries = readEntries().toMutableList()
             entries.firstOrNull {
-                it.senderDeviceId == senderDeviceId && it.clientMessageId == clientMessageId
+                it.senderDeviceId == senderDeviceId &&
+                    it.recipientDeviceId == recipientDeviceId &&
+                    it.clientMessageId == clientMessageId
             }?.let { existing ->
                 require(existing.bubbleId == bubbleId)
                 require(existing.recipientDeviceId == recipientDeviceId)
