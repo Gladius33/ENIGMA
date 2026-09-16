@@ -14,7 +14,7 @@
 #include <QListWidget>
 #include <QPalette>
 #include <QPixmap>
-#include <QPushButton>
+#include <QPushButton>\n#include <QSettings>
 #include <QSvgWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -90,7 +90,13 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("ENIGMA"));
     app.setOrganizationName(QStringLiteral("ENIGMA"));
-    UiLanguage language = systemLanguage();
+    QSettings settings;
+    const QString savedLanguage = settings.value(QStringLiteral("ui/language")).toString();
+    UiLanguage language = savedLanguage == QStringLiteral("fr")
+        ? UiLanguage::French
+        : savedLanguage == QStringLiteral("en")
+            ? UiLanguage::English
+            : systemLanguage();
 
     // Initialize the Rust/libsignal core and derive the initial operational state fail-closed.
     std::unique_ptr<enigma::Core> core;
@@ -262,7 +268,7 @@ int main(int argc, char* argv[]) {
     };
 
     // Render only normalized encrypted-inbox entries that match the selected contact.
-    const auto refreshMessages = [&core, contactSelector, messageList, &language]() {
+    const auto refreshMessages = [&core, contactSelector, messageList, &language, darkTheme]() {
         messageList->clear();
         if (!core || contactSelector->currentIndex() < 0) {
             auto* empty = new QListWidgetItem(
@@ -315,11 +321,54 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            auto* item = new QListWidgetItem(
-                outbound ? QStringLiteral("%1\n%2").arg(body, statusLabel) : body,
-                messageList);
-            item->setTextAlignment(outbound ? Qt::AlignRight : Qt::AlignLeft);
+            auto* item = new QListWidgetItem(messageList);
+            auto* row = new QWidget(messageList);
+            auto* rowLayout = new QHBoxLayout(row);
+            rowLayout->setContentsMargins(4, 2, 4, 2);
+            rowLayout->setSpacing(0);
+
+            auto* bubble = new QFrame(row);
+            auto* bubbleLayout = new QVBoxLayout(bubble);
+            bubbleLayout->setContentsMargins(14, 10, 14, 9);
+            bubbleLayout->setSpacing(3);
+
+            auto* bodyLabel = new QLabel(body, bubble);
+            bodyLabel->setWordWrap(true);
+            bodyLabel->setMaximumWidth(520);
+            bodyLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            bubbleLayout->addWidget(bodyLabel);
+
+            if (outbound && !statusLabel.isEmpty()) {
+                auto* delivery = new QLabel(statusLabel, bubble);
+                delivery->setAlignment(Qt::AlignRight);
+                delivery->setStyleSheet(QStringLiteral("font-size: 10px; opacity: 0.78;"));
+                bubbleLayout->addWidget(delivery);
+            }
+
+            const QString bubbleBackground = outbound
+                ? QString::fromUtf8(darkTheme ? enigma::design::kPrimaryDark : enigma::design::kPrimary)
+                : QString::fromUtf8(darkTheme ? enigma::design::kSurfaceVariantDark : enigma::design::kSurfaceVariantLight);
+            const QString bubbleText = outbound
+                ? QString::fromUtf8(darkTheme ? "#101318" : "#FFFFFF")
+                : QString::fromUtf8(darkTheme ? "#F7F8FA" : "#171B22");
+            bubble->setStyleSheet(
+                QStringLiteral(
+                    "QFrame { background: %1; border: none; border-radius: 14px; }"
+                    "QLabel { color: %2; background: transparent; border: none; }")
+                    .arg(bubbleBackground, bubbleText));
+            bubble->setMaximumWidth(560);
+
+            if (outbound) {
+                rowLayout->addStretch();
+                rowLayout->addWidget(bubble, 0, Qt::AlignRight);
+            } else {
+                rowLayout->addWidget(bubble, 0, Qt::AlignLeft);
+                rowLayout->addStretch();
+            }
+
             item->setToolTip(outbound ? statusLabel : l10n(language, "Reçu", "Received"));
+            item->setSizeHint(row->sizeHint());
+            messageList->setItemWidget(item, row);
         }
 
         if (messageList->count() == 0) {
@@ -640,10 +689,14 @@ int main(int argc, char* argv[]) {
          &core,
          coreReady,
          signalReadyForPairing,
-         &refreshMessages](int index) {
+         &refreshMessages,
+         &settings](int index) {
             const auto selected = static_cast<UiLanguage>(languageSelector->itemData(index).toInt());
             if (selected == language) return;
             language = selected;
+            settings.setValue(
+                QStringLiteral("ui/language"),
+                language == UiLanguage::French ? QStringLiteral("fr") : QStringLiteral("en"));
             title->setText(l10n(language, "Messagerie sécurisée", "Secure messaging"));
             secure->setText(l10n(language, "● Chiffrement de bout en bout", "● End-to-end encrypted"));
             pairDevice->setText(l10n(language, "Lier un appareil", "Link a device"));
