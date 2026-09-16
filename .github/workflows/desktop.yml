@@ -159,7 +159,7 @@ jobs:
           test -x "$stage/usr/bin/enigma_linux_desktop"
           test -f "$stage/usr/lib/enigma/libenigma_core.so"
           test -f "$stage/usr/share/applications/enigma.desktop"
-          test -f "$stage/usr/share/icons/hicolor/512x512/apps/enigma.png"
+          test -f "$stage/usr/share/icons/hicolor/192x192/apps/enigma.png"
       - name: Upload Debian distributable
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
