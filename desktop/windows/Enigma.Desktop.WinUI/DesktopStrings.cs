@@ -133,6 +133,7 @@ internal static class DesktopStrings
                 ? "Session autorisée. Publication des clés libsignal…"
                 : "Session authorized. Publishing libsignal keys…",
             "pair.success" => fr ? "Ordinateur lié et synchronisé avec succès." : "Computer linked and synchronized successfully.",
+            "pair.linked" => fr ? "Ordinateur lié avec succès." : "Computer linked successfully.",
             "pair.sync_retry" => fr ? "Ordinateur lié. La synchronisation sera réessayée." : "Computer linked. Synchronization will be retried.",
             "pair.sync_ok_detail" => fr ? "Rust/libsignal • synchronisation à jour" : "Rust/libsignal • synchronization up to date",
             "pair.sync_retry_detail" => fr ? "Rust/libsignal • synchronisation à réessayer" : "Rust/libsignal • synchronization needs retry",

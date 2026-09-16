@@ -262,7 +262,7 @@ int main(int argc, char* argv[]) {
     };
 
     // Render only normalized encrypted-inbox entries that match the selected contact.
-    const auto refreshMessages = [&core, contactSelector, messageList]() {
+    const auto refreshMessages = [&core, contactSelector, messageList, &language]() {
         messageList->clear();
         if (!core || contactSelector->currentIndex() < 0) {
             auto* empty = new QListWidgetItem(
@@ -354,15 +354,17 @@ int main(int argc, char* argv[]) {
     QObject::connect(
         &p2pWatcher,
         &QFutureWatcher<bool>::finished,
-        [&core, &p2pWatcher, &p2pInboxBefore, detail, &refreshMessages]() {
+        [&core, &p2pWatcher, &p2pInboxBefore, detail, &refreshMessages, &language]() {
             if (!core) return;
             const bool healthy = p2pWatcher.result();
             const std::size_t after = core->inboxCount();
             if (healthy && after != p2pInboxBefore) {
                 refreshMessages();
                 detail->setText(
-                    QStringLiteral(
-                        language == UiLanguage::French ? "P2P E2EE reçu • %1 message(s) local(aux) • fallback relais disponible" : "P2P E2EE received • %1 local message(s) • relay fallback available")
+                    l10n(
+                        language,
+                        "P2P E2EE reçu • %1 message(s) local(aux) • fallback relais disponible",
+                        "P2P E2EE received • %1 local message(s) • relay fallback available")
                         .arg(static_cast<qulonglong>(after)));
             }
         });
@@ -382,7 +384,8 @@ int main(int argc, char* argv[]) {
          openMessages,
          &refreshContacts,
          &refreshMessages,
-         messageList]() {
+         messageList,
+         &language]() {
             if (!core || !core->deviceSessionReady()) return;
 
             openMessages->setEnabled(false);
@@ -425,7 +428,8 @@ int main(int argc, char* argv[]) {
          messageComposer,
          detail,
          sendMessage,
-         &refreshMessages]() {
+         &refreshMessages,
+         &language]() {
             if (!core || contactSelector->currentIndex() < 0) return;
             const QString plaintext = messageComposer->text().trimmed();
             if (plaintext.isEmpty()) return;
@@ -443,10 +447,14 @@ int main(int argc, char* argv[]) {
                 refreshMessages();
                 detail->setText(
                     pending == 0
-                        ? QStringLiteral(
-                              language == UiLanguage::French ? "Message chiffré et remis à tous les appareils disponibles." : "Encrypted message delivered to all available devices.")
-                        : QStringLiteral(
-                              language == UiLanguage::French ? "Message chiffré • %1 livraison(s) durablement en attente." : "Encrypted message • %1 durable delivery item(s) pending.")
+                        ? l10n(
+                              language,
+                              "Message chiffré et remis à tous les appareils disponibles.",
+                              "Encrypted message delivered to all available devices.")
+                        : l10n(
+                              language,
+                              "Message chiffré • %1 livraison(s) durablement en attente.",
+                              "Encrypted message • %1 durable delivery item(s) pending.")
                               .arg(static_cast<qulonglong>(pending)));
             } else {
                 detail->setText(
@@ -470,7 +478,8 @@ int main(int argc, char* argv[]) {
          openMessages,
          &p2pTimer,
          &refreshContacts,
-         &refreshMessages]() {
+         &refreshMessages,
+         &language]() {
         if (!core || !core->signalReady() || !core->startPairing()) return;
 
         const std::string svg = core->pairingSvg();
@@ -528,7 +537,8 @@ int main(int argc, char* argv[]) {
              openMessages,
              &p2pTimer,
              &refreshContacts,
-             &refreshMessages]() {
+             &refreshMessages,
+             &language]() {
             if (!core) return;
             finalize->setEnabled(false);
             const std::uint32_t claimState = core->deviceSessionReady()
@@ -543,8 +553,10 @@ int main(int argc, char* argv[]) {
                     pairingStatus->setText(
                         synchronized && outboundFlushed
                             ? l10n(language, "Ordinateur lié et synchronisé avec succès.", "Computer linked and synchronized successfully.")
-                            : QStringLiteral(
-                                  "Ordinateur lié. La synchronisation sera réessayée."));
+                            : l10n(
+                                  language,
+                                  "Ordinateur lié. La synchronisation sera réessayée.",
+                                  "Computer linked. Synchronization will be retried."));
                     status->setText(l10n(language, "Cœur sécurisé prêt • appareil lié", "Secure core ready • device linked"));
                     contactSelector->setEnabled(true);
                     messageComposer->setEnabled(true);
@@ -561,9 +573,10 @@ int main(int argc, char* argv[]) {
                     return;
                 }
 
-                pairingStatus->setText(QStringLiteral(
-                    language == UiLanguage::French ? "Ordinateur autorisé, mais l’initialisation réseau a échoué. " : "Computer authorized, but network initialization failed. "
-                    language == UiLanguage::French ? "Réessayez sans rescanner le QR." : "Retry without scanning the QR again."));
+                pairingStatus->setText(l10n(
+                    language,
+                    "Ordinateur autorisé, mais l’initialisation réseau a échoué. Réessayez sans rescanner le QR.",
+                    "Computer authorized, but network initialization failed. Retry without scanning the QR again."));
                 finalize->setText(l10n(language, "Réessayer l’initialisation", "Retry initialization"));
                 finalize->setEnabled(true);
             };

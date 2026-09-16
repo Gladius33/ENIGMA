@@ -331,7 +331,7 @@ public sealed partial class MainWindow : Window
                         bool initialized = await Task.Run(() => _core.InitializeDevice());
                         if (initialized)
                         {
-                            pairingStatus.Text = "Ordinateur lié avec succès.";
+                            pairingStatus.Text = T("pair.linked");
                             CoreStatusText.Text = T("status.ready");
                             bool outboxFlushed = await Task.Run(() => _core.RetryOutbox());
                             bool synchronized = await Task.Run(() => _core.SyncPending());
@@ -347,6 +347,7 @@ public sealed partial class MainWindow : Window
                             RefreshContacts();
                             RefreshMessages();
                             _p2pPollTimer.Start();
+                            DevicesButton.Content = T("devices.manage");
                             dialog.Hide();
                         }
                         else
