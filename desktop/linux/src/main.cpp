@@ -7,14 +7,17 @@
 #include <QDialog>
 #include <QFont>
 #include <QFrame>
-#include <QFutureWatcher>\n#include <QIcon>\n#include <QLocale>
+#include <QFutureWatcher>
+#include <QIcon>
+#include <QLocale>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPalette>
 #include <QPixmap>
-#include <QPushButton>\n#include <QSettings>
+#include <QPushButton>
+#include <QSettings>
 #include <QSvgWidget>
 #include <QTimer>
 #include <QVBoxLayout>
