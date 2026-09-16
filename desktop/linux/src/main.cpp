@@ -213,9 +213,15 @@ int main(int argc, char* argv[]) {
     auto* secure = new QLabel(l10n(language, "● Chiffrement de bout en bout", "● End-to-end encrypted"), surface);
     secure->setObjectName(QStringLiteral("secure"));
 
-    auto* pairDevice = new QPushButton(l10n(language, "Lier un appareil", "Link a device"), surface);
+    auto* pairDevice = new QPushButton(
+        coreReady
+            ? l10n(language, "Appareil lié", "Device linked")
+            : core && core->deviceSessionReady()
+                ? l10n(language, "Réessayer la connexion", "Retry connection")
+                : l10n(language, "Lier un appareil", "Link a device"),
+        surface);
     pairDevice->setAccessibleName(l10n(language, "Lier un appareil Android", "Link an Android device"));
-    pairDevice->setEnabled(signalReadyForPairing);
+    pairDevice->setEnabled(signalReadyForPairing && !coreReady);
     pairDevice->setToolTip(
         signalReadyForPairing
             ? l10n(language, "Créer un QR d’appairage court-vivant.", "Create a short-lived pairing QR code.")
@@ -528,8 +534,51 @@ int main(int argc, char* argv[]) {
          &p2pTimer,
          &refreshContacts,
          &refreshMessages,
-         &language]() {
-        if (!core || !core->signalReady() || !core->startPairing()) return;
+         &language,
+         pairDevice,
+         &coreReady]() {
+        if (!core || !core->signalReady()) return;
+
+        if (core->deviceSessionReady()) {
+            pairDevice->setEnabled(false);
+            detail->setText(l10n(
+                language,
+                "Réinitialisation de la connexion sécurisée…",
+                "Retrying secure connection…"));
+            if (!core->initializeDevice()) {
+                status->setText(l10n(
+                    language,
+                    "Session liée • initialisation réseau requise",
+                    "Linked session • network initialization required"));
+                detail->setText(l10n(
+                    language,
+                    "Ordinateur autorisé, mais l’initialisation réseau a échoué. Réessayez.",
+                    "Computer authorized, but network initialization failed. Retry."));
+                pairDevice->setText(l10n(language, "Réessayer la connexion", "Retry connection"));
+                pairDevice->setEnabled(true);
+                return;
+            }
+
+            coreReady = true;
+            const bool outboundFlushed = core->retryOutbox();
+            const bool synchronized = core->syncPending();
+            status->setText(l10n(language, "Cœur sécurisé prêt • appareil lié", "Secure core ready • device linked"));
+            detail->setText(
+                synchronized && outboundFlushed
+                    ? l10n(language, "Rust/libsignal • synchronisation à jour", "Rust/libsignal • synchronization up to date")
+                    : l10n(language, "Rust/libsignal • synchronisation à réessayer", "Rust/libsignal • synchronization needs retry"));
+            contactSelector->setEnabled(true);
+            messageComposer->setEnabled(true);
+            sendMessage->setEnabled(true);
+            openMessages->setEnabled(true);
+            refreshContacts();
+            refreshMessages();
+            p2pTimer.start();
+            pairDevice->setText(l10n(language, "Appareil lié", "Device linked"));
+            return;
+        }
+
+        if (!core->startPairing()) return;
 
         const std::string svg = core->pairingSvg();
         const std::string uri = core->pairingUri();
@@ -587,7 +636,9 @@ int main(int argc, char* argv[]) {
              &p2pTimer,
              &refreshContacts,
              &refreshMessages,
-             &language]() {
+             &language,
+             pairDevice,
+             &coreReady]() {
             if (!core) return;
             finalize->setEnabled(false);
             const std::uint32_t claimState = core->deviceSessionReady()
@@ -606,7 +657,10 @@ int main(int argc, char* argv[]) {
                                   language,
                                   "Ordinateur lié. La synchronisation sera réessayée.",
                                   "Computer linked. Synchronization will be retried."));
+                    coreReady = true;
                     status->setText(l10n(language, "Cœur sécurisé prêt • appareil lié", "Secure core ready • device linked"));
+                    pairDevice->setText(l10n(language, "Appareil lié", "Device linked"));
+                    pairDevice->setEnabled(false);
                     contactSelector->setEnabled(true);
                     messageComposer->setEnabled(true);
                     sendMessage->setEnabled(true);
@@ -687,7 +741,7 @@ int main(int argc, char* argv[]) {
          status,
          detail,
          &core,
-         coreReady,
+         &coreReady,
          signalReadyForPairing,
          &refreshMessages,
          &settings](int index) {
@@ -699,7 +753,13 @@ int main(int argc, char* argv[]) {
                 language == UiLanguage::French ? QStringLiteral("fr") : QStringLiteral("en"));
             title->setText(l10n(language, "Messagerie sécurisée", "Secure messaging"));
             secure->setText(l10n(language, "● Chiffrement de bout en bout", "● End-to-end encrypted"));
-            pairDevice->setText(l10n(language, "Lier un appareil", "Link a device"));
+            pairDevice->setText(
+                coreReady
+                    ? l10n(language, "Appareil lié", "Device linked")
+                    : core && core->deviceSessionReady()
+                        ? l10n(language, "Réessayer la connexion", "Retry connection")
+                        : l10n(language, "Lier un appareil", "Link a device"));
+            pairDevice->setEnabled(signalReadyForPairing && !coreReady);
             pairDevice->setAccessibleName(l10n(language, "Lier un appareil Android", "Link an Android device"));
             openMessages->setText(l10n(language, "Actualiser", "Refresh"));
             openMessages->setAccessibleName(l10n(language, "Actualiser les messages", "Refresh messages"));

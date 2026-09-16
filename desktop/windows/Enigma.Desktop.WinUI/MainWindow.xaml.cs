@@ -50,7 +50,7 @@ public sealed partial class MainWindow : Window
         HeaderSubtitleText.Text = T("header.subtitle");
         RefreshButton.Content = T("refresh");
         DevicesButton.Content = _core?.DeviceSessionReady == true
-            ? T("devices.manage")
+            ? (_p2pPollTimer.IsEnabled ? T("devices.linked") : T("devices.retry"))
             : T("devices.pair");
         CryptoNoticeText.Text = T("crypto.notice");
         ContactSelector.PlaceholderText = T("contact.choose");
@@ -162,8 +162,12 @@ public sealed partial class MainWindow : Window
             ContactSelector.IsEnabled = operationalReady;
             SendButton.IsEnabled = operationalReady;
             RefreshButton.IsEnabled = operationalReady;
-            DevicesButton.IsEnabled = signalReady;
-            DevicesButton.Content = sessionReady ? T("devices.manage") : T("devices.pair");
+            DevicesButton.IsEnabled = signalReady && !operationalReady;
+            DevicesButton.Content = operationalReady
+                ? T("devices.linked")
+                : sessionReady
+                    ? T("devices.retry")
+                    : T("devices.pair");
             if (operationalReady)
             {
                 RefreshContacts();
@@ -235,6 +239,37 @@ public sealed partial class MainWindow : Window
     {
         if (_core is null || !_core.SignalReady)
         {
+            return;
+        }
+
+        if (_core.DeviceSessionReady)
+        {
+            DevicesButton.IsEnabled = false;
+            CoreDetailText.Text = T("network.retrying");
+            bool initialized = await Task.Run(() => _core.InitializeDevice());
+            if (!initialized)
+            {
+                CoreStatusText.Text = T("status.session_network");
+                CoreDetailText.Text = T("pair.init_failed");
+                DevicesButton.Content = T("devices.retry");
+                DevicesButton.IsEnabled = true;
+                return;
+            }
+
+            bool outboxFlushed = await Task.Run(() => _core.RetryOutbox());
+            bool synchronized = await Task.Run(() => _core.SyncPending());
+            CoreStatusText.Text = T("status.ready");
+            CoreDetailText.Text = synchronized && outboxFlushed
+                ? F("detail.ready", EnigmaCoreClient.AbiVersion, _core.InboxCount)
+                : F("detail.pending", EnigmaCoreClient.AbiVersion, _core.OutboxCount);
+            MessageComposer.IsEnabled = true;
+            ContactSelector.IsEnabled = true;
+            SendButton.IsEnabled = true;
+            RefreshButton.IsEnabled = true;
+            RefreshContacts();
+            RefreshMessages();
+            _p2pPollTimer.Start();
+            DevicesButton.Content = T("devices.linked");
             return;
         }
 
@@ -352,7 +387,8 @@ public sealed partial class MainWindow : Window
                             RefreshContacts();
                             RefreshMessages();
                             _p2pPollTimer.Start();
-                            DevicesButton.Content = T("devices.manage");
+                            DevicesButton.Content = T("devices.linked");
+                            DevicesButton.IsEnabled = false;
                             dialog.Hide();
                         }
                         else

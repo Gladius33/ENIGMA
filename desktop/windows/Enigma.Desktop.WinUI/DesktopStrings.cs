@@ -82,6 +82,8 @@ internal static class DesktopStrings
             "refresh" => fr ? "Actualiser" : "Refresh",
             "devices.pair" => fr ? "Lier cet ordinateur" : "Link this computer",
             "devices.manage" => fr ? "Appareils" : "Devices",
+            "devices.linked" => fr ? "Appareil lié" : "Device linked",
+            "devices.retry" => fr ? "Réessayer la connexion" : "Retry connection",
             "crypto.notice" => fr
                 ? "Les opérations cryptographiques restent confinées au cœur Rust/libsignal partagé."
                 : "Cryptographic operations stay confined to the shared Rust/libsignal core.",
@@ -120,6 +122,7 @@ internal static class DesktopStrings
                 ? "P2P E2EE reçu • {0} message(s) local(aux) • fallback relais disponible"
                 : "P2P E2EE received • {0} local message(s) • relay fallback available",
             "pair.create_failed" => fr ? "Création de la session d’appairage impossible" : "Unable to create pairing session",
+            "network.retrying" => fr ? "Réinitialisation de la connexion sécurisée…" : "Retrying secure connection…",
             "pair.title" => fr ? "Lier cet ordinateur" : "Link this computer",
             "pair.scan" => fr
                 ? "Scannez ce code depuis ENIGMA sur votre appareil Android autorisé."
