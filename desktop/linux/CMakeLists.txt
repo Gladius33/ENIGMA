@@ -60,8 +60,8 @@ install(
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/enigma"
 )
 install(
-    FILES "${CMAKE_CURRENT_SOURCE_DIR}/../../android/app/src/main/res/drawable-nodpi/enigma_logo.png"
-    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps"
+    FILES "${CMAKE_CURRENT_SOURCE_DIR}/../../android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/192x192/apps"
     RENAME enigma.png
 )
 install(
