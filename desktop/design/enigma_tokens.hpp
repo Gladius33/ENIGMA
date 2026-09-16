@@ -10,8 +10,8 @@ inline constexpr auto kWarning = "#F5A524";
 inline constexpr auto kDanger = "#E5484D";
 inline constexpr auto kBackgroundLight = "#F7F8FA";
 inline constexpr auto kBackgroundDark = "#101318";
-inline constexpr auto kSurfaceLight = "#FFFFFF";
-inline constexpr auto kSurfaceDark = "#171B22";
+inline constexpr auto kSurfaceLight = "#FFFFFF";\ninline constexpr auto kSurfaceVariantLight = "#E9ECF3";
+inline constexpr auto kSurfaceDark = "#171B22";\ninline constexpr auto kSurfaceVariantDark = "#232936";
 
 inline constexpr int kSpacingXs = 4;
 inline constexpr int kSpacingSm = 8;

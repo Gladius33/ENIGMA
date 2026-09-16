@@ -63,7 +63,7 @@
                 <ListView SelectionMode="Single" AutomationProperties.Name="Conversations">
                     <ListViewItem IsSelected="True">
                         <StackPanel Spacing="4">
-                            <TextBlock Text="Appareil principal" FontWeight="SemiBold" />
+                            <TextBlock x:Name="DeviceSessionText" Text="Session desktop" FontWeight="SemiBold" />
                             <TextBlock
                                 x:Name="CoreDetailText"
                                 Text="Vérification du cœur Rust/libsignal"
@@ -104,6 +104,13 @@
                             Foreground="{ThemeResource EnigmaMutedTextBrush}" />
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <ComboBox
+                            x:Name="LanguageSelector"
+                            Width="118"
+                            AutomationProperties.Name="Language">
+                            <ComboBoxItem Content="Français" Tag="fr" />
+                            <ComboBoxItem Content="English" Tag="en" />
+                        </ComboBox>
                         <Button
                             x:Name="RefreshButton"
                             Content="Actualiser"

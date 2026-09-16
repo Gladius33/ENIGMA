@@ -7,7 +7,7 @@
 #include <QDialog>
 #include <QFont>
 #include <QFrame>
-#include <QFutureWatcher>
+#include <QFutureWatcher>\n#include <QIcon>\n#include <QLocale>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -28,6 +28,21 @@
 #include "enigma_core.hpp"
 
 namespace {
+
+enum class UiLanguage {
+    French,
+    English,
+};
+
+UiLanguage systemLanguage() {
+    return QLocale::system().language() == QLocale::French
+        ? UiLanguage::French
+        : UiLanguage::English;
+}
+
+QString l10n(UiLanguage language, const char* fr, const char* en) {
+    return QString::fromUtf8(language == UiLanguage::French ? fr : en);
+}
 
 bool isDarkPalette(const QPalette& palette) {
     return palette.color(QPalette::Window).lightness() < 128;
@@ -52,7 +67,11 @@ QString buildStyleSheet(bool dark) {
                "QPushButton { background: %8; color: white; border: none; border-radius: 10px;"
                " padding: 10px 18px; font-size: 14px; font-weight: 600; }"
                "QPushButton:focus { outline: 2px solid %9; }"
-               "QPushButton:disabled { background: %4; color: %6; }")
+               "QPushButton:disabled { background: %4; color: %6; }"
+               "QComboBox, QLineEdit, QListWidget { background: %3; color: %2; border: 1px solid %4;"
+               " border-radius: 10px; padding: 8px; font-size: 14px; }"
+               "QComboBox:focus, QLineEdit:focus, QListWidget:focus { border: 2px solid %9; }"
+               "QListWidget { padding: 6px; }")
         .arg(background)
         .arg(text)
         .arg(surface)
@@ -71,13 +90,14 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("ENIGMA"));
     app.setOrganizationName(QStringLiteral("ENIGMA"));
+    UiLanguage language = systemLanguage();
 
     // Initialize the Rust/libsignal core and derive the initial operational state fail-closed.
     std::unique_ptr<enigma::Core> core;
     bool coreReady = false;
     bool signalReadyForPairing = false;
-    QString coreStatus = QStringLiteral("Cœur sécurisé indisponible");
-    QString coreDetail = QStringLiteral("Le cœur Rust/libsignal n’est pas prêt");
+    QString coreStatus = l10n(language, "Cœur sécurisé indisponible", "Secure core unavailable");
+    QString coreDetail = l10n(language, "Le cœur Rust/libsignal n’est pas prêt", "The Rust/libsignal core is not ready");
 
     try {
         core = std::make_unique<enigma::Core>();
@@ -93,28 +113,28 @@ int main(int argc, char* argv[]) {
         const std::size_t inboxCount = coreReady ? core->inboxCount() : 0;
         const std::size_t outboxCount = coreReady ? core->outboxCount() : 0;
         if (coreReady) {
-            coreStatus = QStringLiteral("Cœur sécurisé prêt • appareil lié");
+            coreStatus = l10n(language, "Cœur sécurisé prêt • appareil lié", "Secure core ready • device linked");
             coreDetail = inboxSynced && outboxFlushed
-                ? QStringLiteral("Rust/libsignal • ABI %1 • %2 message(s) local(aux)")
+                ? l10n(language, "Rust/libsignal • ABI %1 • %2 message(s) local(aux)", "Rust/libsignal • ABI %1 • %2 local message(s)")
                       .arg(enigma::linked_core_abi_version())
                       .arg(static_cast<qulonglong>(inboxCount))
-                : QStringLiteral("Rust/libsignal • ABI %1 • %2 livraison(s) en attente")
+                : l10n(language, "Rust/libsignal • ABI %1 • %2 livraison(s) en attente", "Rust/libsignal • ABI %1 • %2 pending delivery item(s)")
                       .arg(enigma::linked_core_abi_version())
                       .arg(static_cast<qulonglong>(outboxCount));
         } else if (signalReady && sessionReady) {
-            coreStatus = QStringLiteral("Session liée • initialisation réseau requise");
+            coreStatus = l10n(language, "Session liée • initialisation réseau requise", "Linked session • network initialization required");
             coreDetail = QStringLiteral(
                 "Session device restaurée, mais la publication des prekeys doit être réessayée");
         } else if (signalReady) {
-            coreStatus = QStringLiteral("Appairage Android requis");
-            coreDetail = QStringLiteral("Identité libsignal prête • liez cet ordinateur depuis Android");
+            coreStatus = l10n(language, "Appairage Android requis", "Android pairing required");
+            coreDetail = l10n(language, "Identité libsignal prête • liez cet ordinateur depuis Android", "Libsignal identity ready • link this computer from Android");
         } else if (runtimeReady) {
-            coreStatus = QStringLiteral("Identité E2EE protégée requise");
-            coreDetail = QStringLiteral("Rust chargé • ABI %1 • identité libsignal non restaurée")
+            coreStatus = l10n(language, "Identité E2EE protégée requise", "Protected E2EE identity required");
+            coreDetail = l10n(language, "Rust chargé • ABI %1 • identité libsignal non restaurée", "Rust loaded • ABI %1 • libsignal identity not restored")
                              .arg(enigma::linked_core_abi_version());
         }
     } catch (const std::exception& error) {
-        coreDetail = QStringLiteral("Initialisation du cœur ENIGMA impossible : %1")
+        coreDetail = l10n(language, "Initialisation du cœur ENIGMA impossible : %1", "Unable to initialize the ENIGMA core: %1")
                          .arg(QString::fromUtf8(error.what()));
     }
 
@@ -122,9 +142,11 @@ int main(int argc, char* argv[]) {
     QWidget window;
     window.setObjectName(QStringLiteral("root"));
     window.setWindowTitle(QStringLiteral("ENIGMA"));
-    window.resize(860, 560);
-    window.setMinimumSize(640, 420);
-    window.setStyleSheet(buildStyleSheet(isDarkPalette(app.palette())));
+    window.setWindowIcon(QIcon(QStringLiteral(":/enigma/enigma_logo.png")));
+    window.resize(920, 620);
+    window.setMinimumSize(680, 460);
+    const bool darkTheme = isDarkPalette(app.palette());
+    window.setStyleSheet(buildStyleSheet(darkTheme));
 
     // Compose the persistent application chrome and spacing from shared ENIGMA design tokens.
     auto* root = new QVBoxLayout(&window);
@@ -148,9 +170,16 @@ int main(int argc, char* argv[]) {
     brand->setObjectName(QStringLiteral("brand"));
     brand->setAccessibleName(QStringLiteral("ENIGMA"));
 
+    auto* languageSelector = new QComboBox(&window);
+    languageSelector->addItem(QStringLiteral("Français"), static_cast<int>(UiLanguage::French));
+    languageSelector->addItem(QStringLiteral("English"), static_cast<int>(UiLanguage::English));
+    languageSelector->setCurrentIndex(language == UiLanguage::French ? 0 : 1);
+    languageSelector->setAccessibleName(QStringLiteral("Language"));
+
     header->addWidget(logo);
     header->addWidget(brand);
     header->addStretch();
+    header->addWidget(languageSelector);
     root->addLayout(header);
 
     // The secure surface contains status, contacts, encrypted history and message controls.
@@ -164,7 +193,7 @@ int main(int argc, char* argv[]) {
         enigma::design::kSpacingLg);
     content->setSpacing(enigma::design::kSpacingMd);
 
-    auto* title = new QLabel(QStringLiteral("Messagerie sécurisée"), surface);
+    auto* title = new QLabel(l10n(language, "Messagerie sécurisée", "Secure messaging"), surface);
     title->setObjectName(QStringLiteral("headline"));
 
     auto* status = new QLabel(coreStatus, surface);
@@ -175,43 +204,45 @@ int main(int argc, char* argv[]) {
     detail->setObjectName(QStringLiteral("body"));
     detail->setWordWrap(true);
 
-    auto* secure = new QLabel(QStringLiteral("● Chiffrement de bout en bout"), surface);
+    auto* secure = new QLabel(l10n(language, "● Chiffrement de bout en bout", "● End-to-end encrypted"), surface);
     secure->setObjectName(QStringLiteral("secure"));
 
-    auto* pairDevice = new QPushButton(QStringLiteral("Lier un appareil"), surface);
-    pairDevice->setAccessibleName(QStringLiteral("Lier un appareil Android"));
+    auto* pairDevice = new QPushButton(l10n(language, "Lier un appareil", "Link a device"), surface);
+    pairDevice->setAccessibleName(l10n(language, "Lier un appareil Android", "Link an Android device"));
     pairDevice->setEnabled(signalReadyForPairing);
     pairDevice->setToolTip(
         signalReadyForPairing
-            ? QStringLiteral("Créer un QR d’appairage court-vivant.")
+            ? l10n(language, "Créer un QR d’appairage court-vivant.", "Create a short-lived pairing QR code.")
             : coreDetail);
 
-    auto* openMessages = new QPushButton(QStringLiteral("Actualiser"), surface);
-    openMessages->setAccessibleName(QStringLiteral("Actualiser les messages"));
+    auto* openMessages = new QPushButton(l10n(language, "Actualiser", "Refresh"), surface);
+    openMessages->setAccessibleName(l10n(language, "Actualiser les messages", "Refresh messages"));
     openMessages->setEnabled(coreReady);
     openMessages->setToolTip(
         coreReady
-            ? QStringLiteral("Le cœur Rust/libsignal est prêt.")
+            ? l10n(language, "Le cœur Rust/libsignal est prêt.", "The Rust/libsignal core is ready.")
             : coreDetail);
 
     auto* contactSelector = new QComboBox(surface);
-    contactSelector->setAccessibleName(QStringLiteral("Choisir un contact"));
+    contactSelector->setAccessibleName(l10n(language, "Choisir un contact", "Choose a contact"));
     contactSelector->setEnabled(coreReady);
 
     auto* messageComposer = new QLineEdit(surface);
     messageComposer->setPlaceholderText(QStringLiteral("Message"));
-    messageComposer->setAccessibleName(QStringLiteral("Composer un message"));
+    messageComposer->setAccessibleName(l10n(language, "Composer un message", "Compose a message"));
     messageComposer->setEnabled(coreReady);
 
-    auto* sendMessage = new QPushButton(QStringLiteral("Envoyer"), surface);
-    sendMessage->setAccessibleName(QStringLiteral("Envoyer le message"));
+    auto* sendMessage = new QPushButton(l10n(language, "Envoyer", "Send"), surface);
+    sendMessage->setAccessibleName(l10n(language, "Envoyer le message", "Send message"));
     sendMessage->setEnabled(coreReady);
 
     auto* messageList = new QListWidget(surface);
-    messageList->setAccessibleName(QStringLiteral("Historique des messages chiffrés"));
+    messageList->setAccessibleName(l10n(language, "Historique des messages chiffrés", "Encrypted message history"));
     messageList->setSelectionMode(QAbstractItemView::NoSelection);
     messageList->setWordWrap(true);
-    messageList->setMinimumHeight(180);
+    messageList->setMinimumHeight(220);
+    messageList->setSpacing(enigma::design::kSpacingSm);
+    messageList->setFrameShape(QFrame::NoFrame);
 
     // Rebuild the contact model from authenticated core state; malformed JSON is ignored safely.
     const auto refreshContacts = [&core, contactSelector]() {
@@ -235,7 +266,7 @@ int main(int argc, char* argv[]) {
         messageList->clear();
         if (!core || contactSelector->currentIndex() < 0) {
             auto* empty = new QListWidgetItem(
-                QStringLiteral("Sélectionnez un contact pour afficher la conversation."),
+                l10n(language, "Sélectionnez un contact pour afficher la conversation.", "Select a contact to display the conversation."),
                 messageList);
             empty->setFlags(Qt::NoItemFlags);
             return;
@@ -272,15 +303,15 @@ int main(int argc, char* argv[]) {
             QString statusLabel;
             if (outbound) {
                 if (deliveryStatus == QStringLiteral("read")) {
-                    statusLabel = QStringLiteral("Lu");
+                    statusLabel = l10n(language, "Lu", "Read");
                 } else if (deliveryStatus == QStringLiteral("delivered")) {
-                    statusLabel = QStringLiteral("Livré");
+                    statusLabel = l10n(language, "Livré", "Delivered");
                 } else if (deliveryStatus == QStringLiteral("sent")) {
-                    statusLabel = QStringLiteral("Envoyé");
+                    statusLabel = l10n(language, "Envoyé", "Sent");
                 } else if (deliveryStatus == QStringLiteral("queued")) {
-                    statusLabel = QStringLiteral("En attente");
+                    statusLabel = l10n(language, "En attente", "Queued");
                 } else {
-                    statusLabel = QStringLiteral("Synchronisé");
+                    statusLabel = l10n(language, "Synchronisé", "Synchronized");
                 }
             }
 
@@ -288,12 +319,12 @@ int main(int argc, char* argv[]) {
                 outbound ? QStringLiteral("%1\n%2").arg(body, statusLabel) : body,
                 messageList);
             item->setTextAlignment(outbound ? Qt::AlignRight : Qt::AlignLeft);
-            item->setToolTip(outbound ? statusLabel : QStringLiteral("Reçu"));
+            item->setToolTip(outbound ? statusLabel : l10n(language, "Reçu", "Received"));
         }
 
         if (messageList->count() == 0) {
             auto* empty = new QListWidgetItem(
-                QStringLiteral("Aucun message local pour ce contact."),
+                l10n(language, "Aucun message local pour ce contact.", "No local message for this contact."),
                 messageList);
             empty->setFlags(Qt::NoItemFlags);
         }
@@ -331,7 +362,7 @@ int main(int argc, char* argv[]) {
                 refreshMessages();
                 detail->setText(
                     QStringLiteral(
-                        "P2P E2EE reçu • %1 message(s) local(aux) • relay fallback disponible")
+                        language == UiLanguage::French ? "P2P E2EE reçu • %1 message(s) local(aux) • fallback relais disponible" : "P2P E2EE received • %1 local message(s) • relay fallback available")
                         .arg(static_cast<qulonglong>(after)));
             }
         });
@@ -368,9 +399,9 @@ int main(int argc, char* argv[]) {
             const std::size_t outboxCount = core->outboxCount();
             detail->setText(
                 synchronized && outboundFlushed
-                    ? QStringLiteral("Synchronisation à jour • %1 message(s) local(aux)")
+                    ? l10n(language, "Synchronisation à jour • %1 message(s) local(aux)", "Synchronization up to date • %1 local message(s)")
                           .arg(static_cast<qulonglong>(inboxCount))
-                    : QStringLiteral("Synchronisation partielle • %1 livraison(s) en attente")
+                    : l10n(language, "Synchronisation partielle • %1 livraison(s) en attente", "Partial synchronization • %1 pending delivery item(s)")
                           .arg(static_cast<qulonglong>(outboxCount)));
 
             contactSelector->setEnabled(true);
@@ -413,13 +444,13 @@ int main(int argc, char* argv[]) {
                 detail->setText(
                     pending == 0
                         ? QStringLiteral(
-                              "Message chiffré et remis à tous les appareils disponibles.")
+                              language == UiLanguage::French ? "Message chiffré et remis à tous les appareils disponibles." : "Encrypted message delivered to all available devices.")
                         : QStringLiteral(
-                              "Message chiffré • %1 livraison(s) durablement en attente.")
+                              language == UiLanguage::French ? "Message chiffré • %1 livraison(s) durablement en attente." : "Encrypted message • %1 durable delivery item(s) pending.")
                               .arg(static_cast<qulonglong>(pending)));
             } else {
                 detail->setText(
-                    QStringLiteral("Échec de la mise en file chiffrée du message."));
+                    l10n(language, "Échec de la mise en file chiffrée du message.", "Failed to queue the encrypted message."));
             }
             messageComposer->setEnabled(true);
             sendMessage->setEnabled(true);
@@ -451,14 +482,14 @@ int main(int argc, char* argv[]) {
         }
 
         QDialog dialog(&window);
-        dialog.setWindowTitle(QStringLiteral("Lier cet ordinateur"));
+        dialog.setWindowTitle(l10n(language, "Lier cet ordinateur", "Link this computer"));
         dialog.setModal(true);
         auto* layout = new QVBoxLayout(&dialog);
         layout->setContentsMargins(20, 20, 20, 20);
         layout->setSpacing(12);
 
         auto* instructions = new QLabel(
-            QStringLiteral("Scannez ce code depuis ENIGMA sur votre appareil Android autorisé."),
+            l10n(language, "Scannez ce code depuis ENIGMA sur votre appareil Android autorisé.", "Scan this code from ENIGMA on your authorized Android device."),
             &dialog);
         instructions->setWordWrap(true);
 
@@ -469,19 +500,19 @@ int main(int argc, char* argv[]) {
         const auto expiresAt = QDateTime::fromMSecsSinceEpoch(
             static_cast<qint64>(expiresAtUnixMs));
         auto* expiry = new QLabel(
-            QStringLiteral("Expire à %1").arg(expiresAt.toLocalTime().toString(QStringLiteral("HH:mm:ss"))),
+            l10n(language, "Expire à %1", "Expires at %1").arg(expiresAt.toLocalTime().toString(QStringLiteral("HH:mm:ss"))),
             &dialog);
 
         auto* uriField = new QLineEdit(QString::fromStdString(uri), &dialog);
         uriField->setReadOnly(true);
-        uriField->setAccessibleName(QStringLiteral("URI d’appairage"));
+        uriField->setAccessibleName(l10n(language, "URI d’appairage", "Pairing URI"));
 
         auto* pairingStatus = new QLabel(
-            QStringLiteral("En attente de l’autorisation Android…"),
+            l10n(language, "En attente de l’autorisation Android…", "Waiting for Android authorization…"),
             &dialog);
         pairingStatus->setWordWrap(true);
 
-        auto* finalize = new QPushButton(QStringLiteral("Finaliser la liaison"), &dialog);
+        auto* finalize = new QPushButton(l10n(language, "Finaliser la liaison", "Finish linking"), &dialog);
         QObject::connect(
             finalize,
             &QPushButton::clicked,
@@ -505,16 +536,16 @@ int main(int argc, char* argv[]) {
                 : core->claimPairing();
             const auto finalizeClaimedPairing = [&]() {
                 pairingStatus->setText(
-                    QStringLiteral("Session autorisée. Publication des clés libsignal…"));
+                    l10n(language, "Session autorisée. Publication des clés libsignal…", "Session authorized. Publishing libsignal keys…"));
                 if (core->initializeDevice()) {
                     const bool outboundFlushed = core->retryOutbox();
                     const bool synchronized = core->syncPending();
                     pairingStatus->setText(
                         synchronized && outboundFlushed
-                            ? QStringLiteral("Ordinateur lié et synchronisé avec succès.")
+                            ? l10n(language, "Ordinateur lié et synchronisé avec succès.", "Computer linked and synchronized successfully.")
                             : QStringLiteral(
                                   "Ordinateur lié. La synchronisation sera réessayée."));
-                    status->setText(QStringLiteral("Cœur sécurisé prêt • appareil lié"));
+                    status->setText(l10n(language, "Cœur sécurisé prêt • appareil lié", "Secure core ready • device linked"));
                     contactSelector->setEnabled(true);
                     messageComposer->setEnabled(true);
                     sendMessage->setEnabled(true);
@@ -524,16 +555,16 @@ int main(int argc, char* argv[]) {
                     p2pTimer.start();
                     detail->setText(
                         synchronized && outboundFlushed
-                            ? QStringLiteral("Rust/libsignal • synchronisation à jour")
-                            : QStringLiteral("Rust/libsignal • synchronisation à réessayer"));
+                            ? l10n(language, "Rust/libsignal • synchronisation à jour", "Rust/libsignal • synchronization up to date")
+                            : l10n(language, "Rust/libsignal • synchronisation à réessayer", "Rust/libsignal • synchronization needs retry"));
                     dialog.accept();
                     return;
                 }
 
                 pairingStatus->setText(QStringLiteral(
-                    "Ordinateur autorisé, mais l’initialisation réseau a échoué. "
-                    "Réessayez sans rescanner le QR."));
-                finalize->setText(QStringLiteral("Réessayer l’initialisation"));
+                    language == UiLanguage::French ? "Ordinateur autorisé, mais l’initialisation réseau a échoué. " : "Computer authorized, but network initialization failed. "
+                    language == UiLanguage::French ? "Réessayez sans rescanner le QR." : "Retry without scanning the QR again."));
+                finalize->setText(l10n(language, "Réessayer l’initialisation", "Retry initialization"));
                 finalize->setEnabled(true);
             };
 
@@ -543,28 +574,28 @@ int main(int argc, char* argv[]) {
                     break;
                 case ENIGMA_PAIRING_CLAIM_PENDING:
                     pairingStatus->setText(
-                        QStringLiteral("Autorisez d’abord cet ordinateur depuis Android."));
+                        l10n(language, "Autorisez d’abord cet ordinateur depuis Android.", "Authorize this computer from Android first."));
                     finalize->setEnabled(true);
                     break;
                 case ENIGMA_PAIRING_CLAIM_EXPIRED:
-                    pairingStatus->setText(QStringLiteral("La session d’appairage a expiré."));
+                    pairingStatus->setText(l10n(language, "La session d’appairage a expiré.", "The pairing session expired."));
                     break;
                 case ENIGMA_PAIRING_CLAIM_ALREADY_USED:
                     pairingStatus->setText(
-                        QStringLiteral("Cette session d’appairage a déjà été utilisée."));
+                        l10n(language, "Cette session d’appairage a déjà été utilisée.", "This pairing session has already been used."));
                     break;
                 case ENIGMA_PAIRING_CLAIM_MISSING:
-                    pairingStatus->setText(QStringLiteral("Session d’appairage introuvable."));
+                    pairingStatus->setText(l10n(language, "Session d’appairage introuvable.", "Pairing session not found."));
                     break;
                 default:
                     pairingStatus->setText(
-                        QStringLiteral("Le serveur d’appairage est momentanément indisponible."));
+                        l10n(language, "Le serveur d’appairage est momentanément indisponible.", "The pairing server is temporarily unavailable."));
                     finalize->setEnabled(true);
                     break;
             }
         });
 
-        auto* close = new QPushButton(QStringLiteral("Fermer"), &dialog);
+        auto* close = new QPushButton(l10n(language, "Fermer", "Close"), &dialog);
         QObject::connect(close, &QPushButton::clicked, &dialog, &QDialog::accept);
 
         layout->addWidget(instructions);
@@ -578,6 +609,50 @@ int main(int argc, char* argv[]) {
         dialog.exec();
         core->cancelPairing();
     });
+
+    QObject::connect(
+        languageSelector,
+        &QComboBox::currentIndexChanged,
+        [&language,
+         languageSelector,
+         title,
+         secure,
+         pairDevice,
+         openMessages,
+         contactSelector,
+         messageComposer,
+         sendMessage,
+         status,
+         detail,
+         &core,
+         coreReady,
+         signalReadyForPairing,
+         &refreshMessages](int index) {
+            const auto selected = static_cast<UiLanguage>(languageSelector->itemData(index).toInt());
+            if (selected == language) return;
+            language = selected;
+            title->setText(l10n(language, "Messagerie sécurisée", "Secure messaging"));
+            secure->setText(l10n(language, "● Chiffrement de bout en bout", "● End-to-end encrypted"));
+            pairDevice->setText(l10n(language, "Lier un appareil", "Link a device"));
+            pairDevice->setAccessibleName(l10n(language, "Lier un appareil Android", "Link an Android device"));
+            openMessages->setText(l10n(language, "Actualiser", "Refresh"));
+            openMessages->setAccessibleName(l10n(language, "Actualiser les messages", "Refresh messages"));
+            contactSelector->setAccessibleName(l10n(language, "Choisir un contact", "Choose a contact"));
+            messageComposer->setAccessibleName(l10n(language, "Composer un message", "Compose a message"));
+            sendMessage->setText(l10n(language, "Envoyer", "Send"));
+            sendMessage->setAccessibleName(l10n(language, "Envoyer le message", "Send message"));
+            if (coreReady) {
+                status->setText(l10n(language, "Cœur sécurisé prêt • appareil lié", "Secure core ready • device linked"));
+                detail->setText(
+                    l10n(language, "Rust/libsignal • ABI %1 • %2 message(s) local(aux)", "Rust/libsignal • ABI %1 • %2 local message(s)")
+                        .arg(enigma::linked_core_abi_version())
+                        .arg(static_cast<qulonglong>(core ? core->inboxCount() : 0)));
+            } else if (signalReadyForPairing) {
+                status->setText(l10n(language, "Appairage Android requis", "Android pairing required"));
+                detail->setText(l10n(language, "Identité libsignal prête • liez cet ordinateur depuis Android", "Libsignal identity ready • link this computer from Android"));
+            }
+            refreshMessages();
+        });
 
     // Finalize the stable widget hierarchy after all callbacks have captured their dependencies.
     content->addWidget(title);

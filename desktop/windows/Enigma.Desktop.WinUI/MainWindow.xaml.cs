@@ -1,5 +1,5 @@
 using System;
-using System.Text;
+using System.Globalization;\nusing System.IO;\nusing System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Enigma.Desktop.Interop;
@@ -20,11 +20,100 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        string iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "enigma.ico");
+        if (File.Exists(iconPath))
+        {
+            AppWindow.SetIcon(iconPath);
+        }
+
+        LanguageSelector.SelectedIndex = _language == DesktopLanguage.French ? 0 : 1;
+        LanguageSelector.SelectionChanged += OnLanguageSelectionChanged;
         Closed += OnClosed;
         ContactSelector.SelectionChanged += OnContactSelectionChanged;
         _p2pPollTimer.Interval = TimeSpan.FromMilliseconds(750);
         _p2pPollTimer.Tick += OnP2pPollTick;
+        ApplyStaticLanguage();
         InitializeSecureCore();
+    }
+
+    private string T(string key) => DesktopStrings.Get(key, _language);
+
+    private string F(string key, params object[] args) =>
+        string.Format(CultureInfo.CurrentCulture, T(key), args);
+
+    private void ApplyStaticLanguage()
+    {
+        BrandSubtitleText.Text = T("brand.subtitle");
+        DeviceSectionText.Text = T("device.section");
+        DeviceSessionText.Text = T("device.session");
+        HeaderTitleText.Text = T("header.title");
+        HeaderSubtitleText.Text = T("header.subtitle");
+        RefreshButton.Content = T("refresh");
+        DevicesButton.Content = _core?.DeviceSessionReady == true
+            ? T("devices.manage")
+            : T("devices.pair");
+        CryptoNoticeText.Text = T("crypto.notice");
+        ContactSelector.PlaceholderText = T("contact.choose");
+        MessageComposer.PlaceholderText = T("message.placeholder");
+        SendButton.Content = T("send");
+    }
+
+    private void OnLanguageSelectionChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (LanguageSelector.SelectedItem is not ComboBoxItem item || item.Tag is not string code)
+        {
+            return;
+        }
+        DesktopLanguage next = DesktopStrings.FromCode(code);
+        if (next == _language)
+        {
+            return;
+        }
+        _language = next;
+        DesktopStrings.SaveLanguage(_language);
+        ApplyStaticLanguage();
+        RelocalizeCoreState();
+        RefreshMessages();
+    }
+
+    private void RelocalizeCoreState()
+    {
+        if (_core is null)
+        {
+            CoreStatusText.Text = T("status.initializing");
+            CoreDetailText.Text = T("detail.core_not_ready");
+            return;
+        }
+
+        bool runtimeReady = _core.IsReady;
+        bool signalReady = runtimeReady && _core.SignalReady;
+        bool sessionReady = signalReady && _core.DeviceSessionReady;
+        if (sessionReady && _p2pPollTimer.IsEnabled)
+        {
+            CoreStatusText.Text = T("status.ready");
+            CoreDetailText.Text = F("detail.ready", EnigmaCoreClient.AbiVersion, _core.InboxCount);
+        }
+        else if (signalReady && sessionReady)
+        {
+            CoreStatusText.Text = T("status.session_network");
+            CoreDetailText.Text = T("detail.session_retry");
+        }
+        else if (signalReady)
+        {
+            CoreStatusText.Text = T("status.pair_required");
+            CoreDetailText.Text = T("detail.pair_hint");
+        }
+        else if (runtimeReady)
+        {
+            CoreStatusText.Text = T("status.identity_required");
+            CoreDetailText.Text = F("detail.identity_missing", EnigmaCoreClient.AbiVersion);
+        }
+        else
+        {
+            CoreStatusText.Text = T("status.unavailable");
+            CoreDetailText.Text = T("detail.core_not_ready");
+        }
+        ApplyStaticLanguage();
     }
 
     private async void InitializeSecureCore()
@@ -44,31 +133,32 @@ public sealed partial class MainWindow : Window
             nuint outboxCount = operationalReady ? _core.OutboxCount : 0;
 
             CoreStatusText.Text = operationalReady
-                ? "Cœur sécurisé prêt • appareil lié"
+                ? T("status.ready")
                 : signalReady
                     ? sessionReady
-                        ? "Session liée • initialisation réseau requise"
-                        : "Appairage Android requis"
+                        ? T("status.session_network")
+                        : T("status.pair_required")
                     : runtimeReady
-                        ? "Identité E2EE protégée requise"
-                        : "Cœur sécurisé indisponible";
+                        ? T("status.identity_required")
+                        : T("status.unavailable");
             CoreDetailText.Text = operationalReady
                 ? inboxSynced && outboxFlushed
-                    ? $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion} • {inboxCount} message(s) local(aux)"
-                    : $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion} • {outboxCount} livraison(s) en attente"
+                    ? F("detail.ready", EnigmaCoreClient.AbiVersion, inboxCount)
+                    : F("detail.pending", EnigmaCoreClient.AbiVersion, outboxCount)
                 : signalReady
                     ? sessionReady
-                        ? "Session device restaurée, mais la publication des prekeys doit être réessayée"
-                        : "Identité libsignal prête • liez cet ordinateur depuis Android"
+                        ? T("detail.session_retry")
+                        : T("detail.pair_hint")
                     : runtimeReady
-                        ? $"Rust chargé • ABI {EnigmaCoreClient.AbiVersion} • identité libsignal non restaurée"
-                        : "Le cœur Rust n’est pas prêt";
+                        ? F("detail.identity_missing", EnigmaCoreClient.AbiVersion)
+                        : T("detail.core_not_ready");
 
             MessageComposer.IsEnabled = operationalReady;
             ContactSelector.IsEnabled = operationalReady;
             SendButton.IsEnabled = operationalReady;
             RefreshButton.IsEnabled = operationalReady;
             DevicesButton.IsEnabled = signalReady;
+            DevicesButton.Content = sessionReady ? T("devices.manage") : T("devices.pair");
             if (operationalReady)
             {
                 RefreshContacts();
@@ -78,26 +168,27 @@ public sealed partial class MainWindow : Window
         }
         catch (DllNotFoundException)
         {
-            SetCoreUnavailable("Bibliothèque native ENIGMA introuvable");
+            SetCoreUnavailable(T("core.native_missing"));
         }
         catch (BadImageFormatException)
         {
-            SetCoreUnavailable("Bibliothèque native ENIGMA incompatible");
+            SetCoreUnavailable(T("core.native_incompatible"));
         }
         catch (NotSupportedException)
         {
-            SetCoreUnavailable("Version ABI ENIGMA incompatible");
+            SetCoreUnavailable(T("core.abi_incompatible"));
         }
         catch (InvalidOperationException)
         {
-            SetCoreUnavailable("Initialisation du cœur ENIGMA impossible");
+            SetCoreUnavailable(T("core.init_failed"));
         }
     }
 
     private void SetCoreUnavailable(string detail)
     {
-        CoreStatusText.Text = "Cœur sécurisé indisponible";
+        CoreStatusText.Text = T("status.unavailable");
         CoreDetailText.Text = detail;
+        DevicesButton.Content = T("devices.pair");
         MessageComposer.IsEnabled = false;
         ContactSelector.IsEnabled = false;
         SendButton.IsEnabled = false;
@@ -122,7 +213,7 @@ public sealed partial class MainWindow : Window
             {
                 RefreshMessages();
                 CoreDetailText.Text =
-                    $"P2P E2EE reçu • {after} message(s) local(aux) • relay fallback disponible";
+                    F("p2p.received", after);
             }
         }
         catch (ObjectDisposedException)
@@ -145,7 +236,7 @@ public sealed partial class MainWindow : Window
         EnigmaPairingBootstrap? pairing = _core.StartPairing();
         if (pairing is null)
         {
-            SetCoreUnavailable("Création de la session d’appairage impossible");
+            SetCoreUnavailable(T("pair.create_failed"));
             return;
         }
 
@@ -165,7 +256,7 @@ public sealed partial class MainWindow : Window
             SvgImageSourceLoadStatus loadStatus = await svgSource.SetSourceAsync(stream);
             if (loadStatus != SvgImageSourceLoadStatus.Success)
             {
-                throw new InvalidOperationException("Le QR d’appairage n’a pas pu être rendu");
+                throw new InvalidOperationException(T("pair.create_failed"));
             }
 
             DateTimeOffset expiresAt = DateTimeOffset
@@ -179,7 +270,7 @@ public sealed partial class MainWindow : Window
             };
             panel.Children.Add(new TextBlock
             {
-                Text = "Scannez ce code depuis ENIGMA sur votre appareil Android autorisé.",
+                Text = T("pair.scan"),
                 TextWrapping = TextWrapping.Wrap,
             });
             panel.Children.Add(new Image
@@ -190,12 +281,12 @@ public sealed partial class MainWindow : Window
             });
             panel.Children.Add(new TextBlock
             {
-                Text = $"Expire à {expiresAt:HH:mm:ss}",
+                Text = F("pair.expires", expiresAt.ToString("HH:mm:ss", CultureInfo.CurrentCulture)),
                 Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["EnigmaMutedTextBrush"],
             });
             panel.Children.Add(new TextBox
             {
-                Header = "URI d’appairage",
+                Header = T("pair.uri"),
                 Text = pairing.Uri,
                 IsReadOnly = true,
                 TextWrapping = TextWrapping.Wrap,
@@ -203,12 +294,12 @@ public sealed partial class MainWindow : Window
 
             var pairingStatus = new TextBlock
             {
-                Text = "En attente de l’autorisation Android…",
+                Text = T("pair.wait"),
                 TextWrapping = TextWrapping.Wrap,
             };
             var finalizeButton = new Button
             {
-                Content = "Finaliser la liaison",
+                Content = T("pair.finalize"),
                 HorizontalAlignment = HorizontalAlignment.Left,
             };
             panel.Children.Add(pairingStatus);
@@ -217,9 +308,9 @@ public sealed partial class MainWindow : Window
             var dialog = new ContentDialog
             {
                 XamlRoot = DevicesButton.XamlRoot,
-                Title = "Lier cet ordinateur",
+                Title = T("pair.title"),
                 Content = panel,
-                CloseButtonText = "Fermer",
+                CloseButtonText = T("pair.close"),
                 DefaultButton = ContentDialogButton.Close,
             };
 
@@ -236,19 +327,19 @@ public sealed partial class MainWindow : Window
                 switch (state)
                 {
                     case EnigmaPairingClaimState.Claimed:
-                        pairingStatus.Text = "Session autorisée. Publication des clés libsignal…";
+                        pairingStatus.Text = T("pair.authorized_keys");
                         bool initialized = await Task.Run(() => _core.InitializeDevice());
                         if (initialized)
                         {
                             pairingStatus.Text = "Ordinateur lié avec succès.";
-                            CoreStatusText.Text = "Cœur sécurisé prêt • appareil lié";
+                            CoreStatusText.Text = T("status.ready");
                             bool outboxFlushed = await Task.Run(() => _core.RetryOutbox());
                             bool synchronized = await Task.Run(() => _core.SyncPending());
                             nuint inboxCount = _core.InboxCount;
                             nuint outboxCount = _core.OutboxCount;
                             CoreDetailText.Text = synchronized && outboxFlushed
-                                ? $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion} • {inboxCount} message(s) local(aux)"
-                                : $"Rust/libsignal • ABI {EnigmaCoreClient.AbiVersion} • {outboxCount} livraison(s) en attente";
+                                ? F("detail.ready", EnigmaCoreClient.AbiVersion, inboxCount)
+                                : F("detail.pending", EnigmaCoreClient.AbiVersion, outboxCount);
                             MessageComposer.IsEnabled = true;
                             ContactSelector.IsEnabled = true;
                             SendButton.IsEnabled = true;
@@ -261,26 +352,26 @@ public sealed partial class MainWindow : Window
                         else
                         {
                             pairingStatus.Text =
-                                "Ordinateur autorisé, mais l’initialisation réseau a échoué. Réessayez sans rescanner le QR.";
-                            finalizeButton.Content = "Réessayer l’initialisation";
+                                T("pair.init_failed");
+                            finalizeButton.Content = T("pair.retry_init");
                             finalizeButton.IsEnabled = true;
                         }
                         break;
                     case EnigmaPairingClaimState.PendingAuthorization:
-                        pairingStatus.Text = "Autorisez d’abord cet ordinateur depuis Android.";
+                        pairingStatus.Text = T("pair.authorize_first");
                         finalizeButton.IsEnabled = true;
                         break;
                     case EnigmaPairingClaimState.Expired:
-                        pairingStatus.Text = "La session d’appairage a expiré.";
+                        pairingStatus.Text = T("pair.expired");
                         break;
                     case EnigmaPairingClaimState.AlreadyClaimed:
-                        pairingStatus.Text = "Cette session d’appairage a déjà été utilisée.";
+                        pairingStatus.Text = T("pair.used");
                         break;
                     case EnigmaPairingClaimState.Missing:
-                        pairingStatus.Text = "Session d’appairage introuvable.";
+                        pairingStatus.Text = T("pair.missing");
                         break;
                     default:
-                        pairingStatus.Text = "Le serveur d’appairage est momentanément indisponible.";
+                        pairingStatus.Text = T("pair.server_unavailable");
                         finalizeButton.IsEnabled = true;
                         break;
                 }
@@ -293,9 +384,9 @@ public sealed partial class MainWindow : Window
             var fallback = new ContentDialog
             {
                 XamlRoot = DevicesButton.XamlRoot,
-                Title = "Appairage ENIGMA",
+                Title = T("pair.fallback_title"),
                 Content = pairing.Uri,
-                CloseButtonText = "Fermer",
+                CloseButtonText = T("pair.close"),
             };
             await fallback.ShowAsync();
         }
@@ -348,7 +439,7 @@ public sealed partial class MainWindow : Window
         }
         catch (JsonException)
         {
-            CoreDetailText.Text = "La liste de contacts reçue est invalide.";
+            CoreDetailText.Text = T("contacts.invalid");
         }
     }
 
@@ -433,11 +524,11 @@ public sealed partial class MainWindow : Window
                         : null;
                 string statusLabel = deliveryStatus switch
                 {
-                    "read" => "Lu",
-                    "delivered" => "Livré",
-                    "sent" => "Envoyé",
-                    "queued" => "En attente",
-                    _ => "Synchronisé",
+                    "read" => T("message.read"),
+                    "delivered" => T("message.delivered"),
+                    "sent" => T("message.sent"),
+                    "queued" => T("message.queued"),
+                    _ => T("message.synced"),
                 };
 
                 var messageContent = new StackPanel
@@ -492,8 +583,8 @@ public sealed partial class MainWindow : Window
             MessagesPanel.Children.Add(new TextBlock
             {
                 Text = selectedContactId is null
-                    ? "Sélectionnez un contact pour afficher la conversation."
-                    : "Aucun message local pour ce contact.",
+                    ? T("message.select_contact")
+                     : T("message.none"),
                 Foreground = (Brush)Application.Current.Resources["EnigmaMutedTextBrush"],
             });
         }
@@ -523,8 +614,8 @@ public sealed partial class MainWindow : Window
             nuint inboxCount = core.InboxCount;
             nuint outboxCount = core.OutboxCount;
             CoreDetailText.Text = synchronized && outboxFlushed
-                ? $"Synchronisation à jour • {inboxCount} message(s) local(aux)"
-                : $"Synchronisation partielle • {outboxCount} livraison(s) en attente";
+                ? F("sync.ready", inboxCount)
+                : F("sync.partial", outboxCount);
         }
         finally
         {
@@ -543,7 +634,7 @@ public sealed partial class MainWindow : Window
             ContactSelector.SelectedItem is not ComboBoxItem selected ||
             selected.Tag is not string recipientUserId)
         {
-            CoreDetailText.Text = "Choisissez un contact avant d’envoyer.";
+            CoreDetailText.Text = T("send.choose_contact");
             return;
         }
 
@@ -566,12 +657,12 @@ public sealed partial class MainWindow : Window
             MessageComposer.Text = string.Empty;
             RefreshMessages();
             CoreDetailText.Text = pending == 0
-                ? "Message chiffré et remis à tous les appareils disponibles."
-                : $"Message chiffré • {pending} livraison(s) durablement en attente.";
+                ? T("send.delivered")
+                : F("send.pending", pending);
         }
         else
         {
-            CoreDetailText.Text = "Échec de la mise en file chiffrée du message.";
+            CoreDetailText.Text = T("send.failed");
         }
 
         MessageComposer.IsEnabled = true;
