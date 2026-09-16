@@ -33,6 +33,7 @@
                             FontWeight="SemiBold"
                             Foreground="{ThemeResource EnigmaTextBrush}" />
                         <TextBlock
+                            x:Name="BrandSubtitleText"
                             Text="Messagerie chiffrée"
                             FontSize="12"
                             Foreground="{ThemeResource EnigmaMutedTextBrush}" />
@@ -55,6 +56,7 @@
                 </Border>
 
                 <TextBlock
+                    x:Name="DeviceSectionText"
                     Text="Conversations"
                     FontSize="14"
                     FontWeight="SemiBold"
@@ -94,11 +96,13 @@
                     </Grid.ColumnDefinitions>
                     <StackPanel Spacing="3">
                         <TextBlock
+                            x:Name="HeaderTitleText"
                             Text="ENIGMA Desktop"
                             FontSize="20"
                             FontWeight="SemiBold"
                             Foreground="{ThemeResource EnigmaTextBrush}" />
                         <TextBlock
+                            x:Name="HeaderSubtitleText"
                             Text="P2P prioritaire • relais temporaire si nécessaire"
                             FontSize="12"
                             Foreground="{ThemeResource EnigmaMutedTextBrush}" />
@@ -137,6 +141,7 @@
                         Background="{ThemeResource EnigmaSurfaceBrush}"
                         CornerRadius="14">
                         <TextBlock
+                            x:Name="CryptoNoticeText"
                             Text="Les opérations cryptographiques restent confinées au cœur Rust/libsignal partagé."
                             TextWrapping="Wrap"
                             Foreground="{ThemeResource EnigmaTextBrush}" />

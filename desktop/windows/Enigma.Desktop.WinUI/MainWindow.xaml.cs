@@ -18,6 +18,7 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _p2pPollTimer = new();
     private EnigmaCoreClient? _core;
     private bool _p2pPollInFlight;
+    private DesktopLanguage _language = DesktopStrings.LoadLanguage();
 
     public MainWindow()
     {
