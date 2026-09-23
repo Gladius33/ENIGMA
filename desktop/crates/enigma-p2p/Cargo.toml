@@ -19,4 +19,4 @@ rtc = "=0.20.4"
 futures-util = { version = "=0.3.32", features = ["sink"] }
 tokio = { version = "=1.52.3", features = ["sync", "macros", "rt-multi-thread", "net", "time"] }
 tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
-webrtc = { version = "=0.20.4", default-features = true }
+webrtc = { version = "=0.21.0", default-features = true }
