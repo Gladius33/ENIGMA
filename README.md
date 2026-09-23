@@ -1,85 +1,221 @@
 # Enigma
 
-Enigma is an open-source messaging project focused on privacy and end-to-end encryption. It combines an Android client with a Rust server and prefers direct peer-to-peer communication while retaining relays and fallbacks for reachability.
+Enigma is an open-source, end-to-end encrypted messaging project built around a **P2P-first** transport model and a shared security core across Android, Windows and Linux.
 
-> **Status:** actively developed and testable, but not production-ready or a security guarantee. Independent review and real-device validation remain necessary.
+> **Status:** actively developed and testable. Automated CI/release gates are extensive, but **Enigma is not yet production-ready and is not a security certification**. Independent review and real-device qualification remain required before a 1.0 release.
 
-## Why Enigma?
+## What Enigma is trying to achieve
 
-The project aims to keep message and attachment content opaque to the server wherever the protocol permits, while remaining usable across restrictive networks. Direct paths are preferred; signaling, STUN/TURN and application relays remain available when a direct path cannot be established.
+Enigma prefers direct device-to-device communication whenever possible. When direct reachability fails, TURN and temporary application relays provide availability without turning the central infrastructure into the normal place where conversation content lives.
 
-## Current status
+The design goal is therefore not merely “E2EE over a central server”, but a multi-device messaging system in which:
 
-The repository contains implementations and tests for the main server and Android paths, alongside experimental or incomplete product surfaces. Group/channel cryptography, production push configuration, signed release validation and real-device WebRTC/P2P qualification still require further audit and validation.
+- message and attachment content remains opaque to the server wherever the protocol permits;
+- direct P2P paths are preferred;
+- TURN is used when NAT traversal requires it;
+- application relay/storage is a temporary fallback;
+- relay ciphertext is subject to bounded lifetime and deletion semantics;
+- Android, Windows and Linux share the same protocol and security boundaries rather than reimplementing cryptography independently.
 
-## Features
+## Current platforms
 
-- Kotlin Android client with Jetpack Compose, Room, DataStore and Android Keystore.
-- Rust/Axum server with PostgreSQL, Redis and S3-compatible storage.
-- libsignal integration for end-to-end encrypted direct messaging.
-- Direct messages, groups and channels with opaque server-side envelopes.
-- WebRTC calls with signaling, ICE and STUN/TURN credentials.
-- P2P-first messaging and attachments, receipts (`DELIVERED`/`READ`), resumable offsets and SHA-256 ciphertext verification.
-- Application relay and storage fallback when direct P2P is unavailable.
-- Private relays and an official relay, with configured plans/quotas where enabled.
+### Android
 
-## Architecture
+- Kotlin / Jetpack Compose.
+- Room and DataStore.
+- Android Keystore integration.
+- libsignal-based end-to-end encrypted direct messaging.
+- WebRTC signaling and NAT traversal support.
+- P2P-first messaging and attachment transfer.
+- Delivery/read receipts and recoverable local outboxes.
 
-Android owns identity material, session state and encryption. The server authenticates devices, routes opaque envelopes, coordinates signaling and controls relay/storage access. WebRTC media is negotiated through signaling but is not carried as clear media by the application server. TURN is a network traversal path, not fully direct transfer.
+### Windows
 
-## End-to-end encryption
+- WinUI 3 / C# frontend.
+- Shared Rust backend exposed through a versioned C ABI.
+- Self-contained Windows distributable validated in CI.
+- The C# layer is intentionally thin: cryptographic/session logic remains in the common Rust core.
 
-Text is encrypted on Android through libsignal. The server is intended to remain blind to E2EE content, but metadata, availability and relay/storage operations still exist. This project is not a security certification.
+### Linux
 
-## P2P-first messaging, attachments and calls
+- Qt 6 / C++ frontend.
+- Same shared Rust backend and ABI as Windows.
+- Debian package produced and validated in CI.
+- The C++ frontend does not independently reimplement the security protocol.
 
-The client attempts direct peer communication for supported messaging and attachment flows. Transfers can resume from offsets and verify ciphertext hashes; receipts and attachment commits use recoverable local outboxes. Calls use WebRTC offer/answer and ICE signaling. If direct connectivity is unavailable, TURN or application relay/storage fallbacks preserve availability according to the active relay configuration. Real-device and difficult-network qualification remains ongoing.
+## Shared desktop Rust core
+
+The desktop workspace centralizes the security-sensitive logic used by Windows and Linux:
+
+- protocol version/capability negotiation with fail-closed behavior;
+- certified device authorization with libsignal identity binding;
+- multi-device fanout;
+- device revocation checks;
+- bounded replay/deduplication handling;
+- P2P → TURN → temporary relay transport selection;
+- mandatory relay TTL and ACK-delete semantics;
+- ciphertext purge after acknowledgement or expiry;
+- guarded, single-use history transfer rules;
+- secure local storage primitives backed by libsodium;
+- XChaCha20-Poly1305 for the appropriate local-storage boundary;
+- controlled/limited unsafe surface;
+- common C ABI consumed by both desktop frontends.
+
+The production desktop libsignal backend is pinned to an immutable source revision. CI includes an **Android ↔ Rust bidirectional libsignal interoperability gate** using real PREKEY/WHISPER exchanges.
+
+## Server architecture
+
+The server is implemented in Rust with Axum and uses PostgreSQL, Redis and S3-compatible object storage.
+
+The server:
+
+- authenticates users/devices;
+- routes opaque envelopes;
+- coordinates signaling;
+- issues/controls relay and storage access;
+- supports STUN/TURN-assisted connectivity;
+- provides temporary relay/storage fallback when direct P2P cannot be established.
+
+WebRTC media is negotiated through signaling; the application server is not intended to receive media in cleartext. TURN is a relay at the network layer and must not be confused with a direct peer path.
+
+## Multi-device
+
+The 1.0 workstream includes the foundation for Android/Windows/Linux multi-device operation:
+
+- device linking/authorization;
+- identity binding;
+- per-device delivery/fanout;
+- revocation;
+- replay/deduplication protection;
+- shared wire contracts;
+- guarded history-transfer mechanisms.
+
+These mechanisms have automated coverage, but they still require qualification on real hardware and real networks.
+
+## P2P-first routing
+
+For supported messaging, attachment and call flows, Enigma prefers this order:
+
+1. direct peer-to-peer path;
+2. TURN-assisted path when direct NAT traversal is not possible;
+3. temporary application relay/storage fallback when necessary for availability.
+
+Transfers can resume from offsets and verify ciphertext hashes. Relay data is designed to be bounded by TTL/acknowledgement rules rather than acting as permanent plaintext-accessible message storage.
+
+## Release status
+
+The main automated 1.0 workstream has passed CI gates covering Android, server, desktop, security, supply chain and interoperability.
+
+**REAL-LAB-001 remains a release blocker.**
+
+Before a 1.0 RC/release is considered qualified, physical Android/Windows/Linux devices must be exercised across scenarios including:
+
+- pairing and multi-device synchronization;
+- real Internet paths;
+- normal NAT and difficult NAT;
+- CGNAT;
+- direct P2P success/failure;
+- TURN fallback;
+- application-relay fallback;
+- Wi-Fi ↔ mobile network changes;
+- process restart;
+- sleep/wake cycles;
+- offline/reconnect behavior;
+- interrupted/resumed transfers;
+- device revocation;
+- WebRTC calls under real network conditions.
+
+Passing automated CI does **not** replace this real-device qualification.
+
+## Security and supply-chain gates
+
+The repository includes automated checks such as:
+
+- Rust builds/tests on Linux and Windows;
+- Android builds, lint, unit and instrumented tests;
+- Windows WinUI 3 consumer validation;
+- Linux Qt 6 consumer validation;
+- Android ↔ Rust libsignal interoperability;
+- unsafe-policy checks for the desktop core;
+- CodeQL for Java/Kotlin, Rust, C# and C/C++;
+- dependency review;
+- Rust advisory scanning;
+- Gitleaks;
+- Trivy source/IaC/secret scanning;
+- workflow/shell policy checks;
+- SBOM generation;
+- deterministic source/release artifacts and attestations where configured.
+
+These controls reduce risk but are not a substitute for independent cryptographic/security review.
 
 ## Building and testing
 
-The repository includes development and example deployment assets. Production secrets and machine-specific configuration must remain outside Git.
+### Server
 
 ```bash
 cd server
 cargo fmt --check
 cargo build
 cargo test
+```
 
-cd ../android
+### Android
+
+```bash
+cd android
 ./gradlew :app:assembleDebug
 ./gradlew :app:testDebugUnitTest
 ```
 
-Integration dependencies can use the versioned server compose file:
+### Desktop shared Rust core
+
+```bash
+cd desktop
+cargo fmt --check
+cargo build --workspace
+cargo test --workspace
+```
+
+Integration services can be started with the versioned server compose file:
 
 ```bash
 docker compose -f server/docker-compose.yml up -d postgres redis minio coturn
 ```
 
-From the root, `./scripts/check-server.sh`, `./scripts/check-android.sh` and `./scripts/check-all.sh` provide project checks. Some checks require Docker, an Android SDK, an emulator/device or external services.
-
-Firebase is optional and is not configured automatically. Keep `google-services.json` and release credentials outside the repository.
+Some checks require Docker, an Android SDK/emulator or physical device, Windows tooling, Qt 6, or external network services.
 
 ## Repository structure
 
-- `android/` — Android application and tests.
-- `server/` — Rust API, migrations and integration tests.
-- `docs/` — architecture, API, security and feature notes.
+- `android/` — Android client and tests.
+- `desktop/` — shared Rust desktop core, ABI, Windows WinUI 3 client and Linux Qt 6 client.
+- `server/` — Rust API/server, migrations and integration tests.
+- `infra/` — infrastructure/deployment support assets.
+- `docs/` — protocol, architecture, security, threat-model and feature documentation.
 - `scripts/` — local validation helpers.
-- `.github/` — public automation when present.
+- `.github/` — CI, security and supply-chain automation.
 
-## Security
+## Security reporting
 
-Do not publish credentials, private keys, device dumps or production configuration. Until a security policy and private reporting channel are published, contact the maintainers through the project’s current trusted channel rather than posting exploitable details publicly.
+Read [SECURITY.md](SECURITY.md) before reporting a vulnerability. Do not publish credentials, private keys, production configuration, device dumps or exploitable security details in public issues.
 
-## Contributing
+## Branching model
 
-Preserve the documented security boundaries, avoid logging sensitive material and include focused tests for behavior changes. Describe required services or device capabilities when a check cannot run locally.
+`main` is the single long-lived development branch.
 
-## Présentation française
-
-Enigma est une messagerie open source orientée confidentialité et chiffrement de bout en bout. Le client Android privilégie les communications directes P2P, tout en conservant des relais et des mécanismes de secours lorsque le réseau ne permet pas une connexion directe.
+Feature/fix branches are temporary integration vehicles and should be removed after merge. Dependabot may create short-lived automated branches for dependency pull requests; they are not development branches.
 
 ## License
 
-Enigma is released under the [GNU Affero General Public License v3.0 only (AGPL-3.0-only)](LICENSE). Commercial use is permitted subject to the license terms. Third-party components retain their respective licenses; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+Enigma is released under the **GNU Affero General Public License v3.0 only (AGPL-3.0-only)**. See [LICENSE](LICENSE) and [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+Commercial use is permitted subject to the AGPL-3.0-only terms and the licenses of third-party components.
+
+---
+
+## Présentation française
+
+Enigma est une messagerie libre chiffrée de bout en bout, conçue autour d’un modèle **P2P-first** et d’un cœur de sécurité partagé entre Android, Windows et Linux.
+
+Les connexions directes sont privilégiées. Lorsque le réseau les empêche, TURN puis un relais applicatif temporaire peuvent assurer la disponibilité. L’infrastructure centrale est conçue pour rester aveugle au contenu E2EE et pour ne pas devenir le lieu normal de conservation permanente des conversations.
+
+Le projet dispose désormais de clients Android, Windows et Linux ainsi que d’une architecture multi-appareils. La qualification **REAL-LAB-001 sur matériel et réseaux réels reste obligatoire avant une Release Candidate 1.0**.
