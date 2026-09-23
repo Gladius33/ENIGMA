@@ -8,7 +8,7 @@ Etat actuel :
 - `SignalCryptoEngine` est le moteur applicatif Android pour les messages texte 1-to-1.
 - L'ancien moteur crypto provisoire a ete retire du code Android principal.
 - `ReleaseCryptoGuard` bloque une release qui utiliserait un moteur non libsignal.
-- `org.signal:libsignal-android:0.76.1` est centralise dans `android/gradle/libs.versions.toml` et reference par le build Android.
+- `org.signal:libsignal-android:0.86.5` est centralise dans `android/gradle/libs.versions.toml` et reference par le build Android.
 - Le test `LibsignalProtocolSmokeTest` etablit une session libsignal avec prekey, signed prekey et Kyber prekey, puis chiffre/dechiffre un premier message et une reponse.
 - Le test `SignalCryptoEngineTest` chiffre Alice vers Bob, dechiffre, rouvre les stores persistants, puis chiffre Bob vers Alice sans regenerer de cles.
 - Le serveur et les DTO Android acceptent maintenant `registration_id`, `protocol_device_id` et `kyber_prekey` dans `/v1/keys/upload` et les restituent dans `/v1/keys/{user_id}`.
@@ -48,10 +48,10 @@ Classes/fonctions restantes avant production :
 
 Blocage actuel :
 
-- les smoke tests instrumentes demarrent l'app reelle sur un telephone S35; le test debug deux appareils du flux message complet a ete effectue, mais le test release signee deux appareils reste a faire;
-- groupes/canaux n'ont pas de sender-key Signal.
+- les smoke tests instrumentes et l'interoperabilite automatisee ne remplacent pas le REAL-LAB; aucun test physique multi-appareils complet de cette branche n'est encore valide;
+- groupes/canaux n'ont pas de sender-key Signal; ils restent donc experimentaux/post-1.0 et hors gate de la RC production actuelle.
 
-Conclusion : le texte 1-to-1 utilise maintenant libsignal et expose des empreintes minimales avec verification manuelle persistante, mais la release production reste bloquee tant que la validation release signee deux appareils, l'audit de confiance/fingerprint et FCM production ne sont pas termines.
+Conclusion : le texte 1-to-1 utilise libsignal 0.86.5 et l'interoperabilite Android <-> Rust est couverte par CI. `REAL-LAB-001` n'a pas encore ete execute; la RC reste donc bloquee jusqu'a la qualification humaine pairing/multi-device, reseaux reels, P2P-first et fallback relais.
 
 ## WebRTC
 
@@ -65,11 +65,11 @@ Etat actuel :
 Dependance WebRTC Android :
 
 ```kotlin
-webrtcAndroid = "125.6422.07"
+webrtcAndroid = "150.7871.01"
 implementation(libs.webrtc.android)
 ```
 
-Artefact : `io.github.webrtc-sdk:android:125.6422.07`, AAR BSD-3-Clause publie sur Maven Central.
+Artefact : `io.github.webrtc-sdk:android:150.7871.01`, AAR BSD-3-Clause publie sur Maven Central.
 
 Fichiers principaux :
 
@@ -87,4 +87,4 @@ Limites restantes :
 - release signee deux appareils non validee;
 - routage audio avance/Bluetooth et monitoring TURN a auditer.
 
-Conclusion : WebRTC media est integre dans Android et compile, mais le verdict maximal reste `PRÊT POUR AUDIT HUMAIN FINAL` tant que les appels audio/video reels ne sont pas valides sur deux appareils.
+Conclusion : WebRTC media est integre dans Android et compile, mais les appels audio/video sont une surface post-1.0 pour la production actuelle. Leur validation deux appareils reels reste necessaire avant toute activation production des appels, sans bloquer la RC 1.0 de messagerie 1-to-1/multi-device.

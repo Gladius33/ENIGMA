@@ -21,6 +21,7 @@ import com.enigma.securechat.domain.model.MessageDirection
 import com.enigma.securechat.domain.model.MessagePeerIdentityState
 import com.enigma.securechat.domain.model.MessageStatus
 import com.enigma.securechat.domain.model.MessageTransport
+import com.enigma.securechat.multidevice.DeviceLinkAuthorization
 import com.enigma.securechat.network.RelayScopedApiProvider
 import com.enigma.securechat.network.dto.DeviceKeyBundleDto
 import com.enigma.securechat.network.dto.P2pAttachmentCommitRequestDto
@@ -46,10 +47,13 @@ import com.enigma.securechat.p2p.PendingP2pReadReceipt
 import com.enigma.securechat.storage.DeviceStore
 import com.enigma.securechat.storage.LocalCipher
 import com.enigma.securechat.storage.RelaySettingsStore
+import com.enigma.securechat.storage.SecureSessionStore
 import java.time.Instant
+import java.util.Base64
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 
 data class SafetyNumberState(
@@ -73,6 +77,8 @@ class MessagesRepository(
     private val p2pReceiptOutboxStore: P2pReceiptOutboxStore? = null,
     private val attachmentRepository: AttachmentRepository? = null,
     private val p2pAttachmentCommitOutboxStore: P2pAttachmentCommitOutboxStore? = null,
+    private val messageDeliveryOutboxStore: MessageDeliveryOutboxStore? = null,
+    private val sessionStore: SecureSessionStore? = null,
     private val highSecurityModeProvider: suspend () -> Boolean = { false },
     private val activeBubbleIdProvider: suspend () -> String = {
         RelaySettingsStore.DEFAULT_MAIN_BUBBLE_ID
@@ -96,8 +102,13 @@ class MessagesRepository(
         payload: MessagePayload,
         conversationId: String? = null,
     ): AppResult<Unit> = runCatching {
-        require(payload.body.isNotBlank() || payload.attachments.isNotEmpty()) { "Empty message payload" }
+        require(payload.body.isNotBlank() || payload.attachments.isNotEmpty()) {
+            "Empty message payload"
+        }
         val senderDeviceId = requireNotNull(deviceStore.deviceId()) { "Device is not registered" }
+        val deliveryOutbox = requireNotNull(messageDeliveryOutboxStore) {
+            "Message delivery outbox unavailable"
+        }
         val activeBubbleId = activeBubbleIdProvider()
         val conversation = conversationId?.let { conversationDao.findById(it) }
             ?: conversationDao.findByContact(contact.userId, activeBubbleId)
@@ -108,103 +119,113 @@ class MessagesRepository(
             }
         }
 
-        var recipientDevice = primaryRemoteDevice(contact)
-        enforceSendPolicy(recipientDevice)
+        val discovered = apiProvider.withActiveApi { it.discoverKeys(contact.userId) }
+            .devices
+            .distinctBy { it.deviceId }
+        require(discovered.isNotEmpty()) { "No remote devices available" }
 
-        var remoteRef = recipientDevice.toRemoteRef()
-        if (remoteRef == null || !cryptoEngine.hasSession(remoteRef)) {
-            val claimed = apiProvider.withActiveApi {
-                it.claimPreKey(contact.userId, recipientDevice.deviceId)
-            }.device
-            storeRemoteBundle(contact.userId, claimed)
-            recipientDevice = requireNotNull(contactDeviceDao.findByDevice(claimed.deviceId)) {
-                "Claimed recipient device was not stored"
-            }
-            enforceSendPolicy(recipientDevice)
-            cryptoEngine.ensureSession(claimed.toRemoteBundle())
-            remoteRef = requireNotNull(recipientDevice.toRemoteRef()) {
+        val encodedPayload = MessagePayloadCodec.encode(payload.body, payload.attachments)
+        val localCiphertext = localCipher.encryptToString(encodedPayload.toByteArray(Charsets.UTF_8))
+        val localId = UUID.randomUUID().toString()
+        val createdAt = Instant.now()
+
+        var primaryDevice: ContactDeviceEntity? = null
+        var primaryCiphertext: String? = null
+        for (device in discovered) {
+            val prepared = prepareRemoteDevice(contact.userId, device)
+            val remoteRef = requireNotNull(prepared.toRemoteRef()) {
                 "Recipient device is missing libsignal protocol metadata"
             }
+            val ciphertext = cryptoEngine.encryptText(encodedPayload, remoteRef)
+            deliveryOutbox.enqueue(
+                bubbleId = conversation.bubbleId,
+                senderDeviceId = senderDeviceId,
+                recipientUserId = contact.userId,
+                recipientDeviceId = prepared.deviceId,
+                clientMessageId = localId,
+                messageType = payload.messageType(),
+                ciphertext = ciphertext,
+                senderSync = false,
+            )
+            if (primaryDevice == null) {
+                primaryDevice = prepared
+                primaryCiphertext = ciphertext
+            }
         }
 
-        val finalRemoteRef = requireNotNull(remoteRef) {
-            "Recipient device is missing libsignal protocol metadata"
+        val ownSession = sessionStore?.session?.firstOrNull()
+        if (ownSession != null) {
+            val authorizerIdentityKey = cryptoEngine.ensureIdentity().identityPublicKey
+            val senderSyncPayload = SenderSyncPayloadCodec.encode(
+                SenderSyncPayload(
+                    contactUserId = contact.userId,
+                    contactPublicId = contact.publicId,
+                    contactDisplayName = contact.displayName,
+                    bubbleId = conversation.bubbleId,
+                    clientMessageId = localId,
+                    originalCreatedAt = createdAt.toEpochMilli(),
+                    encodedMessagePayload = encodedPayload,
+                ),
+            )
+            val siblings = apiProvider.withActiveApi { it.discoverKeys(ownSession.userId) }
+                .devices
+                .distinctBy { it.deviceId }
+                .filter { it.deviceId != senderDeviceId }
+            for (sibling in siblings) {
+                if (sibling.authorization == null) {
+                    continue
+                }
+                require(
+                    verifySiblingAuthorization(
+                        accountId = ownSession.userId,
+                        currentDeviceId = senderDeviceId,
+                        authorizerIdentityKey = authorizerIdentityKey,
+                        sibling = sibling,
+                    ),
+                ) {
+                    "Linked sibling authorization proof is invalid"
+                }
+                val preparedSibling = prepareSiblingDevice(ownSession.userId, sibling)
+                val siblingRef = requireNotNull(preparedSibling.toRemoteRef()) {
+                    "Sibling device is missing libsignal protocol metadata"
+                }
+                val syncCiphertext = cryptoEngine.encryptText(senderSyncPayload, siblingRef)
+                deliveryOutbox.enqueue(
+                    bubbleId = conversation.bubbleId,
+                    senderDeviceId = senderDeviceId,
+                    recipientUserId = ownSession.userId,
+                    recipientDeviceId = preparedSibling.deviceId,
+                    clientMessageId = localId,
+                    messageType = "opaque",
+                    ciphertext = syncCiphertext,
+                    senderSync = true,
+                )
+            }
         }
-        val encodedPayload = MessagePayloadCodec.encode(payload.body, payload.attachments)
-        val transportCiphertext = cryptoEngine.encryptText(encodedPayload, finalRemoteRef)
-        val localCiphertext = localCipher.encryptToString(encodedPayload.toByteArray(Charsets.UTF_8))
 
-        val localId = UUID.randomUUID().toString()
-        val localPeerState = recipientDevice.toMessagePeerIdentityState()
+        val firstDevice = requireNotNull(primaryDevice)
         val queued = ChatMessage(
             id = localId,
             clientMessageId = localId,
             conversationId = conversation.id,
             senderDeviceId = senderDeviceId,
-            recipientDeviceId = finalRemoteRef.deviceId,
+            recipientDeviceId = firstDevice.deviceId,
             direction = MessageDirection.OUTBOUND,
-            status = MessageStatus.QUEUED,
+            status = MessageStatus.SENDING,
             encryptedLocalBody = localCiphertext,
-            transportCiphertext = transportCiphertext,
-            createdAt = Instant.now(),
+            transportCiphertext = primaryCiphertext,
+            createdAt = createdAt,
             transport = MessageTransport.RELAY,
-            peerIdentityState = localPeerState,
+            peerIdentityState = firstDevice.toMessagePeerIdentityState(),
         )
         messageDao.upsert(queued.toEntity())
-        messageDao.updateStatus(localId, MessageStatus.SENDING.name)
 
-        val p2pDelivery = attemptP2pDelivery(
-            bubbleId = conversation.bubbleId,
-            senderDeviceId = senderDeviceId,
-            recipientDeviceId = finalRemoteRef.deviceId,
-            clientMessageId = localId,
-            payload = payload,
-            ciphertext = transportCiphertext,
-        )
-        if (p2pDelivery != null) {
-            messageDao.markTransport(
-                localId = localId,
-                status = MessageStatus.DELIVERED.name,
-                transport = p2pDelivery.route.toMessageTransport().name,
-                peerIdentityState = p2pDelivery.peerIdentityState.toMessagePeerIdentityState().name,
-            )
-            if (payload.attachments.isNotEmpty()) {
-                scheduleP2pAttachmentCommit(
-                    bubbleId = conversation.bubbleId,
-                    senderDeviceId = senderDeviceId,
-                    recipientDeviceId = finalRemoteRef.deviceId,
-                    clientMessageId = localId,
-                    blobIds = payload.attachments.map { it.descriptor.blobId },
-                )
-            }
-            return@runCatching
-        }
-
-        ensureAttachmentsRelayBacked(payload)
-        val sent = try {
-            apiProvider.withActiveApi {
-                it.sendMessage(
-                    SendMessageRequestDto(
-                        bubbleId = conversation.bubbleId,
-                        senderDeviceId = senderDeviceId,
-                        recipientDeviceId = finalRemoteRef.deviceId,
-                        clientMessageId = localId,
-                        messageType = payload.messageType(),
-                        ciphertext = transportCiphertext,
-                        attachmentBlobIds = payload.attachments.map { it.descriptor.blobId },
-                    ),
-                )
-            }
-        } catch (error: Throwable) {
+        flushMessageDeliveries(localId, payload)
+        if (deliveryOutbox.hasPendingFor(localId)) {
             messageDao.updateStatus(localId, MessageStatus.FAILED.name)
-            throw error
+            error("MULTIDEVICE_FANOUT_INCOMPLETE")
         }
-        messageDao.markRelaySent(
-            localId = localId,
-            remoteMessageId = sent.id,
-            status = MessageStatus.SENT.name,
-            peerIdentityState = localPeerState.name,
-        )
+        messageDao.updateStatus(localId, MessageStatus.SENT.name)
     }.fold(
         onSuccess = { AppResult.Ok(Unit) },
         onFailure = { AppResult.Err(it.toUserVisibleError("Message non envoyé")) },
@@ -314,13 +335,13 @@ class MessagesRepository(
         if (receipt.recipientDeviceId != localDeviceId) return false
         val message = messageDao.findByClientMessageId(localDeviceId, receipt.clientMessageId) ?: return false
         if (message.direction != MessageDirection.OUTBOUND.name) return false
-        if (message.recipientDeviceId != receipt.senderDeviceId) return false
         val conversation = conversationDao.findById(message.conversationId) ?: return false
         if (conversation.bubbleId != receipt.bubbleId) return false
+        val receiptDevice = contactDeviceDao.findByDevice(receipt.senderDeviceId) ?: return false
+        if (receiptDevice.contactUserId != conversation.contactUserId) return false
         val status = receipt.status.toMessageStatus()
         messageDao.markOutboundP2pReceipt(
             clientMessageId = receipt.clientMessageId,
-            receiptSenderDeviceId = receipt.senderDeviceId,
             status = status.name,
         )
         return true
@@ -328,12 +349,27 @@ class MessagesRepository(
 
     suspend fun syncPending(): AppResult<Unit> = runCatching {
         val deviceId = requireNotNull(deviceStore.deviceId())
+        val currentUserId = sessionStore?.session?.firstOrNull()?.userId
         val pending = apiProvider.withActiveApi { it.pendingMessages(deviceId) }
         for (message in pending.messages) {
+            val fromOwnSibling = currentUserId != null &&
+                message.senderUserId == currentUserId &&
+                message.senderDeviceId != deviceId
             val existing = messageDao.findByClientMessageId(
                 senderDeviceId = message.senderDeviceId,
                 clientMessageId = message.clientMessageId,
             )
+            if (
+                existing != null &&
+                fromOwnSibling &&
+                existing.direction == MessageDirection.OUTBOUND.name
+            ) {
+                require(existing.transportCiphertext == message.ciphertext) {
+                    "Sender-sync ciphertext mismatch"
+                }
+                apiProvider.withActiveApi { it.receipt(message.id, ReceiptRequestDto(deviceId)) }
+                continue
+            }
             if (existing != null) {
                 require(existing.transportCiphertext == message.ciphertext) {
                     "Relay/P2P client message ciphertext mismatch"
@@ -360,9 +396,23 @@ class MessagesRepository(
                 continue
             }
 
+            val encodedPayload = cryptoEngine.decryptText(message.ciphertext)
+            if (fromOwnSibling) {
+                require(message.messageType == "opaque") { "Own-device message must be sender-sync opaque" }
+                require(SenderSyncPayloadCodec.isSenderSync(encodedPayload)) {
+                    "Unknown own-device synchronization payload"
+                }
+                applySenderSync(
+                    pendingMessage = message,
+                    encodedSenderSync = encodedPayload,
+                    currentUserId = requireNotNull(currentUserId),
+                )
+                apiProvider.withActiveApi { it.receipt(message.id, ReceiptRequestDto(deviceId)) }
+                continue
+            }
+
             val conversation = conversationForPending(message) ?: continue
             val contactDevice = contactDeviceDao.findByDevice(message.senderDeviceId)
-            val encodedPayload = cryptoEngine.decryptText(message.ciphertext)
             MessagePayloadCodec.decode(encodedPayload)
             val localCiphertext = localCipher.encryptToString(encodedPayload.toByteArray(Charsets.UTF_8))
             val local = ChatMessage(
@@ -424,7 +474,12 @@ class MessagesRepository(
 
     suspend fun retryPendingOutbound(): AppResult<Unit> = runCatching {
         flushPendingP2pAttachmentCommits()
+        flushAllMessageDeliveries()
+
         for (message in messageDao.retryableMessages()) {
+            if (messageDeliveryOutboxStore?.hasPendingFor(message.clientMessageId) == true) {
+                continue
+            }
             val senderDeviceId = message.senderDeviceId ?: continue
             val recipientDeviceId = message.recipientDeviceId ?: continue
             val ciphertext = message.transportCiphertext ?: continue
@@ -563,6 +618,230 @@ class MessagesRepository(
         onFailure = { AppResult.Err(it.toUserVisibleError("Safety number non vérifié")) },
     )
 
+    private suspend fun applySenderSync(
+        pendingMessage: PendingMessageDto,
+        encodedSenderSync: String,
+        currentUserId: String,
+    ) {
+        val sync = SenderSyncPayloadCodec.decode(encodedSenderSync)
+        require(sync.contactUserId != currentUserId) { "Sender-sync cannot target the local identity as contact" }
+        require(sync.bubbleId == pendingMessage.bubbleId) { "Sender-sync bubble mismatch" }
+        require(sync.clientMessageId == pendingMessage.clientMessageId) {
+            "Sender-sync client message id mismatch"
+        }
+
+        val decoded = MessagePayloadCodec.decode(sync.encodedMessagePayload)
+        require(decoded.body.isNotBlank() || decoded.attachments.isNotEmpty()) {
+            "Sender-sync payload is empty"
+        }
+        require(decoded.attachments.all { it.descriptor.bubbleId == sync.bubbleId }) {
+            "Sender-sync attachment bubble mismatch"
+        }
+
+        val contact = Contact(
+            userId = sync.contactUserId,
+            publicId = sync.contactPublicId,
+            displayName = sync.contactDisplayName,
+        )
+        contactDao.upsert(contact.toEntity())
+        val conversation = conversationDao.findByContact(sync.contactUserId, sync.bubbleId)
+            ?: Conversation(
+                id = UUID.randomUUID().toString(),
+                contactUserId = sync.contactUserId,
+                contactPublicId = sync.contactPublicId,
+                bubbleId = sync.bubbleId,
+                updatedAt = Instant.ofEpochMilli(sync.originalCreatedAt),
+            ).toEntity().also { conversationDao.upsert(it) }
+
+        val localCiphertext = localCipher.encryptToString(
+            sync.encodedMessagePayload.toByteArray(Charsets.UTF_8),
+        )
+        val synchronized = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            clientMessageId = sync.clientMessageId,
+            conversationId = conversation.id,
+            senderDeviceId = pendingMessage.senderDeviceId,
+            recipientDeviceId = null,
+            direction = MessageDirection.OUTBOUND,
+            status = MessageStatus.SENT,
+            encryptedLocalBody = localCiphertext,
+            transportCiphertext = pendingMessage.ciphertext,
+            createdAt = Instant.ofEpochMilli(sync.originalCreatedAt),
+            transport = MessageTransport.RELAY,
+            peerIdentityState = MessagePeerIdentityState.VERIFIED,
+        )
+        messageDao.upsert(synchronized.toEntity())
+    }
+
+    private suspend fun prepareRemoteDevice(
+        contactUserId: String,
+        bundle: DeviceKeyBundleDto,
+    ): ContactDeviceEntity {
+        storeRemoteBundle(contactUserId, bundle)
+        var device = requireNotNull(contactDeviceDao.findByDevice(bundle.deviceId)) {
+            "Discovered recipient device was not stored"
+        }
+        enforceSendPolicy(device)
+
+        var remoteRef = device.toRemoteRef()
+        if (remoteRef == null || !cryptoEngine.hasSession(remoteRef)) {
+            val claimed = apiProvider.withActiveApi {
+                it.claimPreKey(contactUserId, bundle.deviceId)
+            }.device
+            storeRemoteBundle(contactUserId, claimed)
+            device = requireNotNull(contactDeviceDao.findByDevice(claimed.deviceId)) {
+                "Claimed recipient device was not stored"
+            }
+            enforceSendPolicy(device)
+            cryptoEngine.ensureSession(claimed.toRemoteBundle())
+            remoteRef = requireNotNull(device.toRemoteRef()) {
+                "Recipient device is missing libsignal protocol metadata"
+            }
+        }
+        require(cryptoEngine.hasSession(requireNotNull(remoteRef))) {
+            "Recipient libsignal session was not established"
+        }
+        return device
+    }
+
+    private suspend fun prepareSiblingDevice(
+        accountId: String,
+        bundle: DeviceKeyBundleDto,
+    ): ContactDeviceEntity {
+        storeRemoteBundle(accountId, bundle)
+        var device = requireNotNull(contactDeviceDao.findByDevice(bundle.deviceId)) {
+            "Sibling device was not stored"
+        }
+        var remoteRef = device.toRemoteRef()
+        if (remoteRef == null || !cryptoEngine.hasSession(remoteRef)) {
+            val claimed = apiProvider.withActiveApi {
+                it.claimPreKey(accountId, bundle.deviceId)
+            }.device
+            require(claimed.identityKey == bundle.identityKey) {
+                "Sibling identity changed during prekey claim"
+            }
+            storeRemoteBundle(accountId, claimed)
+            device = requireNotNull(contactDeviceDao.findByDevice(claimed.deviceId)) {
+                "Claimed sibling device was not stored"
+            }
+            cryptoEngine.ensureSession(claimed.toRemoteBundle())
+            remoteRef = requireNotNull(device.toRemoteRef()) {
+                "Sibling device is missing libsignal protocol metadata"
+            }
+        }
+        require(cryptoEngine.hasSession(requireNotNull(remoteRef))) {
+            "Sibling libsignal session was not established"
+        }
+        return device
+    }
+
+    private fun verifySiblingAuthorization(
+        accountId: String,
+        currentDeviceId: String,
+        authorizerIdentityKey: String,
+        sibling: DeviceKeyBundleDto,
+    ): Boolean = runCatching {
+        val proof = requireNotNull(sibling.authorization)
+        require(proof.authorizingDeviceId == currentDeviceId)
+        val parsed = DeviceLinkAuthorization.parseCanonicalPayload(proof.canonicalPayload)
+        require(parsed.accountId == accountId)
+        require(parsed.newDeviceId == sibling.deviceId)
+        require(parsed.authorizingDeviceId == currentDeviceId)
+        require(parsed.targetIdentityKey == sibling.identityKey)
+        require(parsed.authorizerIdentityKey == authorizerIdentityKey)
+        val signature = Base64.getDecoder().decode(proof.authorizerSignature)
+        try {
+            cryptoEngine.verifyIdentityProof(
+                identityPublicKey = authorizerIdentityKey,
+                transcript = proof.canonicalPayload.toByteArray(Charsets.UTF_8),
+                signature = signature,
+            )
+        } finally {
+            signature.fill(0)
+        }
+    }.getOrDefault(false)
+
+    private suspend fun flushMessageDeliveries(
+        clientMessageId: String,
+        payload: MessagePayload,
+    ) {
+        val outbox = messageDeliveryOutboxStore ?: return
+        for (delivery in outbox.pendingFor(clientMessageId)) {
+            deliverPendingMessage(delivery, payload)
+        }
+    }
+
+    private suspend fun flushAllMessageDeliveries() {
+        val outbox = messageDeliveryOutboxStore ?: return
+        val clientMessageIds = outbox.pending().map { it.clientMessageId }.distinct()
+        for (clientMessageId in clientMessageIds) {
+            val senderDeviceId = deviceStore.deviceId() ?: return
+            val message = messageDao.findByClientMessageId(senderDeviceId, clientMessageId)
+                ?: continue
+            val payload = decryptLocalPayload(message.toDomain())
+            flushMessageDeliveries(clientMessageId, payload)
+            messageDao.updateStatus(
+                message.id,
+                if (outbox.hasPendingFor(clientMessageId)) {
+                    MessageStatus.FAILED.name
+                } else {
+                    MessageStatus.SENT.name
+                },
+            )
+        }
+    }
+
+    private suspend fun deliverPendingMessage(
+        delivery: PendingMessageDelivery,
+        payload: MessagePayload,
+    ) {
+        val outbox = messageDeliveryOutboxStore ?: return
+        val p2pDelivery = attemptP2pDelivery(
+            bubbleId = delivery.bubbleId,
+            senderDeviceId = delivery.senderDeviceId,
+            recipientDeviceId = delivery.recipientDeviceId,
+            clientMessageId = delivery.clientMessageId,
+            payload = payload,
+            ciphertext = delivery.ciphertext,
+            messageType = delivery.messageType,
+        )
+        if (p2pDelivery != null) {
+            if (payload.attachments.isNotEmpty()) {
+                scheduleP2pAttachmentCommit(
+                    bubbleId = delivery.bubbleId,
+                    senderDeviceId = delivery.senderDeviceId,
+                    recipientDeviceId = delivery.recipientDeviceId,
+                    clientMessageId = delivery.clientMessageId,
+                    blobIds = payload.attachments.map { it.descriptor.blobId },
+                )
+            }
+            outbox.remove(delivery.deliveryId)
+            return
+        }
+
+        try {
+            ensureAttachmentsRelayBacked(payload)
+            apiProvider.withActiveApi {
+                it.sendMessage(
+                    SendMessageRequestDto(
+                        bubbleId = delivery.bubbleId,
+                        senderDeviceId = delivery.senderDeviceId,
+                        recipientDeviceId = delivery.recipientDeviceId,
+                        clientMessageId = delivery.clientMessageId,
+                        messageType = delivery.messageType,
+                        ciphertext = delivery.ciphertext,
+                        attachmentBlobIds = payload.attachments.map { it.descriptor.blobId },
+                    ),
+                )
+            }
+            outbox.remove(delivery.deliveryId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // Keep the encrypted outbox entry for a later idempotent retry.
+        }
+    }
+
     private suspend fun attemptP2pDelivery(
         bubbleId: String,
         senderDeviceId: String,
@@ -570,6 +849,7 @@ class MessagesRepository(
         clientMessageId: String,
         payload: MessagePayload,
         ciphertext: String,
+        messageType: String = payload.messageType(),
     ): P2pDelivery? {
         val coordinator = p2pCoordinator ?: return null
         val specs = payload.toP2pAttachmentSpecs()

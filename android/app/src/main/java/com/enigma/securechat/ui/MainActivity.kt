@@ -119,6 +119,7 @@ fun EnigmaApp(container: AppContainer, onReloadContainer: () -> Unit) {
             container.updateRepository,
             container.relayRepository,
             container.identityRepository,
+            container.deviceRepository,
             container.sessionStore,
             container.cryptoEngine,
             container.relayScopedApiProvider.activeEndpoint,

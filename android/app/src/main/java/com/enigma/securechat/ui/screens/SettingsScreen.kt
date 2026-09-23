@@ -49,6 +49,7 @@ import com.enigma.securechat.ui.components.EnigmaQrImage
 import com.enigma.securechat.ui.i18n.localizedString
 import com.enigma.securechat.ui.i18n.localizedText
 import com.enigma.securechat.ui.viewmodel.SettingsCryptoStatus
+import com.enigma.securechat.ui.viewmodel.SettingsPairingStatus
 import com.enigma.securechat.ui.viewmodel.SettingsServerStatus
 import com.enigma.securechat.ui.viewmodel.SettingsUpdateStatus
 import com.enigma.securechat.ui.viewmodel.SettingsViewModel
@@ -73,6 +74,7 @@ fun SettingsScreen(
     var customRelayName by remember { mutableStateOf("") }
     var customRelayUrl by remember { mutableStateOf("") }
     var relayQrInput by remember { mutableStateOf("") }
+    var pairingQrInput by remember { mutableStateOf("") }
     var deleteConfirmation by remember { mutableStateOf("") }
     var notificationsGranted by remember { mutableStateOf(context.notificationsGranted()) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -140,6 +142,65 @@ fun SettingsScreen(
         Text(localizedString(R.string.profile_security, language), style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(6.dp))
         Text(localizedString(R.string.settings_crypto_compare, language), style = MaterialTheme.typography.bodySmall)
+        if (session != null) {
+            Spacer(Modifier.height(16.dp))
+            Text(
+                if (fr) "Lier un ordinateur" else "Link a computer",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (fr) {
+                    "Collez l’URI du QR affiché par ENIGMA Desktop. Le candidat et son engagement cryptographique seront vérifiés avant autorisation."
+                } else {
+                    "Paste the URI from the QR shown by ENIGMA Desktop. The candidate and its cryptographic commitment are verified before authorization."
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = pairingQrInput,
+                onValueChange = { pairingQrInput = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = {
+                    Text(if (fr) "URI d’appairage desktop" else "Desktop pairing URI")
+                },
+                minLines = 2,
+            )
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = { viewModel.authorizeDesktopPairing(pairingQrInput) },
+                enabled = pairingQrInput.isNotBlank() &&
+                    state.pairingStatus !is SettingsPairingStatus.Authorizing,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    when (state.pairingStatus) {
+                        SettingsPairingStatus.Authorizing ->
+                            if (fr) "Vérification…" else "Verifying…"
+                        else -> if (fr) "Autoriser cet ordinateur" else "Authorize this computer"
+                    },
+                )
+            }
+            state.pairingStatus?.let { pairingStatus ->
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    when (pairingStatus) {
+                        SettingsPairingStatus.Authorizing ->
+                            if (fr) "Vérification cryptographique en cours…" else "Cryptographic verification in progress…"
+                        is SettingsPairingStatus.Authorized ->
+                            if (fr) {
+                                "Autorisé : ${pairingStatus.displayName} (${pairingStatus.platform}). Finalisez maintenant la liaison sur l’ordinateur."
+                            } else {
+                                "Authorized: ${pairingStatus.displayName} (${pairingStatus.platform}). Now finalize linking on the computer."
+                            }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
         Spacer(Modifier.height(16.dp))
         Text(localizedString(R.string.language_title, language), style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))

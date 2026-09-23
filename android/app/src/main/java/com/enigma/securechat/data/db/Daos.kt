@@ -281,12 +281,10 @@ interface MessageDao {
         "UPDATE messages SET status = :status " +
             "WHERE direction = 'OUTBOUND' " +
             "AND client_message_id = :clientMessageId " +
-            "AND recipient_device_id = :receiptSenderDeviceId " +
             "AND status != 'READ'",
     )
     suspend fun markOutboundP2pReceipt(
         clientMessageId: String,
-        receiptSenderDeviceId: String,
         status: String,
     )
 

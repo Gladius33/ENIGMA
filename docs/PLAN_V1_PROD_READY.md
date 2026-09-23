@@ -155,7 +155,7 @@ Objectif : garder le plan de livraison dans le depot.
 ### 14. Libsignal 1-to-1
 
 - Modules : `SignalCryptoEngine`, key stores, messages.
-- Etat actuel : dependance Android `org.signal:libsignal-android:0.76.1` ajoutee, `coreLibraryDesugaring` active, `.dylib`/`.dll` et `libsignal_jni_testing.so` exclus du packaging, smoke test unitaire libsignal vert.
+- Etat actuel : dependance Android `org.signal:libsignal-android:0.86.5` ajoutee, `coreLibraryDesugaring` active, `.dylib`/`.dll` et `libsignal_jni_testing.so` exclus du packaging, smoke test unitaire libsignal vert.
 - Etat actuel : migration `0009` et DTO/API transportent `registration_id`, `protocol_device_id` et `kyber_prekey` pour les bundles libsignal.
 - Etat actuel : `SignalKeyCodec` convertit les bundles Enigma vers/de libsignal et le prouve par test de session.
 - Etat actuel : `SignalPreKeyBundleFactory` genere/stocke les prekeys dans un `SignalProtocolStore` et produit un upload bundle Enigma.

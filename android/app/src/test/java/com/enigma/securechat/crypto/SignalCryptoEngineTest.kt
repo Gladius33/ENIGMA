@@ -1,5 +1,6 @@
 package com.enigma.securechat.crypto
 
+import java.util.Base64
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -21,7 +22,19 @@ class SignalCryptoEngineTest {
 
         val firstCiphertext = aliceEngine.encryptText("bonjour bob", bobUpload.toRemoteBundle())
         assertTrue(aliceEngine.hasSession(bobRef))
-        assertEquals("bonjour bob", bobEngine.decryptText(firstCiphertext))
+        val firstEnvelopeJson = String(
+            Base64.getDecoder().decode(firstCiphertext),
+            Charsets.UTF_8,
+        )
+        assertTrue(firstEnvelopeJson.contains("\"algorithm\":\"Signal-Protocol-libsignal-0.86.5\""))
+        val legacyEnvelope = firstEnvelopeJson.replace(
+            "Signal-Protocol-libsignal-0.86.5",
+            "Signal-Protocol-libsignal-0.76",
+        )
+        val legacyCiphertext = Base64.getEncoder()
+            .withoutPadding()
+            .encodeToString(legacyEnvelope.toByteArray(Charsets.UTF_8))
+        assertEquals("bonjour bob", bobEngine.decryptText(legacyCiphertext))
 
         val reopenedAliceEngine = SignalCryptoEngine(PersistentSignalProtocolStore.open(aliceStorage))
         val reopenedBobEngine = SignalCryptoEngine(PersistentSignalProtocolStore.open(bobStorage))
