@@ -14,7 +14,7 @@ workspace = true
 async-trait = "=0.1.92"
 base64 = "=0.22.1"
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
+serde_json = "=1.0.154"
 rtc = "=0.20.4"
 futures-util = { version = "=0.3.32", features = ["sink"] }
 tokio = { version = "=1.52.3", features = ["sync", "macros", "rt-multi-thread", "net", "time"] }
