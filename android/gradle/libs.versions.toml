@@ -1,6 +1,6 @@
 [versions]
 libsignalAndroid = "0.86.5"
-webrtcAndroid = "150.7871.01"
+webrtcAndroid = "150.7871.04"
 
 [libraries]
 libsignal-android = { module = "org.signal:libsignal-android", version.ref = "libsignalAndroid" }
